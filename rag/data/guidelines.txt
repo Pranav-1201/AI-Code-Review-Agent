@@ -1,0 +1,11 @@
+Avoid nested loops when possible as they can lead to quadratic time complexity.
+
+Using hash maps or sets can reduce lookup time from O(n) to O(1).
+
+Conditional checks inside loops can significantly impact performance.
+
+Prefer early exits and break statements when conditions are satisfied.
+
+Readable and modular code improves maintainability and debugging.
+
+Time complexity should be analyzed especially for large input sizes.
