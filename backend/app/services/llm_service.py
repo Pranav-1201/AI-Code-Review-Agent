@@ -1,15 +1,21 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
+
 from backend.app.config import HF_TOKEN
+from app.services.retriever_service import CodeRetriever
 
 MODEL_NAME = "microsoft/codebert-base"
 
-# Load tokenizer and model
+# Initialize retriever once (avoid reloading each request)
+retriever = CodeRetriever()
+
+# Load tokenizer
 tokenizer = AutoTokenizer.from_pretrained(
     MODEL_NAME,
     token=HF_TOKEN
 )
 
+# Load model
 model = AutoModelForSequenceClassification.from_pretrained(
     MODEL_NAME,
     num_labels=2,
@@ -21,6 +27,7 @@ def _heuristic_analysis(code: str):
     """
     Deterministic heuristics to support explainability.
     """
+
     lines = [l.strip() for l in code.strip().split("\n") if l.strip()]
 
     loop_count = sum(1 for l in lines if l.startswith("for "))
@@ -44,16 +51,43 @@ def _heuristic_analysis(code: str):
 
 def analyze_code(code: str, language: str = "unknown") -> dict:
     """
-    Explainable code analysis using LLM signals + heuristics.
+    Explainable code analysis using:
+    1. RAG repository context retrieval
+    2. LLM semantic signals (CodeBERT)
+    3. Deterministic heuristics
     """
+
+    # -----------------------------
+    # STEP 1: Retrieve repository context (RAG)
+    # -----------------------------
+
+    try:
+        context_chunks = retriever.retrieve(code)
+    except Exception:
+        context_chunks = []
+
+    context_text = "\n".join(context_chunks)
+
+    # -----------------------------
+    # STEP 2: Build contextual prompt
+    # -----------------------------
 
     prompt = f"""
-    Analyze the following {language} code and estimate
-    whether it contains inefficiencies or logical issues.
+You are an AI code reviewer.
 
-    Code:
-    {code}
-    """
+Repository Context:
+{context_text}
+
+Code To Review:
+{code}
+
+Analyze the code and determine if it contains inefficiencies,
+logical problems, or poor structural patterns.
+"""
+
+    # -----------------------------
+    # STEP 3: Tokenize input
+    # -----------------------------
 
     inputs = tokenizer(
         prompt,
@@ -62,26 +96,45 @@ def analyze_code(code: str, language: str = "unknown") -> dict:
         max_length=512
     )
 
+    # -----------------------------
+    # STEP 4: Run model inference
+    # -----------------------------
+
     with torch.no_grad():
         outputs = model(**inputs)
 
     probs = torch.softmax(outputs.logits, dim=1).tolist()[0]
 
+    # -----------------------------
+    # STEP 5: Run heuristic analysis
+    # -----------------------------
+
     issues, complexity = _heuristic_analysis(code)
 
+    # -----------------------------
+    # STEP 6: Generate explanation
+    # -----------------------------
+
     explanation = (
-        "The analysis combines learned code representations from a "
-        "pretrained language model with deterministic pattern checks. "
+        "The analysis combines semantic representations from a "
+        "pretrained transformer model with deterministic code pattern checks. "
         f"The estimated time complexity is {complexity}."
     )
 
     suggestions = []
+
     if complexity == "O(n^2)":
         suggestions.append(
-            "Try reducing nested loops using data structures like hash maps or sets."
+            "Try reducing nested loops using data structures such as hash maps or sets."
         )
     else:
-        suggestions.append("The code structure appears efficient for typical inputs.")
+        suggestions.append(
+            "The code structure appears efficient for typical input sizes."
+        )
+
+    # -----------------------------
+    # STEP 7: Return structured output
+    # -----------------------------
 
     return {
         "language": language,
@@ -94,5 +147,6 @@ def analyze_code(code: str, language: str = "unknown") -> dict:
             "time_complexity": complexity,
             "explanation": explanation,
             "suggestions": suggestions
-        }
+        },
+        "retrieved_context": context_chunks
     }
