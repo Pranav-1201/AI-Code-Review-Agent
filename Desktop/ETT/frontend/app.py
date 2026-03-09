@@ -1,5 +1,38 @@
 import streamlit as st
 
+st.markdown("""
+<style>
+
+.main {
+    background-color: #0E1117;
+}
+
+h1, h2, h3 {
+    color: #FAFAFA;
+}
+
+.stMetric {
+    background-color: #1c1f26;
+    padding: 15px;
+    border-radius: 10px;
+}
+
+.stButton>button {
+    background-color: #4CAF50;
+    color: white;
+    border-radius: 8px;
+    height: 3em;
+    width: 200px;
+}
+
+.stTextInput>div>div>input {
+    background-color: #1c1f26;
+    color: white;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
 # Page config
 st.set_page_config(
     page_title="AI Code Review Dashboard",
@@ -14,7 +47,8 @@ page = st.sidebar.radio(
 )
 
 # Main page
-st.title("AI Code Review Assistant")
+st.title("🤖 AI Code Review Dashboard")
+st.caption("Automated repository analysis powered by AI")
 
 # Repository Scanner Page
 if page == "Repository Scanner":
