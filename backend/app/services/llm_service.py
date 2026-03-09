@@ -5,6 +5,7 @@ from app.config import HF_TOKEN
 from app.services.retriever_service import CodeRetriever
 
 from app.services.security_analyzer import detect_security_issues
+from app.services.quality_scorer import compute_quality_score
 
 MODEL_NAME = "microsoft/codebert-base"
 
@@ -106,6 +107,7 @@ logical problems, or poor structural patterns.
         outputs = model(**inputs)
 
     probs = torch.softmax(outputs.logits, dim=1).tolist()[0]
+    issue_probability = probs[1]
 
     # -----------------------------
     # STEP 5: Run heuristic analysis
@@ -113,6 +115,11 @@ logical problems, or poor structural patterns.
 
     issues, complexity = _heuristic_analysis(code)
     security_issues = detect_security_issues(code)
+    quality_score = compute_quality_score(
+        issue_probability,
+        complexity,
+        security_issues
+    )
 
     # -----------------------------
     # STEP 6: Generate explanation
@@ -145,6 +152,7 @@ logical problems, or poor structural patterns.
             "issue_likely": round(probs[1], 3),
             "issue_unlikely": round(probs[0], 3)
         },
+        "code_quality_score": quality_score,
         "analysis": {
             "issues": issues,
             "security_risks": security_issues,
