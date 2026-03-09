@@ -4,6 +4,8 @@ import torch
 from app.config import HF_TOKEN
 from app.services.retriever_service import CodeRetriever
 
+from app.services.security_analyzer import detect_security_issues
+
 MODEL_NAME = "microsoft/codebert-base"
 
 # Initialize retriever once (avoid reloading each request)
@@ -110,6 +112,7 @@ logical problems, or poor structural patterns.
     # -----------------------------
 
     issues, complexity = _heuristic_analysis(code)
+    security_issues = detect_security_issues(code)
 
     # -----------------------------
     # STEP 6: Generate explanation
@@ -144,6 +147,7 @@ logical problems, or poor structural patterns.
         },
         "analysis": {
             "issues": issues,
+            "security_risks": security_issues,
             "time_complexity": complexity,
             "explanation": explanation,
             "suggestions": suggestions
