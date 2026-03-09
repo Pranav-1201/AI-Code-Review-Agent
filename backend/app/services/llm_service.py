@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 
-from backend.app.config import HF_TOKEN
+from app.config import HF_TOKEN
 from app.services.retriever_service import CodeRetriever
 
 MODEL_NAME = "microsoft/codebert-base"

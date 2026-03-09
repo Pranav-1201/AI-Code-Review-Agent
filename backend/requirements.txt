@@ -9,3 +9,5 @@ sentence-transformers
 
 langchain
 faiss-cpu
+
+python-dotenv
