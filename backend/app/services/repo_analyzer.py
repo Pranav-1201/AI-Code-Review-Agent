@@ -1,6 +1,6 @@
 import os
 from app.services.llm_service import analyze_code
-
+from app.services.report_generator import generate_review_report
 
 SUPPORTED_EXTENSIONS = (".py", ".cpp", ".js", ".java")
 
@@ -25,9 +25,12 @@ def analyze_repository(repo_path: str):
 
                 analysis = analyze_code(code)
 
+                report = generate_review_report(file, analysis)
+
                 results.append({
                     "file": path,
-                    "analysis": analysis
+                    "analysis": analysis,
+                    "report": report
                 })
 
     return {
