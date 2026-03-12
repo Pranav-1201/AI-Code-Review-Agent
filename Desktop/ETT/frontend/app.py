@@ -143,3 +143,11 @@ data = {
 df = pd.DataFrame(data)
 
 st.dataframe(df)
+
+st.subheader("🔒 Security Findings")
+
+st.warning("Hardcoded credentials detected in auth.py")
+
+st.error("Potential SQL Injection vulnerability in database.py")
+
+st.info("Outdated dependency detected")
