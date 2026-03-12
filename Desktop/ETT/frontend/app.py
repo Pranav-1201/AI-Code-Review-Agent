@@ -151,3 +151,11 @@ st.warning("Hardcoded credentials detected in auth.py")
 st.error("Potential SQL Injection vulnerability in database.py")
 
 st.info("Outdated dependency detected")
+
+st.subheader("File Level Inspection")
+
+files = ["app.py", "auth.py", "database.py"]
+
+selected_file = st.selectbox("Select file to inspect", files)
+
+st.write(f"Issues found in {selected_file}")
