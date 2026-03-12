@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 from services.api_client import analyze_repository
 
 st.markdown("""
@@ -121,3 +122,24 @@ col1.metric("Files Analyzed", 120)
 col2.metric("Issues Found", 15)
 col3.metric("Security Issues", 3)
 col4.metric("Code Quality Score", "82%")
+
+st.subheader("📋 Code Review Issues")
+
+data = {
+    "File": ["app.py", "auth.py", "database.py"],
+    "Issue": [
+        "Unused variable",
+        "Hardcoded password",
+        "Inefficient database query"
+    ],
+    "Severity": ["Low", "Critical", "Medium"],
+    "Recommendation": [
+        "Remove unused variable",
+        "Use environment variables",
+        "Optimize database query"
+    ]
+}
+
+df = pd.DataFrame(data)
+
+st.dataframe(df)
