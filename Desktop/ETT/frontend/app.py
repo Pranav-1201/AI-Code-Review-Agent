@@ -1,4 +1,5 @@
 import streamlit as st
+from services.api_client import analyze_repository
 
 st.markdown("""
 <style>
@@ -65,6 +66,10 @@ if page == "Repository Scanner":
     if scan_button:
         if repo_url:
             st.success(f"Scanning repository: {repo_url}")
+            result = analyze_repository(repo_url)
+
+            st.write("Analysis Result:")
+            st.write(result)
         else:
             st.error("Please enter a repository URL")
 
@@ -109,3 +114,10 @@ elif page == "Scan Results":
 elif page == "Settings":
     st.header("Settings")
     st.info("Settings page coming soon.")
+
+col1, col2, col3, col4 = st.columns(4)
+
+col1.metric("Files Analyzed", 120)
+col2.metric("Issues Found", 15)
+col3.metric("Security Issues", 3)
+col4.metric("Code Quality Score", "82%")
