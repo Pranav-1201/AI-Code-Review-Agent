@@ -159,3 +159,11 @@ files = ["app.py", "auth.py", "database.py"]
 selected_file = st.selectbox("Select file to inspect", files)
 
 st.write(f"Issues found in {selected_file}")
+
+result = analyze_repository(repo_url)
+
+if "error" in result:
+    st.error(result["error"])
+else:
+    st.success("Analysis complete")
+    st.write(result)
