@@ -1,6 +1,6 @@
 import requests
 
-API_URL = "http://localhost:8000/analyze"
+from utils.config import API_URL
 
 def analyze_repository(repo_url):
     try:
