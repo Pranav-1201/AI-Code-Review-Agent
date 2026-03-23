@@ -2,10 +2,10 @@ import sys
 import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "backend"))
+from app.analysis import call_graph
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.llm_service import analyze_code
 from backend.app.services.report_generator import generate_review_report
-
 
 def run_pipeline(repo_path):
 
@@ -14,10 +14,13 @@ def run_pipeline(repo_path):
     files = analyze_repository(repo_path)
 
     from app.analysis.dependency_graph import build_dependency_graph
+    from app.analysis.call_graph import build_call_graph
 
     dependency_graph = build_dependency_graph(files)
-
     print("Dependency Graph:", dependency_graph)
+
+    call_graph = build_call_graph(files)
+    print("Call Graph:", dict(call_graph))
 
     for file in files:
 
