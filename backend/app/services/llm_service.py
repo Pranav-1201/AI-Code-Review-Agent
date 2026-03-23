@@ -66,7 +66,9 @@ def analyze_code(code: str, language: str = "unknown") -> dict:
 
     try:
         context_chunks = retriever.retrieve(code)
-    except Exception:
+        print("RAG Context Retrieved:", context_chunks)
+    except Exception as e:
+        print("Retriever failed:", e)
         context_chunks = []
 
     context_text = "\n".join(context_chunks)

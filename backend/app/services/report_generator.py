@@ -1,4 +1,8 @@
 from backend.database.review_repository import save_review
+from rag.vector_store import ReviewVectorStore
+
+# Initialize vector store
+vector_store = ReviewVectorStore()
 
 
 def generate_review_report(file_name, analysis_result):
@@ -25,35 +29,51 @@ def generate_review_report(file_name, analysis_result):
         "suggestions": suggestions
     }
 
+    # -------- Human-readable report --------
+    report = f"""
+================ CODE REVIEW REPORT ================
+
+File: {file_name}
+
+Quality Score: {score}/100
+
+----------------------------------------
+Issues
+----------------------------------------
+{chr(10).join("- " + i for i in issues)}
+
+----------------------------------------
+Security Risks
+----------------------------------------
+{chr(10).join("- " + s for s in security)}
+
+----------------------------------------
+Estimated Time Complexity
+----------------------------------------
+{complexity}
+
+----------------------------------------
+Suggestions
+----------------------------------------
+{chr(10).join("- " + s for s in suggestions)}
+
+====================================================
+"""
+
     # Save review in database
     try:
-        save_review(
+        review_id = save_review(
             repo_name="local_repo",
             commit_id="latest",
             score=score if isinstance(score, (int, float)) else 0,
             summary="Automated AI review",
             report=report_data
         )
+
+        # Index review in vector store for RAG retrieval
+        vector_store.add_review(review_id, report)
+
     except Exception as e:
         print("Database save failed:", e)
-
-    # -------- Human-readable report --------
-    report = f"""
-FILE: {file_name}
-
-Code Quality Score: {score} / 100
-
-Issues:
-{chr(10).join("- " + i for i in issues)}
-
-Security Risks:
-{chr(10).join("- " + s for s in security)}
-
-Time Complexity:
-{complexity}
-
-Suggestions:
-{chr(10).join("- " + s for s in suggestions)}
-"""
 
     return report
