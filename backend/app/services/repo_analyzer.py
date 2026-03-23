@@ -1,4 +1,5 @@
 import os
+from app.analysis.ast_parser import parse_python_file
 
 SUPPORTED_EXTENSIONS = (".py", ".cpp", ".js", ".java")
 
@@ -23,10 +24,14 @@ def analyze_repository(repo_path: str):
                     with open(path, "r", encoding="utf-8", errors="ignore") as f:
                         code = f.read()
 
+                    analysis = parse_python_file(code)
+
                     files_data.append({
                         "file_name": file,
                         "file_path": path,
-                        "content": code
+                        "content": code,
+                        "functions": analysis["functions"],
+                        "imports": analysis["imports"]
                     })
 
                 except Exception as e:

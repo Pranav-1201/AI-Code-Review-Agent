@@ -13,26 +13,39 @@ def run_pipeline(repo_path):
 
     files = analyze_repository(repo_path)
 
+    from app.analysis.dependency_graph import build_dependency_graph
+
+    dependency_graph = build_dependency_graph(files)
+
+    print("Dependency Graph:", dependency_graph)
+
     for file in files:
 
         # If repo_analyzer returns just code strings
         if isinstance(file, str):
             file_name = "unknown_file"
             code = file
+            functions = []
+            imports = []
 
         # If repo_analyzer returns dicts
         else:
             file_name = file.get("file_name", "unknown_file")
             code = file.get("content", "")
+            functions = file.get("functions", [])
+            imports = file.get("imports", [])
 
         print(f"Analyzing {file_name}...")
 
-        analysis_result = analyze_code(code)
+        analysis_result = analyze_code(code, functions, imports)
 
         report = generate_review_report(file_name, analysis_result)
 
         print(report)
         print("-" * 50)
+
+        print("Functions:", functions)
+        print("Imports:", imports)
 
         
 
