@@ -1,5 +1,5 @@
 import json
-from backend.database.connection import get_connection
+from database.connection import get_connection
 
 
 def save_review(repo_name, commit_id, score, summary, report):

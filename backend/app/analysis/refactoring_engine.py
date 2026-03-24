@@ -1,5 +1,21 @@
+from app.analysis.patch_generator import PatchGenerator
+
 class RefactoringEngine:
 
+    def __init__(self):
+        self.patch_generator = PatchGenerator()
+
+    def generate_patch_suggestion(self, original_code, improved_code):
+
+        patch = self.patch_generator.generate_patch(
+            original_code,
+            improved_code
+        )
+
+        return {
+            "improved_code": improved_code,
+            "patch": patch
+        }
     def generate_suggestions(self, complexity, smells):
 
         suggestions = []
