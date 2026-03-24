@@ -1,10 +1,13 @@
 # ==========================================================
 # File: main.py
 # Purpose: Entry point for AI repository code review
+# Supports both CLI and FastAPI
 # ==========================================================
 
 import sys
 import os
+from fastapi import FastAPI
+from pydantic import BaseModel
 
 # ----------------------------------------------------------
 # Ensure backend is on Python path
@@ -24,49 +27,28 @@ from app.services.repo_analyzer import analyze_repository
 
 
 # ----------------------------------------------------------
-# Pipeline Runner
+# Core Pipeline
 # ----------------------------------------------------------
 
 def run_pipeline(repo_path: str):
 
     print("Starting repository analysis...\n")
 
-    # ------------------------------------------------------
-    # Step 1: Repository Scan
-    # ------------------------------------------------------
-
     files = analyze_repository(repo_path)
-
-    # ------------------------------------------------------
-    # Step 2: Dependency Graph
-    # ------------------------------------------------------
 
     dependency_graph = build_dependency_graph(files)
     print("Dependency Graph:", dependency_graph)
 
-    # ------------------------------------------------------
-    # Step 3: Call Graph
-    # ------------------------------------------------------
-
     call_graph = build_call_graph(files)
     print("Call Graph:", dict(call_graph))
-
-    # ------------------------------------------------------
-    # Step 4: AI Review Engine
-    # ------------------------------------------------------
 
     print("\nRunning AI repository review...\n")
 
     engine = RepositoryReviewEngine()
-
     result = engine.review_repository(repo_path)
 
     summary = result["repository_summary"]
     reports = result["file_reports"]
-
-    # ------------------------------------------------------
-    # Step 5: Print Summary
-    # ------------------------------------------------------
 
     print("\n================ REPOSITORY SUMMARY ================\n")
 
@@ -77,17 +59,48 @@ def run_pipeline(repo_path: str):
 
     print("\n====================================================\n")
 
-    # ------------------------------------------------------
-    # Step 6: Print File Reports
-    # ------------------------------------------------------
-
     for report in reports:
         print(report)
         print("-" * 60)
 
+    return {
+        "summary": summary,
+        "reports": reports,
+        "dependency_graph": dependency_graph,
+        "call_graph": dict(call_graph)
+    }
+
 
 # ----------------------------------------------------------
-# Script Entry Point
+# FastAPI App
+# ----------------------------------------------------------
+
+app = FastAPI(
+    title="AI Repository Code Review Agent",
+    description="AI-powered repository analysis",
+    version="1.0"
+)
+
+
+class RepoRequest(BaseModel):
+    repo_path: str
+
+
+@app.get("/")
+def root():
+    return {"message": "AI Code Review Agent Running"}
+
+
+@app.post("/analyze")
+def analyze_repo(request: RepoRequest):
+
+    result = run_pipeline(request.repo_path)
+
+    return result
+
+
+# ----------------------------------------------------------
+# CLI Entry Point
 # ----------------------------------------------------------
 
 if __name__ == "__main__":
