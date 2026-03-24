@@ -24,7 +24,7 @@ from app.services.repository_review_engine import RepositoryReviewEngine
 from app.analysis.dependency_graph import build_dependency_graph
 from app.analysis.call_graph import build_call_graph
 from app.services.repo_analyzer import analyze_repository
-
+from fastapi.middleware.cors import CORSMiddleware
 
 # ----------------------------------------------------------
 # Core Pipeline
@@ -79,6 +79,13 @@ app = FastAPI(
     title="AI Repository Code Review Agent",
     description="AI-powered repository analysis",
     version="1.0"
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for development
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
