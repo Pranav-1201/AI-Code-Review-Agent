@@ -1,4 +1,9 @@
-import os
+# ==========================================================
+# File: repository_review_engine.py
+# Purpose: Orchestrates repository-level AI code review
+# ==========================================================
+
+from typing import Dict, List
 
 from app.services.repo_analyzer import analyze_repository
 from app.services.llm_service import analyze_code
@@ -6,65 +11,123 @@ from app.services.report_generator import generate_review_report
 from app.analysis.llm_refactor_engine import LLMRefactorEngine
 
 
+# ----------------------------------------------------------
+# Single File Analysis Worker
+# ----------------------------------------------------------
+
+def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> Dict:
+    """
+    Analyze a single repository file.
+    """
+
+    code = file_data["content"]
+    file_name = file_data["file_name"]
+    functions = file_data.get("functions", [])
+    imports = file_data.get("imports", [])
+
+    # ------------------------------------------------------
+    # AI Code Analysis
+    # ------------------------------------------------------
+
+    analysis_result = analyze_code(
+        code,
+        functions=functions,
+        imports=imports,
+        language="python"
+    )
+
+    analysis_section = analysis_result.get("analysis", {})
+
+    # ------------------------------------------------------
+    # Extract signals
+    # ------------------------------------------------------
+
+    complexity = {
+        "max_loop_depth": 0
+    }
+
+    smells = file_data.get("dead_code", {}).get("code_smells", [])
+
+    # ------------------------------------------------------
+    # Refactor Suggestions
+    # ------------------------------------------------------
+
+    refactor_result = refactor_engine.generate_refactor(
+        code,
+        analysis_result,
+        complexity,
+        smells
+    )
+
+    # ------------------------------------------------------
+    # Generate Report
+    # ------------------------------------------------------
+
+    report = generate_review_report(
+        file_name=file_name,
+        analysis_result=analysis_result,
+        refactor_result=refactor_result
+    )
+
+    score = analysis_result.get("code_quality_score", 0)
+    issues = analysis_section.get("issues", [])
+    security = analysis_section.get("security_risks", [])
+
+    return {
+        "report": report,
+        "score": score,
+        "issues_found": bool(issues),
+        "security_count": len(security)
+    }
+
+
+# ==========================================================
+# Repository Review Engine
+# ==========================================================
+
 class RepositoryReviewEngine:
+    """
+    Runs AI code review across an entire repository.
+    """
 
     def __init__(self):
         self.refactor_engine = LLMRefactorEngine()
 
-    def review_repository(self, repo_path):
-        """
-        Perform AI code review on an entire repository.
-        """
+    def review_repository(self, repo_path: str) -> Dict:
 
         repo_data = analyze_repository(repo_path)
 
-        file_reports = []
+        file_reports: List[str] = []
         total_score = 0
         issue_files = 0
         security_issues = 0
 
+        results = []
+
+        # --------------------------------------------------
+        # Sequential Processing (safe mode)
+        # --------------------------------------------------
+
         for file_data in repo_data:
+            result = analyze_single_file(file_data, self.refactor_engine)
+            results.append(result)
 
-            code = file_data["content"]
-            file_name = file_data["file_name"]
-            functions = file_data.get("functions", [])
-            imports = file_data.get("imports", [])
+        # --------------------------------------------------
+        # Aggregate Results
+        # --------------------------------------------------
 
-            # Run AI analysis
-            analysis_result = analyze_code(
-                code,
-                functions=functions,
-                imports=imports,
-                language="python"
-            )
+        for result in results:
 
-            # Run refactor engine
-            refactor_result = self.refactor_engine.generate_refactor(
-                code,
-                complexity={"max_loop_depth": 2},
-                smells=[]
-            )
+            file_reports.append(result["report"])
 
-            # Generate review report
-            report = generate_review_report(
-                file_name=file_name,
-                analysis_result=analysis_result,
-                refactor_result=refactor_result
-            )
+            total_score += result["score"]
 
-            file_reports.append(report)
-
-            score = analysis_result.get("code_quality_score", 0)
-            total_score += score
-
-            if analysis_result["analysis"]["issues"]:
+            if result["issues_found"]:
                 issue_files += 1
 
-            security_issues += len(
-                analysis_result["analysis"].get("security_risks", [])
-            )
+            security_issues += result["security_count"]
 
-        file_count = len(file_reports)
+        file_count = len(results)
 
         avg_score = round(total_score / file_count, 2) if file_count else 0
 

@@ -1,0 +1,29 @@
+# Core AI / ML
+torch
+transformers
+sentence-transformers
+accelerate
+
+# Vector search / RAG
+faiss-cpu
+numpy
+scikit-learn
+
+# Data handling
+pandas
+
+# Environment config
+python-dotenv
+
+# API / future dashboard
+fastapi
+uvicorn
+
+# Utilities
+tqdm
+rich
+
+# Optional but recommended
+pydantic
+
+python-multipart

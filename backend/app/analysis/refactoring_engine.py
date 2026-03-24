@@ -1,62 +1,141 @@
+# ==========================================================
+# File: refactoring_engine.py
+# Location: backend/app/analysis
+#
+# Purpose
+# ----------------------------------------------------------
+# Rule-based refactoring suggestion engine.
+#
+# This module generates deterministic code improvement
+# suggestions based on:
+#
+# • complexity metrics
+# • detected code smells
+#
+# Unlike the LLM refactor engine, this component does not
+# rely on AI and provides explainable recommendations.
+# ==========================================================
+
+from typing import Dict, List, Optional
 from app.analysis.patch_generator import PatchGenerator
 
+
 class RefactoringEngine:
+    """
+    Generates rule-based refactoring suggestions and patches.
+    """
+
+    # ======================================================
+    # Initialization
+    # ======================================================
 
     def __init__(self):
         self.patch_generator = PatchGenerator()
 
-    def generate_patch_suggestion(self, original_code, improved_code):
+    # ======================================================
+    # Generate Patch Suggestion
+    # ======================================================
 
-        patch = self.patch_generator.generate_patch(
-            original_code,
-            improved_code
-        )
+    def generate_patch_suggestion(
+        self,
+        original_code: str,
+        improved_code: str
+    ) -> Dict[str, Optional[str]]:
+        """
+        Generate a patch suggestion between original and improved code.
+        """
+
+        patch = None
+
+        if original_code != improved_code:
+            patch = self.patch_generator.generate_patch(
+                original_code,
+                improved_code
+            )
 
         return {
             "improved_code": improved_code,
             "patch": patch
         }
-    def generate_suggestions(self, complexity, smells):
+
+    # ======================================================
+    # Generate Refactoring Suggestions
+    # ======================================================
+
+    def generate_suggestions(
+        self,
+        complexity: Dict,
+        smells: Dict
+    ) -> List[str]:
+        """
+        Generate rule-based improvement suggestions based
+        on static analysis results.
+        """
 
         suggestions = []
 
-        # Complexity based suggestions
-        if complexity["cyclomatic_complexity"] > 10:
+        cyclomatic = complexity.get("cyclomatic_complexity", 0)
+        loop_depth = complexity.get("max_loop_depth", 0)
+        recursive = complexity.get("recursive", False)
+
+        # --------------------------------------------------
+        # Complexity Based Suggestions
+        # --------------------------------------------------
+
+        if cyclomatic > 10:
             suggestions.append(
-                "Function has high cyclomatic complexity. Consider splitting it into smaller functions."
+                "Function has high cyclomatic complexity. "
+                "Consider splitting it into smaller functions."
             )
 
-        if complexity["max_loop_depth"] >= 3:
+        if loop_depth >= 3:
             suggestions.append(
-                "Deep loop nesting detected. Consider using a dictionary or hash map instead of nested loops."
+                "Deep loop nesting detected. Consider using "
+                "hash maps, sets, or preprocessing techniques "
+                "instead of nested loops."
             )
 
-        if complexity["recursive"]:
+        if recursive:
             suggestions.append(
-                "Recursive function detected. Consider memoization or dynamic programming if performance is critical."
+                "Recursive function detected. Consider "
+                "memoization or dynamic programming if "
+                "performance is critical."
             )
 
-        # Code smell suggestions
-        for smell in smells["code_smells"]:
+        # --------------------------------------------------
+        # Code Smell Suggestions
+        # --------------------------------------------------
+
+        for smell in smells.get("code_smells", []):
 
             if smell == "Long Function":
                 suggestions.append(
-                    "Function is too long. Break it into smaller reusable functions."
+                    "Function is too long. Break it into "
+                    "smaller reusable functions."
                 )
 
-            if smell == "Deep Nesting":
+            elif smell == "Deep Nesting":
                 suggestions.append(
-                    "Deep nesting detected. Refactor using guard clauses or helper functions."
+                    "Deep nesting detected. Refactor using "
+                    "guard clauses or helper functions."
                 )
 
-            if smell == "Magic Numbers":
+            elif smell == "Magic Numbers":
                 suggestions.append(
-                    "Magic numbers detected. Replace them with named constants."
+                    "Magic numbers detected. Replace them "
+                    "with named constants."
                 )
 
-            if smell == "God Function":
+            elif smell == "God Function":
                 suggestions.append(
-                    "This function does too many things. Consider applying the Single Responsibility Principle."
+                    "Function violates the Single "
+                    "Responsibility Principle."
                 )
+
+        # --------------------------------------------------
+        # Remove duplicate suggestions
+        # --------------------------------------------------
+
+        suggestions = list(dict.fromkeys(suggestions))
 
         return suggestions

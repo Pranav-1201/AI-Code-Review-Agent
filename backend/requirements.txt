@@ -11,3 +11,8 @@ langchain
 faiss-cpu
 
 python-dotenv
+
+pytest
+pytest-asyncio
+
+chromadb

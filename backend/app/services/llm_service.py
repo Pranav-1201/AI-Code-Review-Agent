@@ -1,39 +1,73 @@
+# ==========================================================
+# File: llm_service.py
+# Purpose: Core AI code analysis service combining
+#          RAG retrieval + transformer inference +
+#          deterministic heuristics.
+# ==========================================================
+
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
+from typing import Dict, List
 
 from app.config import HF_TOKEN
 from app.services.retriever_service import CodeRetriever
-
 from app.services.security_analyzer import detect_security_issues
 from app.services.quality_scorer import compute_quality_score
 
 MODEL_NAME = "microsoft/codebert-base"
 
-# Initialize retriever once (avoid reloading each request)
-retriever = CodeRetriever()
+# ----------------------------------------------------------
+# Global cached objects (loaded once)
+# ----------------------------------------------------------
 
-# Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained(
-    MODEL_NAME,
-    token=HF_TOKEN
-)
+_tokenizer = None
+_model = None
+_retriever = None
 
-# Load model
-model = AutoModelForSequenceClassification.from_pretrained(
-    MODEL_NAME,
-    num_labels=2,
-    token=HF_TOKEN
-)
 
+# ----------------------------------------------------------
+# Model Loader (safe lazy loading)
+# ----------------------------------------------------------
+
+def load_model():
+    global _tokenizer, _model
+
+    if _tokenizer is None:
+        _tokenizer = AutoTokenizer.from_pretrained(
+            MODEL_NAME,
+            token=HF_TOKEN
+        )
+
+    if _model is None:
+        _model = AutoModelForSequenceClassification.from_pretrained(
+            MODEL_NAME,
+            num_labels=2,
+            token=HF_TOKEN
+        )
+
+
+# ----------------------------------------------------------
+# Retriever Loader
+# ----------------------------------------------------------
+
+def get_retriever():
+    global _retriever
+
+    if _retriever is None:
+        _retriever = CodeRetriever()
+
+    return _retriever
+
+
+# ----------------------------------------------------------
+# Heuristic Analysis
+# ----------------------------------------------------------
 
 def _heuristic_analysis(code: str):
-    """
-    Deterministic heuristics to support explainability.
-    """
 
-    lines = [l.strip() for l in code.strip().split("\n") if l.strip()]
+    lines = [l.strip() for l in code.split("\n") if l.strip()]
 
-    loop_count = sum(1 for l in lines if l.startswith("for "))
+    loop_count = sum(1 for l in lines if l.startswith(("for ", "while ")))
     condition_count = sum(1 for l in lines if "if " in l)
 
     issues = []
@@ -52,106 +86,101 @@ def _heuristic_analysis(code: str):
     return issues, complexity
 
 
-def analyze_code(code: str, functions=None, imports=None, language: str = "unknown") -> dict:
-    """
-    Explainable code analysis using:
-    1. RAG repository context retrieval
-    2. LLM semantic signals (CodeBERT)
-    3. Deterministic heuristics
-    """
+# ----------------------------------------------------------
+# Main Code Analysis Function
+# ----------------------------------------------------------
+
+def analyze_code(
+    code: str,
+    functions: List[str] = None,
+    imports: List[str] = None,
+    language: str = "unknown"
+) -> Dict:
+
+    load_model()
+
     functions = functions or []
     imports = imports or []
-    # -----------------------------
+
+    # ------------------------------------------------------
     # STEP 1: Retrieve repository context (RAG)
-    # -----------------------------
+    # ------------------------------------------------------
 
     try:
-        context_chunks = retriever.retrieve(code)
-        print("RAG Context Retrieved:", context_chunks)
-    except Exception as e:
-        print("Retriever failed:", e)
+        context_chunks = get_retriever().retrieve(code)
+    except Exception:
         context_chunks = []
 
-    context_text = "\n".join(context_chunks)
+    context_text = "\n".join(context_chunks[:3])  # limit context size
 
-    # -----------------------------
-    # STEP 2: Build contextual prompt
-    # -----------------------------
+    # ------------------------------------------------------
+    # STEP 2: Build prompt
+    # ------------------------------------------------------
 
     prompt = f"""
-You are an AI code reviewer.
-
 Repository Context:
 {context_text}
 
-Code To Review:
+Code:
 {code}
-
-Repository Structure:
-Functions: {functions}
-Imports: {imports}
-
-Analyze the code and determine if it contains inefficiencies,
-logical problems, or poor structural patterns.
 """
 
-    # -----------------------------
-    # STEP 3: Tokenize input
-    # -----------------------------
+    # ------------------------------------------------------
+    # STEP 3: Tokenize
+    # ------------------------------------------------------
 
-    inputs = tokenizer(
+    inputs = _tokenizer(
         prompt,
         return_tensors="pt",
         truncation=True,
         max_length=512
     )
 
-    # -----------------------------
-    # STEP 4: Run model inference
-    # -----------------------------
+    # ------------------------------------------------------
+    # STEP 4: Model inference
+    # ------------------------------------------------------
 
     with torch.no_grad():
-        outputs = model(**inputs)
+        outputs = _model(**inputs)
 
     probs = torch.softmax(outputs.logits, dim=1).tolist()[0]
-    issue_probability = probs[1]
 
-    # -----------------------------
-    # STEP 5: Run heuristic analysis
-    # -----------------------------
+    # ------------------------------------------------------
+    # STEP 5: Heuristic analysis
+    # ------------------------------------------------------
 
     issues, complexity = _heuristic_analysis(code)
     security_issues = detect_security_issues(code)
+
     quality_score = compute_quality_score(
-        issue_probability,
+        probs[1],
         complexity,
         security_issues
     )
 
-    # -----------------------------
+    # ------------------------------------------------------
     # STEP 6: Generate explanation
-    # -----------------------------
+    # ------------------------------------------------------
 
     explanation = (
-        "The analysis combines semantic representations from a "
-        "pretrained transformer model with deterministic code pattern checks. "
-        f"The estimated time complexity is {complexity}."
+        "The system combines transformer-based semantic analysis "
+        "with static heuristics to detect inefficiencies."
     )
 
     suggestions = []
 
     if complexity == "O(n^2)":
         suggestions.append(
-            "Try reducing nested loops using data structures such as hash maps or sets."
+            "Consider reducing nested loops using sets or hash maps."
         )
     else:
         suggestions.append(
-            "The code structure appears efficient for typical input sizes."
+            "Code structure appears efficient for typical input sizes."
         )
 
-    # -----------------------------
-    # STEP 7: Return structured output
-    # -----------------------------
+    # ------------------------------------------------------
+    # STEP 7: Structured result
+    # ------------------------------------------------------
 
     return {
         "language": language,

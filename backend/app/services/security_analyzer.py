@@ -1,29 +1,71 @@
-def detect_security_issues(code: str):
+# ==========================================================
+# File: security_analyzer.py
+# Purpose: Detect common security vulnerabilities in code
+# ==========================================================
+
+from typing import List
+import re
+
+
+def detect_security_issues(code: str) -> List[str]:
     """
-    Detect simple security vulnerabilities in code.
+    Detect simple security vulnerabilities using pattern checks.
     """
 
     issues = []
 
-    if "eval(" in code:
-        issues.append("Use of eval() detected which may allow arbitrary code execution.")
+    # ------------------------------------------------------
+    # Dangerous execution functions
+    # ------------------------------------------------------
 
-    if "exec(" in code:
-        issues.append("Use of exec() detected which may allow execution of unsafe code.")
+    if re.search(r"\beval\s*\(", code):
+        issues.append(
+            "Use of eval() detected which may allow arbitrary code execution."
+        )
 
-    if "os.system(" in code:
-        issues.append("Use of os.system() detected which may allow command injection.")
+    if re.search(r"\bexec\s*\(", code):
+        issues.append(
+            "Use of exec() detected which may allow execution of unsafe code."
+        )
 
-    if "subprocess.Popen(" in code:
-        issues.append("Use of subprocess without sanitization may allow command injection.")
+    # ------------------------------------------------------
+    # Command execution risks
+    # ------------------------------------------------------
 
-    if "password =" in code or "passwd =" in code:
-        issues.append("Hardcoded credential detected.")
+    if re.search(r"os\.system\s*\(", code):
+        issues.append(
+            "Use of os.system() detected which may allow command injection."
+        )
 
-    if "SELECT" in code and "+" in code:
-        issues.append("Possible SQL injection via string concatenation.")
+    if re.search(r"subprocess\.(Popen|call|run)\s*\(", code):
+        issues.append(
+            "Use of subprocess without sanitization may allow command injection."
+        )
 
-    if not issues:
-        issues.append("No obvious security vulnerabilities detected.")
+    # ------------------------------------------------------
+    # Hardcoded credential detection
+    # ------------------------------------------------------
+
+    credential_patterns = [
+        r"password\s*=",
+        r"passwd\s*=",
+        r"secret\s*=",
+        r"api_key\s*=",
+        r"token\s*="
+    ]
+
+    for pattern in credential_patterns:
+        if re.search(pattern, code, re.IGNORECASE):
+            issues.append("Possible hardcoded credential detected.")
+            break
+
+    # ------------------------------------------------------
+    # Simple SQL injection pattern
+    # ------------------------------------------------------
+
+    if re.search(r"SELECT .* \+ .*", code, re.IGNORECASE):
+        issues.append(
+            "Possible SQL injection via string concatenation."
+        )
 
     return issues

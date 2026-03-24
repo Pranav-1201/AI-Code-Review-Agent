@@ -1,10 +1,42 @@
-import sqlite3
+# ==========================================================
+# File: connection.py
+# Purpose: SQLite database connection and initialization
+# ==========================================================
 
-def get_connection():
-    conn = sqlite3.connect("reviews.db", check_same_thread=False)
+import sqlite3
+from pathlib import Path
+
+# ----------------------------------------------------------
+# Database Path
+# ----------------------------------------------------------
+
+DB_PATH = Path("backend/database/reviews.db")
+
+
+# ----------------------------------------------------------
+# Get Database Connection
+# ----------------------------------------------------------
+
+def get_connection() -> sqlite3.Connection:
+    """
+    Create a SQLite database connection.
+    """
+
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+
     return conn
 
+
+# ----------------------------------------------------------
+# Initialize Database
+# ----------------------------------------------------------
+
 def init_db():
+    """
+    Create required database tables if they do not exist.
+    """
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -19,6 +51,11 @@ def init_db():
     )
     """)
 
+    # Optional index for faster queries
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_repo_commit
+    ON reviews (repo_name, commit_id)
+    """)
+
     conn.commit()
     conn.close()
-    

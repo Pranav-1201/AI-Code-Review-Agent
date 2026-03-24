@@ -1,57 +1,109 @@
+# ==========================================================
+# File: review_repository.py
+# Purpose: Database repository for storing and retrieving
+#          AI code review reports
+# ==========================================================
+
 import json
+from typing import List, Dict, Optional
+
 from database.connection import get_connection
 
 
-def save_review(repo_name, commit_id, score, summary, report):
+# ----------------------------------------------------------
+# Save Review
+# ----------------------------------------------------------
 
-    conn = get_connection()
-    cursor = conn.cursor()
+def save_review(
+    repo_name: str,
+    commit_id: str,
+    score: float,
+    summary: str,
+    report: Dict
+) -> int:
+    """
+    Save a review report in the database.
+    """
 
-    cursor.execute(
-        """
-        INSERT INTO reviews (repo_name, commit_id, score, summary, report_json)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (repo_name, commit_id, score, summary, json.dumps(report))
-    )
+    with get_connection() as conn:
 
-    conn.commit()
+        cursor = conn.cursor()
 
-    # Get the inserted review ID
-    review_id = cursor.lastrowid
+        cursor.execute(
+            """
+            INSERT INTO reviews (repo_name, commit_id, score, summary, report_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (repo_name, commit_id, score, summary, json.dumps(report))
+        )
 
-    conn.close()
+        review_id = cursor.lastrowid
+
+        conn.commit()
 
     return review_id
 
 
-def get_reviews_by_repo(repo_name):
+# ----------------------------------------------------------
+# Get Reviews by Repository
+# ----------------------------------------------------------
 
-    conn = get_connection()
-    cursor = conn.cursor()
+def get_reviews_by_repo(repo_name: str) -> List[Dict]:
+    """
+    Retrieve all reviews for a repository.
+    """
 
-    cursor.execute(
-        "SELECT id, report_json FROM reviews WHERE repo_name=?",
-        (repo_name,)
-    )
+    with get_connection() as conn:
 
-    rows = cursor.fetchall()
-    conn.close()
+        cursor = conn.cursor()
 
-    return rows
+        cursor.execute(
+            """
+            SELECT id, report_json
+            FROM reviews
+            WHERE repo_name = ?
+            """,
+            (repo_name,)
+        )
+
+        rows = cursor.fetchall()
+
+    results = []
+
+    for row in rows:
+        results.append({
+            "id": row["id"],
+            "report": json.loads(row["report_json"])
+        })
+
+    return results
 
 
-def get_review_by_id(review_id):
+# ----------------------------------------------------------
+# Get Review by ID
+# ----------------------------------------------------------
 
-    conn = get_connection()
-    cursor = conn.cursor()
+def get_review_by_id(review_id: int) -> Optional[Dict]:
+    """
+    Retrieve a specific review by ID.
+    """
 
-    cursor.execute(
-        "SELECT report_json FROM reviews WHERE id=?",
-        (review_id,)
-    )
+    with get_connection() as conn:
 
-    row = cursor.fetchone()
-    conn.close()
+        cursor = conn.cursor()
 
-    return row
+        cursor.execute(
+            """
+            SELECT report_json
+            FROM reviews
+            WHERE id = ?
+            """,
+            (review_id,)
+        )
+
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return json.loads(row["report_json"])

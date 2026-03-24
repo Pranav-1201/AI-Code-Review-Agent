@@ -1,14 +1,41 @@
+# ==========================================================
+# File: report_generator.py
+# Purpose: Convert AI analysis results into structured
+#          reports and persist them in database + vector DB
+# ==========================================================
+
+from typing import Dict, Optional
+
 from database.review_repository import save_review
 from rag.vector_store import ReviewVectorStore
 
-# Initialize vector store
-vector_store = ReviewVectorStore()
+
+# Lazy initialization of vector store
+_vector_store = None
 
 
-def generate_review_report(file_name, analysis_result, refactor_result=None, complexity_metrics=None, smell_metrics=None):
+def get_vector_store():
+    global _vector_store
+
+    if _vector_store is None:
+        _vector_store = ReviewVectorStore()
+
+    return _vector_store
+
+
+# ----------------------------------------------------------
+# Main Report Generator
+# ----------------------------------------------------------
+
+def generate_review_report(
+    file_name: str,
+    analysis_result: Dict,
+    refactor_result: Optional[Dict] = None,
+    complexity_metrics=None,
+    smell_metrics=None
+) -> str:
     """
-    Convert AI analysis output into a readable review report
-    and store the structured review in the database.
+    Generate a readable AI review report and persist results.
     """
 
     score = analysis_result.get("code_quality_score", "N/A")
@@ -28,7 +55,10 @@ def generate_review_report(file_name, analysis_result, refactor_result=None, com
         improved_code = refactor_result.get("improved_code", "")
         patch = refactor_result.get("patch", "")
 
-    # -------- Structured data for database --------
+    # ------------------------------------------------------
+    # Structured database report
+    # ------------------------------------------------------
+
     report_data = {
         "file_name": file_name,
         "score": score,
@@ -43,7 +73,18 @@ def generate_review_report(file_name, analysis_result, refactor_result=None, com
         "patch": patch
     }
 
-    # -------- Human-readable report --------
+    # ------------------------------------------------------
+    # Prepare formatted sections (avoid backslashes in f-string)
+    # ------------------------------------------------------
+
+    issues_text = "\n".join("- " + i for i in issues) if issues else "None"
+    security_text = "\n".join("- " + s for s in security) if security else "None"
+    suggestions_text = "\n".join("- " + s for s in suggestions) if suggestions else "None"
+
+    # ------------------------------------------------------
+    # Human-readable report
+    # ------------------------------------------------------
+
     report = f"""
 ================ AI CODE REVIEW REPORT ================
 
@@ -54,12 +95,12 @@ Quality Score: {score}/100
 ----------------------------------------
 Issues
 ----------------------------------------
-{chr(10).join("- " + i for i in issues) if issues else "None"}
+{issues_text}
 
 ----------------------------------------
 Security Risks
 ----------------------------------------
-{chr(10).join("- " + s for s in security) if security else "None"}
+{security_text}
 
 ----------------------------------------
 Estimated Time Complexity
@@ -79,7 +120,7 @@ AI Explanation
 ----------------------------------------
 Suggestions
 ----------------------------------------
-{chr(10).join("- " + s for s in suggestions) if suggestions else "None"}
+{suggestions_text}
 
 ----------------------------------------
 Improved Code
@@ -94,8 +135,12 @@ Patch
 =======================================================
 """
 
-    # Save review in database
+    # ------------------------------------------------------
+    # Save review to database
+    # ------------------------------------------------------
+
     try:
+
         review_id = save_review(
             repo_name="local_repo",
             commit_id="latest",
@@ -104,10 +149,20 @@ Patch
             report=report_data
         )
 
-        # Index review in vector store for RAG retrieval
-        vector_store.add_review(review_id, report)
+        # --------------------------------------------------
+        # Index summary in vector store for RAG retrieval
+        # --------------------------------------------------
+
+        vector_summary = f"""
+        File: {file_name}
+        Score: {score}
+        Issues: {issues}
+        Suggestions: {suggestions}
+        """
+
+        get_vector_store().add_review(review_id, vector_summary)
 
     except Exception as e:
-        print("Database save failed:", e)
+        print(f"Failed to store review: {e}")
 
     return report
