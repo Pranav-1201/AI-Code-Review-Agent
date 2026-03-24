@@ -52,21 +52,24 @@ def _heuristic_analysis(code: str):
     return issues, complexity
 
 
-def analyze_code(code: str, language: str = "unknown") -> dict:
+def analyze_code(code: str, functions=None, imports=None, language: str = "unknown") -> dict:
     """
     Explainable code analysis using:
     1. RAG repository context retrieval
     2. LLM semantic signals (CodeBERT)
     3. Deterministic heuristics
     """
-
+    functions = functions or []
+    imports = imports or []
     # -----------------------------
     # STEP 1: Retrieve repository context (RAG)
     # -----------------------------
 
     try:
         context_chunks = retriever.retrieve(code)
-    except Exception:
+        print("RAG Context Retrieved:", context_chunks)
+    except Exception as e:
+        print("Retriever failed:", e)
         context_chunks = []
 
     context_text = "\n".join(context_chunks)
@@ -83,6 +86,10 @@ Repository Context:
 
 Code To Review:
 {code}
+
+Repository Structure:
+Functions: {functions}
+Imports: {imports}
 
 Analyze the code and determine if it contains inefficiencies,
 logical problems, or poor structural patterns.

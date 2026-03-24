@@ -1,5 +1,5 @@
 import json
-from backend.database.connection import get_connection
+from database.connection import get_connection
 
 
 def save_review(repo_name, commit_id, score, summary, report):
@@ -16,7 +16,13 @@ def save_review(repo_name, commit_id, score, summary, report):
     )
 
     conn.commit()
+
+    # Get the inserted review ID
+    review_id = cursor.lastrowid
+
     conn.close()
+
+    return review_id
 
 
 def get_reviews_by_repo(repo_name):
