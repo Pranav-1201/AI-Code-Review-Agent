@@ -9,6 +9,7 @@ accelerate
 # Vector search / RAG
 faiss-cpu
 numpy
+chromadb
 scikit-learn
 
 # Data handling
