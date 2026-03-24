@@ -1,5 +1,7 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # Core AI / ML
-torch==2.2.2+cpu
+torch==2.11.0+cpu
 transformers
 sentence-transformers
 accelerate
@@ -28,5 +30,3 @@ pydantic
 
 # File uploads
 python-multipart
-
---extra-index-url https://download.pytorch.org/whl/cpu
