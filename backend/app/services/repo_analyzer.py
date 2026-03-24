@@ -7,6 +7,7 @@ import os
 import ast
 from pathlib import Path
 from typing import List, Dict
+from multiprocessing import Pool, cpu_count
 
 from app.analysis.ast_parser import parse_python_file
 from app.analysis.dead_code_detector import DeadCodeDetector
@@ -26,6 +27,80 @@ IGNORED_DIRECTORIES = {
 }
 
 
+# ----------------------------------------------------------
+# Worker Function (must be top-level for multiprocessing)
+# ----------------------------------------------------------
+
+def _analyze_file_worker(args):
+
+    path, repo_path = args
+
+    dead_code_detector = DeadCodeDetector()
+    complexity_analyzer = ComplexityAnalyzer()
+
+    file = path.name
+
+    try:
+        code = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        print(f"Failed to read {path}: {e}")
+        return None
+
+    # ---------------------------------------------
+    # AST Parsing (Python only)
+    # ---------------------------------------------
+
+    analysis = {"functions": [], "imports": []}
+
+    if file.endswith(".py"):
+        try:
+            analysis = parse_python_file(code)
+        except Exception:
+            pass
+
+    # ---------------------------------------------
+    # Dead Code Detection
+    # ---------------------------------------------
+
+    dead_code = dead_code_detector.analyze(code)
+
+    # ---------------------------------------------
+    # Complexity Analysis
+    # ---------------------------------------------
+
+    complexity_results = []
+
+    if file.endswith(".py"):
+
+        try:
+            tree = ast.parse(code)
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+
+                    metrics = complexity_analyzer.analyze_function(node)
+                    metrics["function"] = node.name
+
+                    complexity_results.append(metrics)
+
+        except Exception:
+            pass
+
+    # ---------------------------------------------
+    # Return file metadata
+    # ---------------------------------------------
+
+    return {
+        "file_name": file,
+        "file_path": str(path.relative_to(repo_path)),
+        "functions": analysis["functions"],
+        "imports": analysis["imports"],
+        "dead_code": dead_code,
+        "complexity_metrics": complexity_results,
+        "content": code
+    }
+
+
 class RepoAnalyzer:
     """
     Scans a repository and extracts structural metadata.
@@ -43,7 +118,11 @@ class RepoAnalyzer:
 
         repo_path = Path(repo_path)
 
-        files_data = []
+        file_paths = []
+
+        # --------------------------------------------------
+        # Scan repository and collect files
+        # --------------------------------------------------
 
         for root, dirs, files in os.walk(repo_path):
 
@@ -56,66 +135,33 @@ class RepoAnalyzer:
                     continue
 
                 path = Path(root) / file
+                file_paths.append(path)
 
-                try:
-                    code = path.read_text(encoding="utf-8", errors="ignore")
-                except Exception as e:
-                    print(f"Failed to read {path}: {e}")
-                    continue
+        # --------------------------------------------------
+        # Parallel file analysis
+        # --------------------------------------------------
 
-                # ---------------------------------------------
-                # AST Parsing (Python only)
-                # ---------------------------------------------
+        files_data = []
 
-                analysis = {"functions": [], "imports": []}
+        worker_args = [(path, repo_path) for path in file_paths]
 
-                if file.endswith(".py"):
-                    try:
-                        analysis = parse_python_file(code)
-                    except Exception:
-                        pass
+        num_workers = max(1, cpu_count() - 1)
 
-                # ---------------------------------------------
-                # Dead Code Detection
-                # ---------------------------------------------
+        try:
 
-                dead_code = self.dead_code_detector.analyze(code)
+            with Pool(processes=num_workers) as pool:
+                results = pool.map(_analyze_file_worker, worker_args)
 
-                # ---------------------------------------------
-                # Complexity Analysis
-                # ---------------------------------------------
+            files_data = [r for r in results if r is not None]
 
-                complexity_results = []
+        except Exception as e:
+            print(f"[RepoAnalyzer Warning] Multiprocessing failed, falling back to sequential: {e}")
 
-                if file.endswith(".py"):
-
-                    try:
-                        tree = ast.parse(code)
-
-                        for node in ast.walk(tree):
-                            if isinstance(node, ast.FunctionDef):
-
-                                metrics = self.complexity_analyzer.analyze_function(node)
-                                metrics["function"] = node.name
-
-                                complexity_results.append(metrics)
-
-                    except Exception:
-                        pass
-
-                # ---------------------------------------------
-                # Store file metadata
-                # ---------------------------------------------
-
-                files_data.append({
-                    "file_name": file,
-                    "file_path": str(path.relative_to(repo_path)),
-                    "functions": analysis["functions"],
-                    "imports": analysis["imports"],
-                    "dead_code": dead_code,
-                    "complexity_metrics": complexity_results,
-                    "content": code
-                })
+            # fallback to sequential
+            for args in worker_args:
+                result = _analyze_file_worker(args)
+                if result:
+                    files_data.append(result)
 
         # --------------------------------------------------
         # Build Repository Call Graph

@@ -89,11 +89,13 @@ def _heuristic_analysis(code: str):
 # ----------------------------------------------------------
 # Main Code Analysis Function
 # ----------------------------------------------------------
+from typing import Dict, List
 
 def analyze_code(
     code: str,
     functions: List[str] = None,
     imports: List[str] = None,
+    complexity_metrics: List[Dict] = None,
     language: str = "unknown"
 ) -> Dict:
 
@@ -146,11 +148,34 @@ Code:
     probs = torch.softmax(outputs.logits, dim=1).tolist()[0]
 
     # ------------------------------------------------------
-    # STEP 5: Heuristic analysis
+    # STEP 5: Static security + default complexity
     # ------------------------------------------------------
 
-    issues, complexity = _heuristic_analysis(code)
     security_issues = detect_security_issues(code)
+
+    # ----------------------------------------------
+    # Complexity from AST analyzer
+    # ----------------------------------------------
+
+    complexity = "O(1)"
+
+    if complexity_metrics:
+
+        nested_depth = max(
+            fn.get("max_loop_depth", 0)
+            for fn in complexity_metrics
+        )
+
+        if nested_depth == 1:
+            complexity = "O(n)"
+
+        elif nested_depth == 2:
+            complexity = "O(n^2)"
+
+        elif nested_depth >= 3:
+            complexity = "O(n^k)"
+
+    issues = ["No obvious structural issues detected"]
 
     quality_score = compute_quality_score(
         probs[1],

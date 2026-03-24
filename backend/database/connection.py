@@ -12,6 +12,9 @@ from pathlib import Path
 
 DB_PATH = Path("backend/database/reviews.db")
 
+# Ensure database directory exists
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 
 # ----------------------------------------------------------
 # Get Database Connection
@@ -20,6 +23,9 @@ DB_PATH = Path("backend/database/reviews.db")
 def get_connection() -> sqlite3.Connection:
     """
     Create a SQLite database connection.
+
+    This function also guarantees that the database
+    schema has been initialized before use.
     """
 
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -35,10 +41,17 @@ def get_connection() -> sqlite3.Connection:
 def init_db():
     """
     Create required database tables if they do not exist.
+
+    This function is safe to call multiple times because
+    it uses CREATE TABLE IF NOT EXISTS.
     """
 
     conn = get_connection()
     cursor = conn.cursor()
+
+    # ------------------------------------------------------
+    # Reviews Table
+    # ------------------------------------------------------
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS reviews (
@@ -51,7 +64,10 @@ def init_db():
     )
     """)
 
-    # Optional index for faster queries
+    # ------------------------------------------------------
+    # Index for faster queries
+    # ------------------------------------------------------
+
     cursor.execute("""
     CREATE INDEX IF NOT EXISTS idx_repo_commit
     ON reviews (repo_name, commit_id)
@@ -59,3 +75,11 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+# ----------------------------------------------------------
+# Automatic Database Initialization
+# ----------------------------------------------------------
+
+# Ensure database schema exists when module loads
+init_db()

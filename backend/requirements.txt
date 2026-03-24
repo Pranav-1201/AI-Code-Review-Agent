@@ -16,3 +16,5 @@ pytest
 pytest-asyncio
 
 chromadb
+
+rich

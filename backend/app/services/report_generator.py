@@ -9,6 +9,14 @@ from typing import Dict, Optional
 from database.review_repository import save_review
 from rag.vector_store import ReviewVectorStore
 
+# Rich terminal visualization
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich import box
+
+
+console = Console()
 
 # Lazy initialization of vector store
 _vector_store = None
@@ -80,6 +88,65 @@ def generate_review_report(
     issues_text = "\n".join("- " + i for i in issues) if issues else "None"
     security_text = "\n".join("- " + s for s in security) if security else "None"
     suggestions_text = "\n".join("- " + s for s in suggestions) if suggestions else "None"
+
+    # ------------------------------------------------------
+    # Rich Terminal Visualization
+    # ------------------------------------------------------
+
+    try:
+
+        console.print(
+            Panel.fit(
+                "[bold cyan]AI CODE REVIEW REPORT[/bold cyan]",
+                border_style="cyan"
+            )
+        )
+
+        console.print(f"[bold]File:[/bold] {file_name}")
+
+        # Metrics table
+        table = Table(box=box.ROUNDED)
+
+        table.add_column("Metric", style="bold")
+        table.add_column("Value")
+
+        table.add_row("Quality Score", f"{score}/100")
+        table.add_row("Time Complexity", str(complexity))
+        table.add_row("Issues Found", str(len(issues)))
+        table.add_row("Security Risks", str(len(security)))
+
+        console.print(table)
+
+        if issues:
+            console.print(
+                Panel(
+                    "\n".join(issues),
+                    title="Issues",
+                    border_style="yellow"
+                )
+            )
+
+        if security:
+            console.print(
+                Panel(
+                    "\n".join(security),
+                    title="Security Risks",
+                    border_style="red"
+                )
+            )
+
+        if suggestions:
+            console.print(
+                Panel(
+                    "\n".join(suggestions),
+                    title="Suggestions",
+                    border_style="green"
+                )
+            )
+
+    except Exception:
+        # If Rich fails, silently fallback to normal behavior
+        pass
 
     # ------------------------------------------------------
     # Human-readable report

@@ -6,76 +6,89 @@
 import sys
 import os
 
+# ----------------------------------------------------------
+# Ensure backend is on Python path
+# ----------------------------------------------------------
+
 project_root = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(os.path.join(project_root, "backend"))
 
-from app.services.repo_analyzer import analyze_repository
+# ----------------------------------------------------------
+# Imports
+# ----------------------------------------------------------
+
+from app.services.repository_review_engine import RepositoryReviewEngine
 from app.analysis.dependency_graph import build_dependency_graph
 from app.analysis.call_graph import build_call_graph
-from app.services.llm_service import analyze_code
-from app.services.report_generator import generate_review_report
+from app.services.repo_analyzer import analyze_repository
 
+
+# ----------------------------------------------------------
+# Pipeline Runner
+# ----------------------------------------------------------
 
 def run_pipeline(repo_path: str):
 
     print("Starting repository analysis...\n")
 
     # ------------------------------------------------------
-    # Repository scanning
+    # Step 1: Repository Scan
     # ------------------------------------------------------
 
     files = analyze_repository(repo_path)
 
     # ------------------------------------------------------
-    # Dependency Graph
+    # Step 2: Dependency Graph
     # ------------------------------------------------------
 
     dependency_graph = build_dependency_graph(files)
     print("Dependency Graph:", dependency_graph)
 
     # ------------------------------------------------------
-    # Call Graph
+    # Step 3: Call Graph
     # ------------------------------------------------------
 
     call_graph = build_call_graph(files)
     print("Call Graph:", dict(call_graph))
 
     # ------------------------------------------------------
-    # Analyze each file
+    # Step 4: AI Review Engine
     # ------------------------------------------------------
 
-    for file in files:
+    print("\nRunning AI repository review...\n")
 
-        file_name = file.get("file_name", "unknown_file")
-        code = file.get("content", "")
-        functions = file.get("functions", [])
-        imports = file.get("imports", [])
+    engine = RepositoryReviewEngine()
 
-        print(f"\nAnalyzing {file_name}...")
+    result = engine.review_repository(repo_path)
 
-        analysis_result = analyze_code(
-            code,
-            functions=functions,
-            imports=imports
-        )
+    summary = result["repository_summary"]
+    reports = result["file_reports"]
 
-        report = generate_review_report(
-            file_name,
-            analysis_result
-        )
+    # ------------------------------------------------------
+    # Step 5: Print Summary
+    # ------------------------------------------------------
 
+    print("\n================ REPOSITORY SUMMARY ================\n")
+
+    print("Files analyzed:", summary["files_analyzed"])
+    print("Files with issues:", summary["files_with_issues"])
+    print("Average quality score:", summary["average_quality_score"])
+    print("Total security issues:", summary["total_security_issues"])
+
+    print("\n====================================================\n")
+
+    # ------------------------------------------------------
+    # Step 6: Print File Reports
+    # ------------------------------------------------------
+
+    for report in reports:
         print(report)
         print("-" * 60)
-
-        print("Functions:", functions)
-        print("Imports:", imports)
 
 
 # ----------------------------------------------------------
 # Script Entry Point
 # ----------------------------------------------------------
-
-import sys
 
 if __name__ == "__main__":
 

@@ -26,6 +26,22 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     imports = file_data.get("imports", [])
 
     # ------------------------------------------------------
+    # Extract analysis signals from repo analyzer
+    # ------------------------------------------------------
+
+    complexity_metrics = file_data.get("complexity_metrics", [])
+
+    max_depth = 0
+    for fn in complexity_metrics:
+        max_depth = max(max_depth, fn.get("max_loop_depth", 0))
+
+    complexity = {
+        "max_loop_depth": max_depth
+    }
+
+    smells = file_data.get("code_smells", [])
+
+    # ------------------------------------------------------
     # AI Code Analysis
     # ------------------------------------------------------
 
@@ -33,20 +49,11 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
         code,
         functions=functions,
         imports=imports,
+        complexity_metrics=complexity_metrics,   # ✅ NEW
         language="python"
     )
 
     analysis_section = analysis_result.get("analysis", {})
-
-    # ------------------------------------------------------
-    # Extract signals
-    # ------------------------------------------------------
-
-    complexity = {
-        "max_loop_depth": 0
-    }
-
-    smells = file_data.get("dead_code", {}).get("code_smells", [])
 
     # ------------------------------------------------------
     # Refactor Suggestions
@@ -66,7 +73,9 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     report = generate_review_report(
         file_name=file_name,
         analysis_result=analysis_result,
-        refactor_result=refactor_result
+        refactor_result=refactor_result,
+        complexity_metrics=complexity_metrics,
+        smell_metrics=smells
     )
 
     score = analysis_result.get("code_quality_score", 0)
