@@ -3,6 +3,8 @@ import os
 from app.analysis.ast_parser import parse_python_file
 from app.analysis.dead_code_detector import DeadCodeDetector
 from app.analysis.call_graph import build_call_graph
+from analysis.complexity_analyzer import ComplexityAnalyzer
+
 
 SUPPORTED_EXTENSIONS = (".py", ".cpp", ".js", ".java")
 
@@ -61,8 +63,11 @@ class RepoAnalyzer:
 
         print(f"Repository scan complete. {len(files_data)} files found.")
 
+        complexity_analyzer = ComplexityAnalyzer()
+        complexity_metrics = complexity_analyzer.analyze_function(node)
+        
         return files_data
-
+ 
 
 # This wrapper keeps compatibility with existing tests
 def analyze_repository(repo_path: str):
