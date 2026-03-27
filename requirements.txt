@@ -1,33 +1,46 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
+# ==========================================================
 # Core AI / ML
-torch==2.11.0+cpu
+# ==========================================================
+torch
 transformers
 sentence-transformers
-accelerate
 
-# Vector search / RAG
+# ==========================================================
+# Vector Search / RAG
+# ==========================================================
 faiss-cpu
-numpy
 chromadb
+numpy
 scikit-learn
 
-# Data handling
+# ==========================================================
+# Data Processing
+# ==========================================================
 pandas
 
-# Environment config
-python-dotenv
-
-# API / future dashboard
+# ==========================================================
+# Backend API
+# ==========================================================
 fastapi
 uvicorn
+pydantic
+python-multipart
 
+# ==========================================================
+# Environment
+# ==========================================================
+python-dotenv
+
+# ==========================================================
 # Utilities
+# ==========================================================
 tqdm
 rich
+requests
 
-# Optional but recommended
-pydantic
-
-# File uploads
-python-multipart
+# ==========================================================
+# Optional / Dev
+# ==========================================================
+pytest

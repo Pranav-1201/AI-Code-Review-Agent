@@ -1,197 +1,377 @@
-# Explainable AI Code Review Agent 🚀
+# AI Code Review Agent
 
-An **Explainable AI Code Review Agent** powered by **Large Language Models (LLMs)** that analyzes source code, detects bugs, evaluates complexity, and provides **clear, human-readable explanations** for every suggestion. The system uses **Retrieval-Augmented Generation (RAG)** for grounded reasoning and is fully **Dockerized** for portability and scalability.
+An **AI-powered repository analysis platform** that scans GitHub repositories and provides deep insights into **code quality, security vulnerabilities, maintainability, and architectural complexity**.
 
----
-
-## ✨ Key Features
-
-* 🧠 **LLM-powered code analysis** (logic errors, code smells, inefficiencies)
-* 📘 **Explainable AI outputs** – not just what is wrong, but *why*
-* 📊 **Time & space complexity estimation**
-* 🔐 **Basic security and unsafe pattern detection**
-* 🔎 **RAG with FAISS** for grounded explanations using best practices
-* 🤖 **AI Agent architecture** using LangChain tools
-* 🐳 **Dockerized microservices** for reproducible deployment
-* ☸️ **Kubernetes-ready** architecture (optional scaling)
+The system combines **static code analysis, repository graph analysis, and AI-assisted recommendations** to help developers understand and improve their codebases.
 
 ---
 
-## 🏗️ System Architecture
+# Overview
+
+AI Code Review Agent automatically analyzes a repository and generates a detailed review including:
+
+* security risks
+* code complexity
+* maintainability score
+* dependency structure
+* duplicate code detection
+* architectural insights
+* AI-generated refactoring suggestions
+
+It provides these insights through a **modern interactive dashboard** built with React.
+
+The system is designed to behave like an **automated code reviewer for entire repositories**.
+
+---
+
+# Key Features
+
+## Repository Scanning
+
+Analyze any GitHub repository by providing its URL.
+
+The system automatically:
+
+* clones the repository
+* parses the source code
+* builds dependency graphs
+* performs static analysis
+* generates a structured review report
+
+---
+
+## Static Code Analysis
+
+The platform performs multiple static analysis techniques:
+
+* AST-based parsing
+* call graph generation
+* cyclomatic complexity analysis
+* dead code detection
+* code smell detection
+
+This allows the system to understand **how the codebase is structured and behaves internally**.
+
+---
+
+## Code Quality Evaluation
+
+Each repository is evaluated using several quality metrics:
+
+* cyclomatic complexity
+* maintainability indicators
+* code smell detection
+* structural issues
+
+The system aggregates these metrics into a **repository health score**.
+
+---
+
+## Security Analysis
+
+The platform scans for unsafe programming patterns such as:
+
+* dangerous function usage
+* insecure subprocess calls
+* unsafe evaluation patterns
+* risky system operations
+
+This helps detect **potential vulnerabilities early in development**.
+
+---
+
+## Dependency Analysis
+
+The system analyzes how files depend on each other.
+
+It builds a **repository dependency graph** that helps identify:
+
+* tightly coupled modules
+* architectural bottlenecks
+* highly dependent files
+
+---
+
+## Duplicate Code Detection
+
+Detects similar code patterns across files.
+
+Helps identify:
+
+* repeated logic
+* refactoring opportunities
+* maintainability risks.
+
+---
+
+## AI-Powered Code Insights
+
+The platform integrates **LLM-based reasoning** to generate:
+
+* refactoring suggestions
+* improvement recommendations
+* explanation of detected issues
+
+These suggestions help developers understand **why a problem exists and how to fix it**.
+
+---
+
+## Pull Request Analysis (Architecture Ready)
+
+The system includes a **PR review engine** which can be extended to analyze pull requests and code changes.
+
+---
+
+## Interactive Dashboard
+
+The frontend provides an interactive dashboard with multiple analysis views.
+
+Available pages include:
+
+* Repository Scanner
+* Repository Overview
+* Scan Results
+* File Analysis
+* Security Report
+* Code Quality
+* Dependency Analysis
+* Duplicate Detection
+* AI Suggestions
+* Health Score
+* Issue Explorer
+* Visualizations
+* Scan History
+* Export Report
+* Settings
+
+This allows developers to explore their repository from **multiple analytical perspectives**.
+
+---
+
+# System Architecture
 
 ```
 User
- ↓
-Web UI (Streamlit)
- ↓
+↓
+React Dashboard (Frontend)
+↓
 FastAPI Backend
- ↓
-LangChain Agent
- ├── Bug Detection Tool
- ├── Complexity Analyzer
- ├── Static Rule Engine
- ├── RAG Retriever (FAISS)
- ↓
-LLM (Hugging Face Models)
- ↓
-Explainable Review Report
+↓
+Repository Scanner
+│
+├── Static Analysis Engine
+│   ├── AST Parser
+│   ├── Call Graph Builder
+│   ├── Complexity Analyzer
+│   ├── Dead Code Detector
+│   └── Code Smell Detector
+│
+├── Repository Intelligence
+│   ├── Dependency Analyzer
+│   ├── Duplicate Detector
+│   └── Security Analyzer
+│
+├── AI Engine
+│   ├── LLM Refactor Engine
+│   └── RAG Retrieval
+│
+↓
+Review Report Generator
+↓
+Frontend Visualization
 ```
-
-Each major component runs as an independent service and can be containerized and scaled.
 
 ---
 
-## 🧰 Tech Stack
+# Tech Stack
 
-**AI / NLP**
-
-* Hugging Face Transformers
-* Open-source code LLMs (CodeBERT, CodeLLaMA, Mistral)
-* LangChain (Agents, Tools, Memory)
-* FAISS (Vector Database)
-
-**Backend**
+## Backend
 
 * Python
 * FastAPI
-* Pydantic
+* AST-based static analysis
+* FAISS / vector retrieval
+* SQLite database
 
-**Frontend**
+## Frontend
 
-* Streamlit (lightweight demo UI)
+* React
+* TypeScript
+* Vite
+* TailwindCSS
 
-**DevOps**
+## AI & Analysis
 
-* Docker & Docker Compose
-* Kubernetes (ReplicaSets, Autoscaling, Rolling Updates)
+* Transformers
+* Sentence Transformers
+* Retrieval-Augmented Generation
+* Static code analysis modules
 
 ---
 
-## 📁 Project Structure
+# Project Structure
 
 ```
-explainable-ai-code-reviewer/
+AI-Code-Review-Agent
 │
-├── backend/              # FastAPI backend & core logic
-│   ├── app/
-│   │   ├── services/     # LLM, RAG, explainability modules
-│   │   ├── routes/       # API routes
-│   │   └── main.py       # API entry point
-│   └── Dockerfile
+├── backend
+│   ├── app
+│   │   ├── analysis
+│   │   │   ├── complexity_analyzer.py
+│   │   │   ├── dependency_analyzer.py
+│   │   │   ├── duplicate_detector.py
+│   │   │   ├── dead_code_detector.py
+│   │   │   └── refactoring_engine.py
+│   │   │
+│   │   ├── services
+│   │   │   ├── repo_analyzer.py
+│   │   │   ├── security_analyzer.py
+│   │   │   ├── scan_manager.py
+│   │   │   ├── report_generator.py
+│   │   │   └── repository_review_engine.py
+│   │   │
+│   │   └── routes
 │
-├── rag/                  # RAG ingestion & FAISS index
-│   ├── data/
-│   ├── ingest.py
-│   └── Dockerfile
+├── frontend
+│   ├── src
+│   │   ├── components
+│   │   ├── pages
+│   │   └── lib
 │
-├── frontend/             # Streamlit UI
-│   ├── app.py
-│   └── Dockerfile
+├── rag
+│   ├── vector_store.py
+│   └── ingest.py
 │
-├── docker-compose.yml
-├── .env
+├── main.py
+├── requirements.txt
 └── README.md
 ```
 
 ---
 
-## 🚀 Getting Started
+# Running the Project Locally
 
-### 1️⃣ Clone the Repository
+## 1. Clone the Repository
 
-```bash
-git clone https://github.com/your-username/explainable-ai-code-reviewer.git
-cd explainable-ai-code-reviewer
+```
+git clone https://github.com/Pranav-1201/AI-Code-Review-Agent.git
+cd AI-Code-Review-Agent
 ```
 
-### 2️⃣ Create & Activate Virtual Environment
+---
 
-```bash
+# Backend Setup
+
+## Create Virtual Environment
+
+```
 python -m venv venv
-venv\Scripts\activate   # Windows
-# source venv/bin/activate  # macOS/Linux
 ```
 
-### 3️⃣ Install Dependencies
+Activate it:
 
-```bash
-pip install -r backend/requirements.txt
+Windows
+
+```
+venv\Scripts\activate
 ```
 
-### 4️⃣ Set Environment Variables
+Mac/Linux
 
-Create a `.env` file:
-
-```env
-HUGGINGFACE_TOKEN=your_huggingface_token
 ```
-
-### 5️⃣ Run Backend Locally
-
-```bash
-uvicorn backend.app.main:app --reload
+source venv/bin/activate
 ```
 
 ---
 
-## 🐳 Running with Docker (Recommended)
+## Install Dependencies
 
-```bash
-docker compose up --build
+```
+pip install -r requirements.txt
 ```
 
-This starts:
+---
 
-* Backend API
-* RAG service
-* Frontend UI
+## Run Backend Server
+
+```
+uvicorn main:app --reload
+```
+
+Backend runs on:
+
+```
+http://localhost:8000
+```
 
 ---
 
-## 🎯 Use Cases
+# Frontend Setup
 
-* Students learning data structures & algorithms
-* Beginners understanding coding mistakes
-* Interview preparation & practice
-* Educational institutions & labs
-* Explainable AI demonstrations
+Open a new terminal.
 
----
+```
+cd frontend
+npm install
+```
 
-## ⚠️ Limitations
+Start the frontend:
 
-* LLM outputs may vary depending on prompt formulation
-* Very complex bugs may require deeper fine-tuning
-* Code execution is not performed (analysis-only)
+```
+npm run dev
+```
 
----
+Frontend runs on:
 
-## 🔮 Future Enhancements
-
-* VS Code / IDE plugin
-* Reinforcement learning from user feedback
-* Multi-language execution sandbox
-* GitHub Pull Request integration
-* Advanced hallucination detection
+```
+http://localhost:5173
+```
 
 ---
 
-## 📚 Learning Outcomes
+# Using the System
+
+1. Open the dashboard in your browser
+2. Enter a GitHub repository URL
+3. Start a scan
+4. Explore the generated insights
+
+The system will generate:
+
+* repository metrics
+* security reports
+* dependency graphs
+* duplicate detection
+* AI suggestions
+* visualizations
+
+---
+
+# Future Improvements
+
+Planned enhancements include:
+
+* GitHub OAuth integration
+* pull request analysis
+* automated refactoring
+* CI/CD integration
+* IDE plugins
+* advanced vulnerability detection
+
+---
+
+# Educational Value
 
 This project demonstrates:
 
-* Practical use of LLMs for real-world problems
-* Explainable AI system design
-* RAG pipelines using FAISS
-* Agent-based AI architectures
-* Docker & Kubernetes-based deployment
+* static code analysis techniques
+* AI-assisted code review
+* repository architecture analysis
+* full-stack AI tooling
+* modern developer dashboards
 
 ---
 
-## 📄 License
+# License
 
-This project is for academic and educational purposes.
-
----
-
-**⭐ If you find this project useful, consider starring the repository!**
+This project is intended for **educational and research purposes**.
