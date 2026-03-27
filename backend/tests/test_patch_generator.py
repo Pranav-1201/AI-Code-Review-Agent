@@ -24,7 +24,7 @@ import os
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.analysis.patch_generator import PatchGenerator
+from backend.app.analysis.patch_generator import PatchGenerator
 
 
 # ---------------------------------------------------------

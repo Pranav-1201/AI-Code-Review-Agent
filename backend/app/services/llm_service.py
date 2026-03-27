@@ -9,10 +9,10 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 from typing import Dict, List
 
-from app.config import HF_TOKEN
-from app.services.retriever_service import CodeRetriever
-from app.services.security_analyzer import detect_security_issues
-from app.services.quality_scorer import compute_quality_score
+from backend.app.config import HF_TOKEN
+from backend.app.services.retriever_service import CodeRetriever
+from backend.app.services.security_analyzer import detect_security_issues
+from backend.app.services.quality_scorer import compute_quality_score
 
 MODEL_NAME = "microsoft/codebert-base"
 
@@ -69,27 +69,198 @@ def _heuristic_analysis(code: str):
 
     loop_count = sum(1 for l in lines if l.startswith(("for ", "while ")))
     condition_count = sum(1 for l in lines if "if " in l)
+    line_count = len(lines)
 
     issues = []
-    complexity = "O(n)"
 
+    # Detect potential performance issues
     if loop_count >= 2:
-        complexity = "O(n^2)"
-        issues.append("Nested loops detected")
+        issues.append({
+            "type": "performance",
+            "severity": "medium",
+            "message": f"Multiple loops detected ({loop_count} loops) — possible nested loop performance issue"
+        })
 
     if condition_count > 0 and loop_count > 0:
-        issues.append("Conditional logic inside loops may affect performance")
+        issues.append({
+            "type": "performance",
+            "severity": "low",
+            "message": "Conditional logic inside loops may affect performance"
+        })
 
-    if not issues:
-        issues.append("No obvious structural issues detected")
+    # Detect long files
+    if line_count > 200:
+        issues.append({
+            "type": "maintainability",
+            "severity": "medium",
+            "message": f"File is {line_count} lines long — consider splitting into smaller modules"
+        })
+    elif line_count > 100:
+        issues.append({
+            "type": "style",
+            "severity": "low",
+            "message": f"File is {line_count} lines — approaching recommended module size limit"
+        })
+
+    # Detect missing if __name__ guard in scripts with top-level code
+    has_main_guard = any("__name__" in l and "__main__" in l for l in lines)
+    has_top_level_calls = any(
+        l and not l.startswith(("def ", "class ", "import ", "from ", "#", "@", "    "))
+        and "=" not in l
+        and l.endswith(")")
+        for l in lines
+    )
+    if has_top_level_calls and not has_main_guard:
+        issues.append({
+            "type": "style",
+            "severity": "low",
+            "message": "Top-level function calls detected without if __name__ == '__main__' guard"
+        })
+
+    # Complexity heuristic
+    complexity = "O(1)"
+    if loop_count >= 3:
+        complexity = "O(n^3)"
+    elif loop_count >= 2:
+        complexity = "O(n^2)"
+    elif loop_count >= 1:
+        complexity = "O(n)"
 
     return issues, complexity
 
 
 # ----------------------------------------------------------
+# Generate File-Specific Explanation
+# ----------------------------------------------------------
+
+def _generate_explanation(
+    code: str,
+    issues: List[Dict],
+    security_issues: List[Dict],
+    complexity: str,
+    quality_score: int,
+    functions: List[str],
+    imports: List[str],
+    language: str
+) -> str:
+    """
+    Generate a meaningful, file-specific explanation
+    based on actual analysis signals.
+    """
+
+    lines = len([l for l in code.split("\n") if l.strip()])
+    parts = []
+
+    # Overview
+    if functions:
+        fn_list = ", ".join(functions[:5])
+        suffix = f" and {len(functions) - 5} more" if len(functions) > 5 else ""
+        parts.append(f"This {language} file defines {len(functions)} function(s): {fn_list}{suffix}.")
+    else:
+        parts.append(f"This {language} file contains {lines} lines of code with no explicit function definitions.")
+
+    # Quality assessment
+    if quality_score >= 90:
+        parts.append("Code quality is excellent with minimal issues detected.")
+    elif quality_score >= 75:
+        parts.append("Code quality is good with minor areas for improvement.")
+    elif quality_score >= 50:
+        parts.append("Code quality is moderate — several improvements recommended.")
+    else:
+        parts.append("Code quality needs significant improvement.")
+
+    # Complexity note
+    if complexity not in ("O(1)", "O(n)"):
+        parts.append(f"Estimated time complexity is {complexity}, which may impact performance on large inputs.")
+
+    # Security note
+    if security_issues:
+        sev_counts = {}
+        for s in security_issues:
+            sev = s.get("severity", "Medium") if isinstance(s, dict) else "High"
+            sev_counts[sev] = sev_counts.get(sev, 0) + 1
+        sev_str = ", ".join(f"{v} {k}" for k, v in sorted(sev_counts.items()))
+        parts.append(f"Security analysis found {len(security_issues)} issue(s) ({sev_str}).")
+
+    # Issues note
+    real_issues = [i for i in issues if isinstance(i, dict)]
+    if real_issues:
+        categories = set(i.get("type", "general") for i in real_issues)
+        parts.append(f"Static analysis detected {len(real_issues)} issue(s) in categories: {', '.join(categories)}.")
+
+    return " ".join(parts)
+
+
+# ----------------------------------------------------------
+# Generate File-Specific Suggestions
+# ----------------------------------------------------------
+
+def _generate_suggestions(
+    complexity: str,
+    security_issues: List[Dict],
+    issues: List[Dict],
+    functions: List[str],
+    imports: List[str],
+    code: str
+) -> List[str]:
+    """
+    Generate actionable, file-specific suggestions
+    based on actual analysis signals.
+    """
+
+    suggestions = []
+
+    # Complexity suggestions
+    if complexity in ("O(n^2)", "O(n^3)", "O(n^k)"):
+        suggestions.append(
+            "Consider reducing nested loops using sets, hash maps, or vectorized operations for better performance."
+        )
+
+    # Security suggestions
+    if security_issues:
+        sec_types = set()
+        for s in security_issues:
+            if isinstance(s, dict):
+                sec_types.add(s.get("type", "security"))
+        if "Hardcoded Credential" in sec_types:
+            suggestions.append("Move hardcoded credentials to environment variables or a secrets manager.")
+        if "SQL Injection" in sec_types:
+            suggestions.append("Use parameterized queries or an ORM instead of string concatenation for SQL.")
+        if "Command Injection" in sec_types:
+            suggestions.append("Use subprocess with list arguments instead of shell commands.")
+
+    # Long file suggestion
+    lines = len([l for l in code.split("\n") if l.strip()])
+    if lines > 200:
+        suggestions.append(
+            f"This file has {lines} lines. Consider splitting it into smaller, focused modules."
+        )
+
+    # Many functions suggestion
+    if len(functions) > 15:
+        suggestions.append(
+            f"This file defines {len(functions)} functions. Consider grouping related functions into separate modules or classes."
+        )
+
+    # Many imports suggestion
+    if len(imports) > 10:
+        suggestions.append(
+            f"This file has {len(imports)} imports — review for unused imports and consider lazy loading."
+        )
+
+    # Fallback if nothing specific
+    if not suggestions:
+        if complexity == "O(1)":
+            suggestions.append("Code structure appears efficient for typical input sizes.")
+        else:
+            suggestions.append("Code complexity is manageable. Consider adding docstrings for better documentation.")
+
+    return suggestions
+
+
+# ----------------------------------------------------------
 # Main Code Analysis Function
 # ----------------------------------------------------------
-from typing import Dict, List
 
 def analyze_code(
     code: str,
@@ -175,7 +346,14 @@ Code:
         elif nested_depth >= 3:
             complexity = "O(n^k)"
 
-    issues = ["No obvious structural issues detected"]
+    # ------------------------------------------------------
+    # Heuristic issue detection
+    # ------------------------------------------------------
+
+    heuristic_issues, heuristic_complexity = _heuristic_analysis(code)
+
+    # Merge heuristic issues (already structured dicts)
+    issues = list(heuristic_issues)
 
     quality_score = compute_quality_score(
         probs[1],
@@ -184,24 +362,28 @@ Code:
     )
 
     # ------------------------------------------------------
-    # STEP 6: Generate explanation
+    # STEP 6: Generate file-specific explanation
     # ------------------------------------------------------
 
-    explanation = (
-        "The system combines transformer-based semantic analysis "
-        "with static heuristics to detect inefficiencies."
+    explanation = _generate_explanation(
+        code=code,
+        issues=issues,
+        security_issues=security_issues,
+        complexity=complexity,
+        quality_score=quality_score,
+        functions=functions,
+        imports=imports,
+        language=language
     )
 
-    suggestions = []
-
-    if complexity == "O(n^2)":
-        suggestions.append(
-            "Consider reducing nested loops using sets or hash maps."
-        )
-    else:
-        suggestions.append(
-            "Code structure appears efficient for typical input sizes."
-        )
+    suggestions = _generate_suggestions(
+        complexity=complexity,
+        security_issues=security_issues,
+        issues=issues,
+        functions=functions,
+        imports=imports,
+        code=code
+    )
 
     # ------------------------------------------------------
     # STEP 7: Structured result

@@ -6,7 +6,7 @@
 
 from typing import Dict, Optional
 
-from database.review_repository import save_review
+from backend.database.review_repository import save_review
 from rag.vector_store import ReviewVectorStore
 
 # Rich terminal visualization
@@ -81,13 +81,25 @@ def generate_review_report(
         "patch": patch
     }
 
-    # ------------------------------------------------------
-    # Prepare formatted sections (avoid backslashes in f-string)
-    # ------------------------------------------------------
+# ------------------------------------------------------
+# Prepare formatted sections (avoid backslashes in f-string)
+# ------------------------------------------------------
 
-    issues_text = "\n".join("- " + i for i in issues) if issues else "None"
-    security_text = "\n".join("- " + s for s in security) if security else "None"
-    suggestions_text = "\n".join("- " + s for s in suggestions) if suggestions else "None"
+    def _format_items(items):
+        formatted = []
+
+        for item in items:
+            if isinstance(item, dict):
+                formatted.append("- " + str(item.get("message", item)))
+            else:
+                formatted.append("- " + str(item))
+
+        return "\n".join(formatted) if formatted else "None"
+
+
+    issues_text = _format_items(issues) if issues else "None"
+    security_text = _format_items(security) if security else "None"
+    suggestions_text = _format_items(suggestions) if suggestions else "None"
 
     # ------------------------------------------------------
     # Rich Terminal Visualization
@@ -120,7 +132,7 @@ def generate_review_report(
         if issues:
             console.print(
                 Panel(
-                    "\n".join(issues),
+                    _format_items(issues),
                     title="Issues",
                     border_style="yellow"
                 )
@@ -129,7 +141,7 @@ def generate_review_report(
         if security:
             console.print(
                 Panel(
-                    "\n".join(security),
+                    _format_items(security),
                     title="Security Risks",
                     border_style="red"
                 )
@@ -138,7 +150,7 @@ def generate_review_report(
         if suggestions:
             console.print(
                 Panel(
-                    "\n".join(suggestions),
+                    _format_items(suggestions),
                     title="Suggestions",
                     border_style="green"
                 )
@@ -216,18 +228,18 @@ Patch
             report=report_data
         )
 
-        # --------------------------------------------------
-        # Index summary in vector store for RAG retrieval
-        # --------------------------------------------------
+# --------------------------------------------------
+# Index summary in vector store for RAG retrieval
+# --------------------------------------------------
 
-        vector_summary = f"""
-        File: {file_name}
-        Score: {score}
-        Issues: {issues}
-        Suggestions: {suggestions}
-        """
+# vector_summary = f"""
+# File: {file_name}
+# Score: {score}
+# Issues: {issues}
+# Suggestions: {suggestions}
+# """
 
-        get_vector_store().add_review(review_id, vector_summary)
+# get_vector_store().add_review(review_id, vector_summary)
 
     except Exception as e:
         print(f"Failed to store review: {e}")

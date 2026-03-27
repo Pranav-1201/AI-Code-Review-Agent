@@ -7,7 +7,7 @@
 import json
 from typing import List, Dict, Optional
 
-from database.connection import get_connection
+from backend.database.connection import get_connection
 
 
 # ----------------------------------------------------------

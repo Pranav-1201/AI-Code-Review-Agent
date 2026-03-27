@@ -23,7 +23,7 @@ import os
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.analysis.refactoring_engine import RefactoringEngine
+from backend.app.analysis.refactoring_engine import RefactoringEngine
 
 
 # ---------------------------------------------------------

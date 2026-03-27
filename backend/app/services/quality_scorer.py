@@ -14,13 +14,13 @@
 # Higher score = better code quality.
 # ==========================================================
 
-from typing import List
+from typing import List, Union, Dict
 
 
 def compute_quality_score(
     issue_probability: float,
     complexity: str,
-    security_issues: List[str]
+    security_issues: List[Union[str, Dict]]
 ) -> int:
     """
     Compute an overall code quality score.
@@ -33,8 +33,8 @@ def compute_quality_score(
     complexity : str
         Estimated algorithmic complexity.
 
-    security_issues : List[str]
-        List of detected security issues.
+    security_issues : List[Union[str, Dict]]
+        List of detected security issues (strings or dicts).
 
     Returns
     -------
@@ -63,10 +63,22 @@ def compute_quality_score(
     score -= complexity_penalties.get(complexity, 0)
 
     # ------------------------------------------------------
-    # Penalize security issues
+    # Penalize security issues (severity-weighted)
     # ------------------------------------------------------
 
-    score -= 10 * len(security_issues)
+    severity_weights = {
+        "critical": 15,
+        "high": 10,
+        "medium": 5,
+        "low": 2
+    }
+
+    for issue in security_issues:
+        if isinstance(issue, dict):
+            sev = issue.get("severity", "High").lower()
+            score -= severity_weights.get(sev, 10)
+        else:
+            score -= 10
 
     # ------------------------------------------------------
     # Clamp score within valid range

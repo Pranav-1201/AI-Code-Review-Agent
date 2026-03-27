@@ -19,7 +19,7 @@ import os
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.services.quality_scorer import compute_quality_score
+from backend.app.services.quality_scorer import compute_quality_score
 
 
 # ---------------------------------------------------------

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.services.retriever_service import CodeRetriever
+from backend.app.services.retriever_service import CodeRetriever
 
 
 # Mock retrieval results

@@ -27,7 +27,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import ast
 import pytest
 
-from app.analysis.complexity_analyzer import ComplexityAnalyzer
+from backend.app.analysis.complexity_analyzer import ComplexityAnalyzer
 
 
 # ---------------------------------------------------------

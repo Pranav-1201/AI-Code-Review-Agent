@@ -7,46 +7,51 @@
 # Builds a dependency graph between repository files
 # based on their import statements.
 #
-# Example Output
-# ----------------------------------------------------------
-# {
-#     "model.py": ["numpy", "utils"],
-#     "trainer.py": ["model", "data_loader"]
-# }
+# Output format (for frontend graph visualization):
 #
-# This graph helps the repository analysis system:
-# • understand module dependencies
-# • identify tightly coupled files
-# • provide context for AI code review and RAG retrieval
+# {
+#     "nodes": [
+#         {"id": "model.py"},
+#         {"id": "trainer.py"}
+#     ],
+#     "links": [
+#         {"source": "trainer.py", "target": "model.py"}
+#     ]
+# }
 # ==========================================================
 
-from collections import defaultdict
-from typing import Dict, List
+from typing import Dict, List, Any
 
 
 # ==========================================================
 # Build Repository Dependency Graph
 # ==========================================================
-def build_dependency_graph(files_data: List[Dict]) -> Dict[str, List[str]]:
+
+def build_dependency_graph(files_data: List[Dict]) -> Dict[str, Any]:
     """
-    Build dependency relationships between repository files.
+    Build dependency graph between repository files.
 
     Parameters
     ----------
     files_data : List[Dict]
-        Repository file metadata containing:
+
+    Example input:
+    [
         {
-            "file_name": str,
-            "imports": List[str]
+            "file_name": "trainer.py",
+            "imports": ["model", "utils"]
         }
+    ]
 
     Returns
     -------
-    Dict[str, List[str]]
-        Mapping of file name → imported modules
+    Dict containing nodes and links
     """
 
-    graph: Dict[str, List[str]] = defaultdict(list)
+    nodes = []
+    links = []
+
+    seen_nodes = set()
 
     for file in files_data:
 
@@ -56,14 +61,28 @@ def build_dependency_graph(files_data: List[Dict]) -> Dict[str, List[str]]:
         if not file_name:
             continue
 
+        # Add node for file
+        if file_name not in seen_nodes:
+            nodes.append({"id": file_name})
+            seen_nodes.add(file_name)
+
         for imp in imports:
 
-            if imp is None:
+            if not imp:
                 continue
 
-            graph[file_name].append(imp)
+            # Add node for dependency
+            if imp not in seen_nodes:
+                nodes.append({"id": imp})
+                seen_nodes.add(imp)
 
-        # Remove duplicates while preserving order
-        graph[file_name] = list(dict.fromkeys(graph[file_name]))
+            # Add edge
+            links.append({
+                "source": file_name,
+                "target": imp
+            })
 
-    return dict(graph)
+    return {
+        "nodes": nodes,
+        "links": links
+    }

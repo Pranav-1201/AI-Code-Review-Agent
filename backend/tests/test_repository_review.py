@@ -17,7 +17,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.append(project_root)
 sys.path.append(os.path.join(project_root, "backend"))
 
-from app.services.repository_review_engine import RepositoryReviewEngine
+from backend.app.services.repository_review_engine import RepositoryReviewEngine
 
 
 # Mock result returned by LLM service

@@ -32,6 +32,12 @@ class CachedEmbeddingFunction:
     def __init__(self):
         self.model = get_embedding_model()
 
+        # --------------------------------------------------
+        # ChromaDB requires embedding functions to expose
+        # a "name" attribute internally
+        # --------------------------------------------------
+        self.name = "cached_embedding_function"
+
     def __call__(self, texts: List[str]):
 
         if not texts:
@@ -46,7 +52,12 @@ class CachedEmbeddingFunction:
                 batch_size=32,
                 normalize_embeddings=True
             )
-            return embeddings.tolist()
+
+            # Ensure embeddings are always returned as lists
+            if hasattr(embeddings, "tolist"):
+                return embeddings.tolist()
+
+            return embeddings
 
         except Exception as e:
             print(f"[VectorStore Error] Embedding generation failed: {e}")
@@ -92,10 +103,19 @@ class ReviewVectorStore:
         if not review_text.strip():
             return
 
-        self.collection.add(
-            documents=[review_text],
-            ids=[str(review_id)]
-        )
+        try:
+            # Generate embedding manually
+            embedding_function = CachedEmbeddingFunction()
+            embedding = embedding_function([review_text])
+
+            self.collection.add(
+                documents=[review_text],
+                embeddings=embedding,
+                ids=[str(review_id)]
+            )
+
+        except Exception as e:
+            print(f"Failed to store review: {e}")
 
     # ------------------------------------------------------
     # Search Similar Reviews

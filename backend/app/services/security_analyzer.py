@@ -4,18 +4,20 @@
 # ==========================================================
 
 import ast
-from typing import List
+from typing import List, Dict
 
 
 class SecurityAnalyzer(ast.NodeVisitor):
     """
     AST-based security analyzer that detects
     common security vulnerabilities.
+    Returns structured issue objects with severity,
+    description, recommendation, and line number.
     """
 
     def __init__(self):
 
-        self.issues: List[str] = []
+        self.issues: List[Dict] = []
 
         # credential-related variable names
         self.credential_keywords = {
@@ -32,10 +34,25 @@ class SecurityAnalyzer(ast.NodeVisitor):
         }
 
     # ------------------------------------------------------
+    # Helper to add structured issue
+    # ------------------------------------------------------
+
+    def _add_issue(self, severity: str, description: str, recommendation: str, line: int = 0, issue_type: str = "Vulnerability"):
+        self.issues.append({
+            "type": issue_type,
+            "severity": severity,
+            "description": description,
+            "recommendation": recommendation,
+            "line": line
+        })
+
+    # ------------------------------------------------------
     # Dangerous function detection
     # ------------------------------------------------------
 
     def visit_Call(self, node):
+
+        line = getattr(node, "lineno", 0)
 
         # ----------------------------------------------
         # Direct dangerous builtins
@@ -46,18 +63,30 @@ class SecurityAnalyzer(ast.NodeVisitor):
             name = node.func.id
 
             if name == "eval":
-                self.issues.append(
-                    "Use of eval() detected which may allow arbitrary code execution."
+                self._add_issue(
+                    severity="Critical",
+                    description="Use of eval() detected which may allow arbitrary code execution.",
+                    recommendation="Replace eval() with ast.literal_eval() for safe parsing, or use a proper parser for the expected input format.",
+                    line=line,
+                    issue_type="Dangerous Function"
                 )
 
             elif name == "exec":
-                self.issues.append(
-                    "Use of exec() detected which may allow execution of unsafe code."
+                self._add_issue(
+                    severity="Critical",
+                    description="Use of exec() detected which may allow execution of unsafe code.",
+                    recommendation="Avoid exec() entirely. Use importlib for dynamic imports, or a sandboxed environment if dynamic code execution is required.",
+                    line=line,
+                    issue_type="Dangerous Function"
                 )
 
             elif name == "compile":
-                self.issues.append(
-                    "Use of compile() detected which may enable dynamic code execution."
+                self._add_issue(
+                    severity="Medium",
+                    description="Use of compile() detected which may enable dynamic code execution.",
+                    recommendation="Ensure compile() input is not derived from user input. Consider using safer alternatives.",
+                    line=line,
+                    issue_type="Dangerous Function"
                 )
 
         # ----------------------------------------------
@@ -70,14 +99,22 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             # os.system
             if attr == "system":
-                self.issues.append(
-                    "Use of os.system() detected which may allow command injection."
+                self._add_issue(
+                    severity="High",
+                    description="Use of os.system() detected which may allow command injection.",
+                    recommendation="Use subprocess.run() with a list of arguments instead of os.system() to prevent shell injection.",
+                    line=line,
+                    issue_type="Command Injection"
                 )
 
             # subprocess commands
             if attr in {"Popen", "call", "run"}:
-                self.issues.append(
-                    "Use of subprocess without sanitization may allow command injection."
+                self._add_issue(
+                    severity="Medium",
+                    description="Use of subprocess without sanitization may allow command injection.",
+                    recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
+                    line=line,
+                    issue_type="Command Injection"
                 )
 
             # unsafe deserialization
@@ -86,8 +123,21 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 if isinstance(node.func.value, ast.Name):
 
                     if node.func.value.id == "pickle":
-                        self.issues.append(
-                            "Use of pickle.loads() detected which may allow unsafe deserialization."
+                        self._add_issue(
+                            severity="Critical",
+                            description="Use of pickle.loads() detected which may allow unsafe deserialization and remote code execution.",
+                            recommendation="Use json.loads() for data serialization, or implement HMAC validation before unpickling.",
+                            line=line,
+                            issue_type="Unsafe Deserialization"
+                        )
+
+                    elif node.func.value.id == "yaml":
+                        self._add_issue(
+                            severity="High",
+                            description="Use of yaml.loads() detected which may allow unsafe deserialization.",
+                            recommendation="Use yaml.safe_load() instead of yaml.load() to prevent arbitrary code execution.",
+                            line=line,
+                            issue_type="Unsafe Deserialization"
                         )
 
         # ----------------------------------------------
@@ -101,8 +151,26 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 if isinstance(keyword.value, ast.Constant):
 
                     if keyword.value.value is True:
-                        self.issues.append(
-                            "Use of shell=True detected which may allow command injection."
+                        self._add_issue(
+                            severity="High",
+                            description="Use of shell=True detected which may allow command injection.",
+                            recommendation="Remove shell=True and pass command arguments as a list to subprocess.",
+                            line=line,
+                            issue_type="Command Injection"
+                        )
+
+            # detect verify=False in requests
+            if keyword.arg == "verify":
+
+                if isinstance(keyword.value, ast.Constant):
+
+                    if keyword.value.value is False:
+                        self._add_issue(
+                            severity="Medium",
+                            description="SSL verification disabled (verify=False) which allows man-in-the-middle attacks.",
+                            recommendation="Enable SSL verification by removing verify=False or setting verify=True.",
+                            line=line,
+                            issue_type="Insecure Configuration"
                         )
 
         self.generic_visit(node)
@@ -112,6 +180,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # ------------------------------------------------------
 
     def visit_Assign(self, node):
+
+        line = getattr(node, "lineno", 0)
 
         for target in node.targets:
 
@@ -123,10 +193,14 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
                     if isinstance(node.value, ast.Constant):
 
-                        if isinstance(node.value.value, str):
+                        if isinstance(node.value.value, str) and len(node.value.value) > 0:
 
-                            self.issues.append(
-                                f"Hardcoded credential detected in variable '{var_name}'."
+                            self._add_issue(
+                                severity="High",
+                                description=f"Hardcoded credential detected in variable '{target.id}'.",
+                                recommendation=f"Move the value of '{target.id}' to environment variables or a secrets manager (e.g., dotenv, AWS Secrets Manager).",
+                                line=line,
+                                issue_type="Hardcoded Credential"
                             )
 
         self.generic_visit(node)
@@ -137,6 +211,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
     def visit_BinOp(self, node):
 
+        line = getattr(node, "lineno", 0)
+
         if isinstance(node.op, ast.Add):
 
             if isinstance(node.left, ast.Constant):
@@ -146,8 +222,12 @@ class SecurityAnalyzer(ast.NodeVisitor):
                     query = node.left.value.lower()
 
                     if any(q in query for q in ["select", "insert", "update", "delete"]):
-                        self.issues.append(
-                            "Possible SQL injection via string concatenation."
+                        self._add_issue(
+                            severity="High",
+                            description="Possible SQL injection via string concatenation.",
+                            recommendation="Use parameterized queries or an ORM (e.g., SQLAlchemy) instead of string concatenation for SQL.",
+                            line=line,
+                            issue_type="SQL Injection"
                         )
 
         self.generic_visit(node)
@@ -158,6 +238,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
     def visit_JoinedStr(self, node):
 
+        line = getattr(node, "lineno", 0)
+
         for value in node.values:
 
             if isinstance(value, ast.Constant):
@@ -165,8 +247,12 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 text = str(value.value).lower()
 
                 if any(q in text for q in ["select", "insert", "update", "delete"]):
-                    self.issues.append(
-                        "Possible SQL injection via formatted string query."
+                    self._add_issue(
+                        severity="High",
+                        description="Possible SQL injection via formatted string query.",
+                        recommendation="Use parameterized queries instead of f-strings for SQL. ORMs like SQLAlchemy provide safe query builders.",
+                        line=line,
+                        issue_type="SQL Injection"
                     )
 
         self.generic_visit(node)
@@ -176,9 +262,13 @@ class SecurityAnalyzer(ast.NodeVisitor):
 # Public API
 # ----------------------------------------------------------
 
-def detect_security_issues(code: str) -> List[str]:
+def detect_security_issues(code: str) -> List[Dict]:
     """
-    Analyze code and return detected security issues.
+    Analyze code and return detected security issues
+    as structured dictionaries.
+
+    Each issue contains:
+        type, severity, description, recommendation, line
     """
 
     try:

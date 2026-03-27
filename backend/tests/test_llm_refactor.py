@@ -28,7 +28,7 @@ import pytest
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.analysis.llm_refactor_engine import LLMRefactorEngine
+from backend.app.analysis.llm_refactor_engine import LLMRefactorEngine
 
 
 # ---------------------------------------------------------

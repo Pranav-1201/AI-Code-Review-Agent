@@ -20,7 +20,7 @@ import ast
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.analysis.code_smell_detector import CodeSmellDetector
+from backend.app.analysis.code_smell_detector import CodeSmellDetector
 
 
 # ---------------------------------------------------------

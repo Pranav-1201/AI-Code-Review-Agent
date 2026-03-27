@@ -17,7 +17,7 @@
 # ==========================================================
 
 from typing import Dict, List, Optional
-from app.analysis.patch_generator import PatchGenerator
+from backend.app.analysis.patch_generator import PatchGenerator
 
 
 class RefactoringEngine:
