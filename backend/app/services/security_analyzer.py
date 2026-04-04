@@ -15,9 +15,19 @@ class SecurityAnalyzer(ast.NodeVisitor):
     description, recommendation, and line number.
     """
 
-    def __init__(self):
+    def __init__(self, is_test: bool = False, file_path: str = ""):
 
         self.issues: List[Dict] = []
+        self.is_test = is_test
+        self.file_path = file_path.replace("\\", "/").lower()
+
+        # Framework-aware file patterns where eval/exec/compile
+        # are expected and controlled (not user-input driven)
+        self._is_framework_context = any(
+            pat in self.file_path
+            for pat in ("cli.py", "config.py", "__init__.py", "app.py",
+                        "factory", "loader", "runner", "commands")
+        )
 
         # credential-related variable names
         self.credential_keywords = {
@@ -63,27 +73,51 @@ class SecurityAnalyzer(ast.NodeVisitor):
             name = node.func.id
 
             if name == "eval":
+                is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
+                if self._is_framework_context:
+                    severity = "Low"
+                    desc = "[Intentional Pattern] Use of eval() detected config/framework context."
+                else:
+                    severity = "Low" if is_constant_arg else "Critical"
+                    desc = "Use of eval() detected which may allow arbitrary code execution."
+                
                 self._add_issue(
-                    severity="Critical",
-                    description="Use of eval() detected which may allow arbitrary code execution.",
+                    severity=severity,
+                    description=desc,
                     recommendation="Replace eval() with ast.literal_eval() for safe parsing, or use a proper parser for the expected input format.",
                     line=line,
                     issue_type="Dangerous Function"
                 )
 
             elif name == "exec":
+                is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
+                if self._is_framework_context:
+                    severity = "Low"
+                    desc = "[Intentional Pattern] Use of exec() detected config/framework context."
+                else:
+                    severity = "Low" if is_constant_arg else "Critical"
+                    desc = "Use of exec() detected which may allow execution of unsafe code."
+
                 self._add_issue(
-                    severity="Critical",
-                    description="Use of exec() detected which may allow execution of unsafe code.",
-                    recommendation="Avoid exec() entirely. Use importlib for dynamic imports, or a sandboxed environment if dynamic code execution is required.",
+                    severity=severity,
+                    description=desc,
+                    recommendation="Avoid exec() entirely. Use importlib for dynamic imports, or a sandboxed environment.",
                     line=line,
                     issue_type="Dangerous Function"
                 )
 
             elif name == "compile":
+                is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
+                if self._is_framework_context:
+                    severity = "Info"
+                    desc = "[Intentional Pattern] Use of compile() detected in framework code."
+                else:
+                    severity = "Low" if is_constant_arg else "Medium"
+                    desc = "Use of compile() detected which may enable dynamic code execution."
+
                 self._add_issue(
-                    severity="Medium",
-                    description="Use of compile() detected which may enable dynamic code execution.",
+                    severity=severity,
+                    description=desc,
                     recommendation="Ensure compile() input is not derived from user input. Consider using safer alternatives.",
                     line=line,
                     issue_type="Dangerous Function"
@@ -109,9 +143,11 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             # subprocess commands
             if attr in {"Popen", "call", "run"}:
+                is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], (ast.List, ast.Tuple, ast.Constant))
+                severity = "Low" if (self.is_test or is_constant_arg) else "Medium"
                 self._add_issue(
-                    severity="Medium",
-                    description="Use of subprocess without sanitization may allow command injection.",
+                    severity=severity,
+                    description="[Verify Context] Use of subprocess without sanitization may allow command injection.",
                     recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
                     line=line,
                     issue_type="Command Injection"
@@ -180,6 +216,10 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # ------------------------------------------------------
 
     def visit_Assign(self, node):
+
+        if self.is_test:
+            self.generic_visit(node)
+            return
 
         line = getattr(node, "lineno", 0)
 
@@ -257,15 +297,83 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    # ------------------------------------------------------
+    # Weak hash detection
+    # ------------------------------------------------------
+
+    def visit_Attribute(self, node):
+
+        line = getattr(node, "lineno", 0)
+
+        if isinstance(node.value, ast.Name) and node.value.id == "hashlib":
+            if node.attr in ("md5", "sha1"):
+                self._add_issue(
+                    severity="Medium",
+                    description=f"Use of weak hash algorithm hashlib.{node.attr}() detected.",
+                    recommendation="Use hashlib.sha256() or hashlib.sha3_256() for secure hashing. MD5 and SHA1 are vulnerable to collision attacks.",
+                    line=line,
+                    issue_type="Weak Cryptography"
+                )
+
+        # tempfile.mktemp() race condition
+        if isinstance(node.value, ast.Name) and node.value.id == "tempfile":
+            if node.attr == "mktemp":
+                self._add_issue(
+                    severity="Medium",
+                    description="Use of tempfile.mktemp() detected which is vulnerable to race conditions.",
+                    recommendation="Use tempfile.mkstemp() or tempfile.NamedTemporaryFile() instead for secure temporary file creation.",
+                    line=line,
+                    issue_type="Race Condition"
+                )
+
+        self.generic_visit(node)
+
+    # ------------------------------------------------------
+    # Wildcard import detection
+    # ------------------------------------------------------
+
+    def visit_ImportFrom(self, node):
+
+        line = getattr(node, "lineno", 0)
+
+        if node.names and any(alias.name == "*" for alias in node.names):
+            self._add_issue(
+                severity="Low",
+                description=f"Wildcard import 'from {node.module} import *' may introduce unexpected names into namespace.",
+                recommendation="Import only the specific names needed to maintain clarity and prevent accidental name shadowing.",
+                line=line,
+                issue_type="Code Quality"
+            )
+
+        self.generic_visit(node)
+
+    # ------------------------------------------------------
+    # Assert detection — REMOVED from security analysis
+    # Assert is a style/maintainability concern, NOT a
+    # security vulnerability. It is now handled as a code
+    # quality heuristic in llm_service._heuristic_analysis()
+    # ------------------------------------------------------
+
 
 # ----------------------------------------------------------
 # Public API
 # ----------------------------------------------------------
 
-def detect_security_issues(code: str) -> List[Dict]:
+def detect_security_issues(code: str, is_test_file: bool = False, file_path: str = "") -> List[Dict]:
     """
     Analyze code and return detected security issues
     as structured dictionaries.
+
+    Parameters
+    ----------
+    code : str
+        Source code to analyze.
+    is_test_file : bool
+        If True, context-aware rules are applied:
+        - subprocess usage severity is downgraded
+    file_path : str
+        Path to file being analyzed. Used for framework-aware
+        severity adjustment (e.g., eval() in cli.py → Medium).
 
     Each issue contains:
         type, severity, description, recommendation, line
@@ -275,7 +383,10 @@ def detect_security_issues(code: str) -> List[Dict]:
 
         tree = ast.parse(code)
 
-        analyzer = SecurityAnalyzer()
+        analyzer = SecurityAnalyzer(
+            is_test=is_test_file,
+            file_path=file_path
+        )
 
         analyzer.visit(tree)
 

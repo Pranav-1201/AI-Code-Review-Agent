@@ -51,13 +51,17 @@ export async function getScanStatus(scanId: string): Promise<any> {
 
 
 // Start Scan AND Wait Until Complete
-export async function startAndPollScan(repoPath: string) {
+export async function startAndPollScan(repoPath: string, onProgress?: (status: any) => void) {
 
   const scanId = await startScan(repoPath);
 
   while (true) {
 
     const status = await getScanStatus(scanId);
+
+    if (onProgress) {
+      onProgress(status);
+    }
 
     if (status.status === "complete") {
       return status.result;
@@ -67,7 +71,7 @@ export async function startAndPollScan(repoPath: string) {
       throw new Error("Scan failed on backend");
     }
 
-    // wait 3 seconds before polling again
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    // wait 2 seconds before polling again
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 }

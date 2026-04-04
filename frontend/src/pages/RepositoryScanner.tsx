@@ -1,61 +1,62 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, GitBranch, Loader2, Terminal, AlertCircle } from "lucide-react";
+import { Search, GitBranch, Loader2, Terminal, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useNavigate } from "react-router-dom";
 
-const scanSteps = [
-  "Sending request to backend...",
-  "Preparing analysis...",
-  "Cloning repository...",
-  "Scanning files...",
-  "Running code analysis...",
-  "Checking security vulnerabilities...",
-  "Generating AI explanations...",
-  "Waiting for results...",
-];
-
 export default function RepositoryScanner() {
   const [repoUrl, setRepoUrl] = useState("");
-  const { triggerScan, isScanning, scanError } = useScan();
-  const [currentStep, setCurrentStep] = useState(0);
+  const { triggerScan, isScanning, scanError, scanStatus } = useScan();
   const [elapsedTime, setElapsedTime] = useState(0);
   const navigate = useNavigate();
-  const intervalsRef = useRef<{ step?: NodeJS.Timeout; timer?: NodeJS.Timeout }>({});
+  const timerRef = useRef<NodeJS.Timeout>();
 
-  const clearIntervals = () => {
-    if (intervalsRef.current.step) clearInterval(intervalsRef.current.step);
-    if (intervalsRef.current.timer) clearInterval(intervalsRef.current.timer);
-    intervalsRef.current = {};
+  const clearTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
   };
+
+  useEffect(() => {
+    if (isScanning) {
+      setElapsedTime(0);
+      timerRef.current = setInterval(() => {
+        setElapsedTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearTimer();
+    }
+    return clearTimer;
+  }, [isScanning]);
 
   const handleScan = async () => {
     if (!repoUrl) return;
-    setCurrentStep(0);
-    setElapsedTime(0);
-
-    intervalsRef.current.step = setInterval(() => {
-      setCurrentStep((prev) => Math.min(prev + 1, scanSteps.length - 1));
-    }, 5000);
-
-    intervalsRef.current.timer = setInterval(() => {
-      setElapsedTime((prev) => prev + 1);
-    }, 1000);
 
     try {
       await triggerScan(repoUrl);
-      clearIntervals();
       navigate("/results");
     } catch {
-      // Error is already set in ScanContext — just stop the timers
-      clearIntervals();
+      // Error handled by context
     }
   };
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  // Stages definition
+  const stages = [
+    { id: "initializing", label: "Starting up" },
+    { id: "cloning", label: "Cloning repository" },
+    { id: "discovery", label: "Discovering files" },
+    { id: "dependencies", label: "Mapping dependencies" },
+    { id: "analysis", label: "Running AI analysis" },
+    { id: "finalizing", label: "Computing scores" },
+    { id: "complete", label: "Complete" },
+  ];
+
+  const currentStageIndex = scanStatus?.stage
+    ? stages.findIndex(s => s.id === scanStatus.stage)
+    : 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -79,6 +80,7 @@ export default function RepositoryScanner() {
               onChange={(e) => setRepoUrl(e.target.value)}
               className="bg-background border-border font-mono text-sm"
               onKeyDown={(e) => e.key === "Enter" && handleScan()}
+              disabled={isScanning}
             />
             <Button onClick={handleScan} disabled={isScanning || !repoUrl} className="gap-2 min-w-[140px]">
               {isScanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
@@ -87,19 +89,44 @@ export default function RepositoryScanner() {
           </div>
 
           {isScanning && (
-            <div className="space-y-3 pt-2">
+            <div className="space-y-4 pt-2">
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Analyzing repository...</span>
+                <span className="font-mono">
+                  {scanStatus?.stage_detail || "Connecting to backend..."}
+                </span>
                 <span>{formatTime(elapsedTime)}</span>
               </div>
-              <Progress value={Math.min(((currentStep + 1) / scanSteps.length) * 90, 90)} className="h-1.5" />
-              <div className="space-y-1">
-                {scanSteps.map((step, i) => (
-                  <div key={i} className={`flex items-center gap-2 text-sm font-mono transition-opacity ${i <= currentStep ? "opacity-100" : "opacity-20"}`}>
-                    <Terminal className="w-3 h-3 text-primary" />
-                    <span className={i === currentStep ? "text-primary" : "text-muted-foreground"}>{step}</span>
-                  </div>
-                ))}
+              
+              <Progress value={scanStatus?.progress || 0} className="h-2 bg-secondary" />
+              
+              {scanStatus?.files_processed !== undefined && scanStatus?.total_files !== undefined && scanStatus.total_files > 0 && (
+                <div className="flex justify-between text-[10px] text-muted-foreground font-mono">
+                  <span>Files Processed</span>
+                  <span>{scanStatus.files_processed} / {scanStatus.total_files} ({(scanStatus.files_processed / scanStatus.total_files * 100).toFixed(1)}%)</span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-4 p-4 rounded-lg bg-secondary/20 border border-border/50">
+                {stages.map((stage, i) => {
+                  const isPast = i < currentStageIndex;
+                  const isCurrent = i === currentStageIndex;
+                  const isFuture = i > currentStageIndex;
+
+                  return (
+                    <div 
+                      key={stage.id} 
+                      className={`flex items-center gap-2 text-sm font-mono transition-opacity ${
+                        isCurrent ? "text-primary opacity-100" : 
+                        isPast ? "text-muted-foreground opacity-60" : 
+                        "text-muted-foreground opacity-30"
+                      }`}
+                    >
+                      {isPast ? <CheckCircle2 className="w-4 h-4 text-primary/80" /> : <Terminal className="w-4 h-4" />}
+                      <span>{stage.label}</span>
+                      {isCurrent && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -124,7 +151,8 @@ export default function RepositoryScanner() {
               <button
                 key={url}
                 onClick={() => setRepoUrl(url)}
-                className="text-left p-3 rounded-md bg-secondary/30 hover:bg-secondary/50 font-mono text-sm text-muted-foreground hover:text-foreground transition-colors"
+                disabled={isScanning}
+                className="text-left p-3 rounded-md bg-secondary/30 hover:bg-secondary/50 font-mono text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
               >
                 {url}
               </button>

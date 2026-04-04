@@ -7,7 +7,6 @@
 import sys
 import os
 
-
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import subprocess
@@ -29,6 +28,7 @@ from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.call_graph import build_call_graph
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.pr_review_engine import review_pull_request
+from backend.app.services.settings_manager import load_settings, save_settings, reset_settings
 
 
 # ----------------------------------------------------------
@@ -51,7 +51,7 @@ app.add_middleware(
 
 
 # ----------------------------------------------------------
-# Request Model
+# Request Models
 # ----------------------------------------------------------
 
 class RepoRequest(BaseModel):
@@ -62,7 +62,11 @@ class RepoRequest(BaseModel):
 # Core Pipeline
 # ----------------------------------------------------------
 
-def run_pipeline(repo_path: str):
+def run_pipeline(repo_path: str, scan_id: str = None):
+
+    if scan_id:
+        update_scan(scan_id, "analyzing", 20,
+                    stage="discovery", stage_detail="Scanning repository files...")
 
     print("Starting repository analysis...")
 
@@ -71,17 +75,31 @@ def run_pipeline(repo_path: str):
     print("Scanning repository at:", repo_path)
     print("Files found:", len(files))
 
+    if scan_id:
+        update_scan(scan_id, "analyzing", 30,
+                    stage="discovery", stage_detail=f"Found {len(files)} files",
+                    total_files=len(files))
+
     # Prevent extremely large repos
-    if len(files) > 2000:
-        files = files[:2000]
+    settings = load_settings()
+    max_files = settings.get("analysis", {}).get("max_files", 2000)
+    if len(files) > max_files:
+        files = files[:max_files]
+
+    if scan_id:
+        update_scan(scan_id, "analyzing", 35,
+                    stage="dependencies", stage_detail="Building dependency graph...")
 
     dependency_graph = build_dependency_graph(files)
     call_graph = build_call_graph(files)
 
+    if scan_id:
+        update_scan(scan_id, "analyzing", 40,
+                    stage="analysis", stage_detail="Running AI code review...")
+
     print("Running AI repository review...")
 
     engine = RepositoryReviewEngine()
-    # Pass analyzed files directly to review engine
     result = engine.review_repository(repo_path, files)
 
     return {
@@ -107,14 +125,14 @@ def run_scan_pipeline(scan_id: str, repo_url: str):
 
     try:
 
-        update_scan(scan_id, "cloning repository", 10)
+        update_scan(scan_id, "cloning", 5,
+                    stage="cloning", stage_detail="Cloning repository...")
 
         subprocess.run(["git", "config", "--global", "http.postBuffer", "524288000"])
 
         subprocess.run(
             [
-                "git",
-                "clone",
+                "git", "clone",
                 "--depth", "1",
                 "--filter=blob:none",
                 "--single-branch",
@@ -125,11 +143,13 @@ def run_scan_pipeline(scan_id: str, repo_url: str):
             timeout=120
         )
 
-        update_scan(scan_id, "analyzing repository", 40)
+        update_scan(scan_id, "analyzing", 15,
+                    stage="cloning", stage_detail="Repository cloned successfully")
 
-        result = run_pipeline(repo_dir)
+        result = run_pipeline(repo_dir, scan_id=scan_id)
 
-        update_scan(scan_id, "finalizing results", 80)
+        update_scan(scan_id, "finalizing", 90,
+                    stage="finalizing", stage_detail="Computing health score...")
 
         complete_scan(scan_id, result)
 
@@ -179,6 +199,32 @@ def scan_status(scan_id: str):
 
     return scan
 
+
+# ----------------------------------------------------------
+# Settings API
+# ----------------------------------------------------------
+
+@app.get("/settings")
+def get_settings():
+    return load_settings()
+
+
+@app.post("/settings")
+def update_settings(settings: dict):
+    saved = save_settings(settings)
+    return {"status": "saved", "settings": saved}
+
+
+@app.post("/settings/reset")
+def reset_all_settings():
+    defaults = reset_settings()
+    return {"status": "reset", "settings": defaults}
+
+
+# ----------------------------------------------------------
+# GitHub Webhook
+# ----------------------------------------------------------
+
 @app.post("/github-webhook")
 async def github_webhook(payload: dict):
 
@@ -192,6 +238,7 @@ async def github_webhook(payload: dict):
     review_pull_request(repo, pr_number)
 
     return {"status": "review_started"}
+
 
 # ----------------------------------------------------------
 # CLI Entry Point

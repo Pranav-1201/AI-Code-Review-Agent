@@ -18,8 +18,7 @@ import IssueExplorer from "@/pages/IssueExplorer";
 import DuplicateDetection from "@/pages/DuplicateDetection";
 import Visualizations from "@/pages/Visualizations";
 import ExportReport from "@/pages/ExportReport";
-import TestResults from "@/pages/TestResults";
-import SettingsPage from "@/pages/Settings";
+import Settings from "@/pages/Settings";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -46,8 +45,7 @@ const App = () => (
               <Route path="/duplicates" element={<DuplicateDetection />} />
               <Route path="/visualizations" element={<Visualizations />} />
               <Route path="/export" element={<ExportReport />} />
-              <Route path="/tests" element={<TestResults />} />
-              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </DashboardLayout>

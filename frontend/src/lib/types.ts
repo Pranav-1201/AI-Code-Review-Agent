@@ -25,6 +25,7 @@ export interface FileAnalysis {
 
   complexity: string;
   cyclomaticComplexity: number;
+  maxCyclomaticComplexity: number;
 
   linesOfCode: number;
 
@@ -40,6 +41,9 @@ export interface FileAnalysis {
   duplicates?: { file: string; similarity: number }[];
 
   documentationCoverage: number;
+
+  /** Classification: "production" | "test" | "non_code" */
+  fileType: "production" | "test" | "non_code";
 }
 
 export interface Dependency {
@@ -97,6 +101,19 @@ export interface ScanReport {
     }[];
 
     healthScore: number;
+
+    avg_documentation_coverage?: number;
+    avg_cyclomatic_complexity?: number;
+
+    production_files?: number;
+    test_files?: number;
+
+    maintainability_warnings?: {
+      file: string;
+      type: string;
+      message: string;
+      severity: string;
+    }[];
   };
 
   files: FileAnalysis[];

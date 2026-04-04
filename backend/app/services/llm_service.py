@@ -6,6 +6,7 @@
 # ==========================================================
 
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import ast
 import torch
 from typing import Dict, List
 
@@ -64,28 +65,63 @@ def get_retriever():
 # ----------------------------------------------------------
 
 def _heuristic_analysis(code: str):
+    """
+    Perform heuristic code analysis using AST for accurate
+    nesting-based complexity instead of naive loop counting.
+    """
 
     lines = [l.strip() for l in code.split("\n") if l.strip()]
-
-    loop_count = sum(1 for l in lines if l.startswith(("for ", "while ")))
-    condition_count = sum(1 for l in lines if "if " in l)
     line_count = len(lines)
 
     issues = []
 
-    # Detect potential performance issues
-    if loop_count >= 2:
+    # --------------------------------------------------
+    # AST-based nesting depth analysis for complexity
+    # --------------------------------------------------
+
+    max_nesting = 0
+    loop_count = 0
+
+    try:
+        tree = ast.parse(code)
+
+        def _measure_nesting(node, depth=0):
+            nonlocal max_nesting, loop_count
+
+            if isinstance(node, (ast.For, ast.While, ast.AsyncFor)):
+                loop_count += 1
+                depth += 1
+                max_nesting = max(max_nesting, depth)
+
+            for child in ast.iter_child_nodes(node):
+                _measure_nesting(child, depth)
+
+        _measure_nesting(tree)
+    except SyntaxError:
+        # Fallback to line-based counting
+        loop_count = sum(1 for l in lines if l.startswith(("for ", "while ")))
+        max_nesting = min(loop_count, 2)
+
+    # Detect potential performance issues based on NESTING DEPTH + BRANCHING, not flat loop counts
+    if max_nesting >= 3:
+        issues.append({
+            "type": "performance",
+            "severity": "high",
+            "message": f"Deeply nested loops detected (depth {max_nesting}, {loop_count} total loops)."
+        })
+    elif max_nesting == 2:
         issues.append({
             "type": "performance",
             "severity": "medium",
-            "message": f"Multiple loops detected ({loop_count} loops) — possible nested loop performance issue"
+            "message": f"Nested loop detected (depth 2) — possible performance bottleneck."
         })
 
-    if condition_count > 0 and loop_count > 0:
+    condition_count = sum(1 for l in lines if l.lstrip().startswith(("if ", "elif ")))
+    if condition_count > 10 and max_nesting >= 2:
         issues.append({
-            "type": "performance",
-            "severity": "low",
-            "message": "Conditional logic inside loops may affect performance"
+            "type": "maintainability",
+            "severity": "medium",
+            "message": f"High cyclomatic complexity: high branching ({condition_count} conditions) combined with deep nesting."
         })
 
     # Detect long files
@@ -93,38 +129,45 @@ def _heuristic_analysis(code: str):
         issues.append({
             "type": "maintainability",
             "severity": "medium",
-            "message": f"File is {line_count} lines long — consider splitting into smaller modules"
+            "message": f"File is {line_count} lines long \u2014 consider splitting into smaller modules"
         })
     elif line_count > 100:
         issues.append({
             "type": "style",
             "severity": "low",
-            "message": f"File is {line_count} lines — approaching recommended module size limit"
+            "message": f"File is {line_count} lines \u2014 approaching recommended module size limit"
         })
 
-    # Detect missing if __name__ guard in scripts with top-level code
+    # Detect missing if __name__ guard — only for actual script execution
     has_main_guard = any("__name__" in l and "__main__" in l for l in lines)
-    has_top_level_calls = any(
-        l and not l.startswith(("def ", "class ", "import ", "from ", "#", "@", "    "))
-        and "=" not in l
-        and l.endswith(")")
-        for l in lines
+
+    # Only flag if file has real script-level execution indicators
+    script_execution_patterns = (
+        ".run(", "main(", "sys.exit(", "app.run(",
+        "cli(", "click.command", "argparse"
     )
-    if has_top_level_calls and not has_main_guard:
+    has_script_execution = any(
+        any(pat in l for pat in script_execution_patterns)
+        for l in lines
+        if l and not l.startswith(("def ", "class ", "#", "@", " ", "\t"))
+    )
+
+    if has_script_execution and not has_main_guard:
         issues.append({
             "type": "style",
             "severity": "low",
             "message": "Top-level function calls detected without if __name__ == '__main__' guard"
         })
 
-    # Complexity heuristic
-    complexity = "O(1)"
-    if loop_count >= 3:
-        complexity = "O(n^3)"
-    elif loop_count >= 2:
-        complexity = "O(n^2)"
+    # Complexity from AST nesting depth
+    if max_nesting >= 3:
+        complexity = "O(n\u00b3)"
+    elif max_nesting >= 2:
+        complexity = "O(n\u00b2)"
     elif loop_count >= 1:
         complexity = "O(n)"
+    else:
+        complexity = "O(1)"
 
     return issues, complexity
 
@@ -186,8 +229,8 @@ def _generate_explanation(
     real_issues = [i for i in issues if isinstance(i, dict)]
     if real_issues:
         categories = set(i.get("type", "general") for i in real_issues)
-        parts.append(f"Static analysis detected {len(real_issues)} issue(s) in categories: {', '.join(categories)}.")
-
+        parts.append(f"Static analysis detected {len(real_issues)} structural/style issue(s) in categories: {', '.join(categories)}.")
+        
     return " ".join(parts)
 
 
@@ -267,8 +310,24 @@ def analyze_code(
     functions: List[str] = None,
     imports: List[str] = None,
     complexity_metrics: List[Dict] = None,
-    language: str = "unknown"
+    language: str = "unknown",
+    security_issues: List[Dict] = None,
+    is_test_file: bool = False
 ) -> Dict:
+    """
+    Main code analysis function combining AI inference,
+    heuristic analysis, and security scanning.
+
+    Parameters
+    ----------
+    security_issues : List[Dict], optional
+        Pre-computed security issues from the caller.
+        If provided, detect_security_issues() is NOT called
+        (eliminates duplicate analysis).
+    is_test_file : bool
+        If True and security_issues is None, passes context
+        to detect_security_issues for filtering.
+    """
 
     load_model()
 
@@ -319,10 +378,13 @@ Code:
     probs = torch.softmax(outputs.logits, dim=1).tolist()[0]
 
     # ------------------------------------------------------
-    # STEP 5: Static security + default complexity
+    # STEP 5: Security analysis
+    # Use pre-computed issues from caller when available
+    # to avoid duplicate analysis (single source of truth)
     # ------------------------------------------------------
 
-    security_issues = detect_security_issues(code)
+    if security_issues is None:
+        security_issues = detect_security_issues(code, is_test_file=is_test_file)
 
     # ----------------------------------------------
     # Complexity from AST analyzer
@@ -341,7 +403,7 @@ Code:
             complexity = "O(n)"
 
         elif nested_depth == 2:
-            complexity = "O(n^2)"
+            complexity = "O(n\u00b2)"
 
         elif nested_depth >= 3:
             complexity = "O(n^k)"
@@ -358,7 +420,8 @@ Code:
     quality_score = compute_quality_score(
         probs[1],
         complexity,
-        security_issues
+        security_issues,
+        is_test_file=is_test_file
     )
 
     # ------------------------------------------------------

@@ -62,16 +62,22 @@ def detect_duplicates(files: List[Dict], min_block_size: int = 6) -> List[Dict]:
 
     for file in files:
         code = file.get("content", "")
-        fname = file.get("file_name", "")
+        # Use file_path as primary key to avoid collisions
+        # when different directories have same-named files
+        fname = file.get("file_path", file.get("file_name", ""))
 
         h = hashlib.md5(code.encode()).hexdigest()
 
         if h in file_hashes:
-            pair_key = tuple(sorted([file_hashes[h], fname]))
+            other = file_hashes[h]
+            # Guard: skip self-comparison (same path)
+            if other == fname:
+                continue
+            pair_key = tuple(sorted([other, fname]))
             if pair_key not in seen_pairs:
                 seen_pairs.add(pair_key)
                 duplicates.append({
-                    "file1": file_hashes[h],
+                    "file1": other,
                     "file2": fname,
                     "similarity": 100,
                     "type": "exact"
@@ -88,7 +94,7 @@ def detect_duplicates(files: List[Dict], min_block_size: int = 6) -> List[Dict]:
 
     for file in files:
         code = file.get("content", "")
-        fname = file.get("file_name", "")
+        fname = file.get("file_path", file.get("file_name", ""))
 
         lines = code.splitlines()
         normalized = [_normalize_line(l) for l in lines]
@@ -111,7 +117,7 @@ def detect_duplicates(files: List[Dict], min_block_size: int = 6) -> List[Dict]:
 
     for file in files:
         code = file.get("content", "")
-        fname = file.get("file_name", "")
+        fname = file.get("file_path", file.get("file_name", ""))
         lines = code.splitlines()
         normalized = [_normalize_line(l) for l in lines]
         significant = [(i, l) for i, l in enumerate(normalized) if l and len(l) > 3]

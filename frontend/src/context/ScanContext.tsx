@@ -4,6 +4,15 @@ import { startAndPollScan } from "@/lib/api";
 import { mapApiResponse } from "@/lib/response-mapper";
 import { toast } from "sonner";
 
+interface ScanStatus {
+  status: string;
+  progress: number;
+  stage?: string;
+  stage_detail?: string;
+  files_processed?: number;
+  total_files?: number;
+}
+
 interface ScanContextType {
   currentReport: ScanReport | null;
   setCurrentReport: (report: ScanReport | null) => void;
@@ -12,6 +21,7 @@ interface ScanContextType {
   setIsScanning: (v: boolean) => void;
   triggerScan: (repoUrl: string) => Promise<void>;
   scanError: string | null;
+  scanStatus: ScanStatus | null;
 }
 
 const ScanContext = createContext<ScanContextType | undefined>(undefined);
@@ -22,15 +32,19 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
   const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
 
   const triggerScan = async (repoUrl: string) => {
 
     setIsScanning(true);
     setScanError(null);
+    setScanStatus(null);
 
     try {
 
-      const rawData = await startAndPollScan(repoUrl);
+      const rawData = await startAndPollScan(repoUrl, (status) => {
+        setScanStatus(status);
+      });
 
       console.log("Raw API Response:", rawData);
 
@@ -93,6 +107,7 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
         setIsScanning,
         triggerScan,
         scanError,
+        scanStatus,
       }}
     >
       {children}

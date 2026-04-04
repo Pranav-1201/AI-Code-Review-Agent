@@ -40,7 +40,6 @@ const aiItems = [
 const systemItems = [
   { title: "Scan History", url: "/history", icon: History },
   { title: "Export Report", url: "/export", icon: Download },
-  { title: "Test Results", url: "/tests", icon: TestTube },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 

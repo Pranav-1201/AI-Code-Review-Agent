@@ -1,3 +1,3 @@
-# Welcome to your Lovable project
+# AI Code Review Agent
 
-TODO: Document your project here
+An advanced static and dynamic analysis platform using RAG and heuristical inference to generate context-aware security and architectural feedback.

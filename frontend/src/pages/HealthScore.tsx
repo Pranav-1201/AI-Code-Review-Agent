@@ -17,12 +17,27 @@ export default function HealthScore() {
   }
 
   const { files, summary } = currentReport;
+
+  // Use PRODUCTION files only for sub-score computation
+  const prodFiles = files.filter((f) => f.fileType === "production");
+  const prodCount = prodFiles.length || 1;
+
+  // Security sub-score: based on production-only security issue count
   const securityScore = summary.security_issues === 0
     ? 100
-    : Math.max(0, Math.round(100 - Math.log2(summary.security_issues + 1) * 15));
+    : Math.max(0, Math.round(100 - Math.pow(summary.security_issues, 0.7) * 10));
+
+  // Maintainability sub-score: avg quality score of production files
   const maintainabilityScore = Math.round(summary.avg_score);
-  const docScore = Math.round(files.reduce((s, f) => s + f.documentationCoverage, 0) / files.length);
-  const performanceScore = Math.round(100 - files.reduce((s, f) => s + Math.min(f.cyclomaticComplexity * 3, 50), 0) / files.length);
+
+  // Documentation sub-score: avg doc coverage of production files
+  const docScore = summary.avg_documentation_coverage
+    ?? Math.round(prodFiles.reduce((s, f) => s + f.documentationCoverage, 0) / prodCount);
+
+  // Performance sub-score: based on avg CC of production files
+  const avgCC = summary.avg_cyclomatic_complexity
+    ?? Math.round(prodFiles.reduce((s, f) => s + f.cyclomaticComplexity, 0) / prodCount);
+  const performanceScore = Math.max(0, Math.round(100 - Math.min(avgCC * 3, 80)));
 
   const categories = [
     { name: "Security", score: securityScore, icon: Shield, color: "text-destructive" },
@@ -56,6 +71,20 @@ export default function HealthScore() {
           </Card>
         ))}
       </div>
+
+      {/* File breakdown info */}
+      {summary.production_files != null && (
+        <Card className="bg-card border-border/50">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-6 text-sm text-muted-foreground justify-center">
+              <span>Scores computed from <strong className="text-foreground">{summary.production_files}</strong> production files</span>
+              {summary.test_files != null && summary.test_files > 0 && (
+                <span>• <strong className="text-foreground">{summary.test_files}</strong> test files excluded</span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

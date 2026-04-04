@@ -8,8 +8,52 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { FileCode, AlertTriangle, Search, Filter } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { getDisplayName } from "@/lib/response-mapper";
 
 const VISIBLE_FILES = 50; // Virtual limit for sidebar
+
+// Helper to render code with line numbers and optional patch coloring
+const CodeViewer = ({ code, isPatch = false }: { code: string; isPatch?: boolean }) => {
+  if (!code) return <span>Not available</span>;
+
+  const lines = code.split("\n");
+  
+  return (
+    <div className="flex flex-col font-mono text-[13px] leading-snug w-full min-w-max">
+      {lines.map((line, i) => {
+        let bgColor = "transparent";
+        let textColor = "text-foreground/80";
+
+        if (isPatch) {
+          if (line.startsWith("+") && !line.startsWith("+++")) {
+            bgColor = "bg-primary/20";
+            textColor = "text-primary border-l-2 border-primary";
+          } else if (line.startsWith("-") && !line.startsWith("---")) {
+            bgColor = "bg-destructive/20";
+            textColor = "text-destructive border-l-2 border-destructive";
+          } else if (line.startsWith("@@")) {
+            textColor = "text-info font-bold";
+            bgColor = "bg-info/10";
+          } else {
+            textColor = "text-muted-foreground";
+          }
+        }
+
+        return (
+          <div key={i} className={`flex px-2 hover:bg-white/5 ${bgColor}`}>
+            <span className="w-10 shrink-0 text-muted-foreground/50 select-none text-right pr-4 border-r border-border/50 mr-4">
+              {i + 1}
+            </span>
+            <span className={`whitespace-pre ${textColor}`}>
+              {line || " "}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 
 export default function FileAnalysis() {
   const { currentReport } = useScan();
@@ -118,9 +162,16 @@ export default function FileAnalysis() {
                     : "bg-card border-border/50 hover:border-border"
                 }`}
               >
-                <p className="font-mono text-xs truncate" title={f.path}>{f.path}</p>
+                <div className="flex items-center gap-1.5">
+                  <p className="font-mono text-xs truncate flex-1" title={f.path}>
+                    {getDisplayName(f, currentReport.files)}
+                  </p>
+                  {f.fileType === "test" && (
+                    <Badge variant="outline" className="text-[8px] px-1 py-0 bg-blue-500/10 text-blue-400 border-blue-500/30 shrink-0">TEST</Badge>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <Progress value={f.score} className="flex-1 h-1" />
+                  <Progress value={f.score} className="flex-1 h-1 bg-secondary" />
                   <span className="font-mono text-xs">{f.score}</span>
                 </div>
               </button>
@@ -139,11 +190,11 @@ export default function FileAnalysis() {
         </div>
 
         {file && (
-          <div className="lg:col-span-3 space-y-4">
+          <div className="lg:col-span-3 space-y-4 min-w-0">
             <Card className="bg-card border-border/50">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="font-mono text-sm">{file.path}</CardTitle>
+                  <CardTitle className="font-mono text-sm truncate pr-4" title={file.path}>{file.path}</CardTitle>
                   <span className={`text-2xl font-bold font-mono ${file.score >= 80 ? "text-primary" : file.score >= 60 ? "text-warning" : "text-destructive"}`}>
                     {file.score}/100
                   </span>
@@ -157,7 +208,9 @@ export default function FileAnalysis() {
                   </div>
                   <div className="p-3 rounded-lg bg-secondary/20">
                     <p className="text-xs text-muted-foreground">Cyclomatic</p>
-                    <p className="font-mono font-bold mt-1">{file.cyclomaticComplexity}</p>
+                    <p className={`font-mono font-bold mt-1 ${file.cyclomaticComplexity > 10 ? (file.cyclomaticComplexity > 30 ? "text-destructive" : "text-warning") : "text-primary"}`}>
+                      {file.cyclomaticComplexity}
+                    </p>
                   </div>
                   <div className="p-3 rounded-lg bg-secondary/20">
                     <p className="text-xs text-muted-foreground">Lines</p>
@@ -191,30 +244,30 @@ export default function FileAnalysis() {
               </Card>
             )}
 
-            <Card className="bg-card border-border/50">
+            <Card className="bg-card border-border/50 min-w-0">
               <CardHeader><CardTitle className="text-lg">Code</CardTitle></CardHeader>
-              <CardContent>
+              <CardContent className="min-w-0">
                 <Tabs defaultValue="original">
                   <TabsList className="bg-secondary/30">
                     <TabsTrigger value="original">Original</TabsTrigger>
                     <TabsTrigger value="improved">Improved</TabsTrigger>
                     {file.patch && <TabsTrigger value="patch">Patch</TabsTrigger>}
                   </TabsList>
-                  <TabsContent value="original">
-                    <pre className="p-4 rounded-lg bg-background border border-border/50 overflow-auto font-mono text-sm text-muted-foreground max-h-[500px]">
-                      <code>{file.original_code || "Not available"}</code>
-                    </pre>
+                  <TabsContent value="original" className="min-w-0">
+                    <div className="bg-background border border-border/50 rounded-lg overflow-x-auto overflow-y-auto max-h-[600px] py-4 shadow-inner">
+                      <CodeViewer code={file.original_code} />
+                    </div>
                   </TabsContent>
-                  <TabsContent value="improved">
-                    <pre className="p-4 rounded-lg bg-background border border-border/50 overflow-auto font-mono text-sm text-primary/90 max-h-[500px]">
-                      <code>{file.improved_code || "No improvements suggested"}</code>
-                    </pre>
+                  <TabsContent value="improved" className="min-w-0">
+                    <div className="bg-background border border-border/50 rounded-lg overflow-x-auto overflow-y-auto max-h-[600px] py-4 shadow-inner">
+                       <CodeViewer code={file.improved_code} />
+                    </div>
                   </TabsContent>
                   {file.patch && (
-                    <TabsContent value="patch">
-                      <pre className="p-4 rounded-lg bg-background border border-border/50 overflow-auto font-mono text-sm text-info max-h-[500px]">
-                        <code>{file.patch}</code>
-                      </pre>
+                    <TabsContent value="patch" className="min-w-0">
+                      <div className="bg-background border border-border/50 rounded-lg overflow-x-auto overflow-y-auto max-h-[600px] py-4 shadow-inner">
+                         <CodeViewer code={file.patch} isPatch />
+                      </div>
                     </TabsContent>
                   )}
                 </Tabs>
