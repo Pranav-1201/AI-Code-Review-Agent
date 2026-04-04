@@ -82,43 +82,43 @@ def count_lines(code: str) -> int:
 # Test File Detection
 # ----------------------------------------------------------
 
-def is_test_file(file_path: str) -> bool:
+def classify_file_type(file_path: str) -> str:
     """
-    Determine whether a file is a test file based on its path.
-    Test files are excluded from production scoring but remain
-    visible in the UI.
-
-    Matches:
-      - Any file inside a /tests/ or /test/ directory
-      - Files named test_*.py or *_test.py
-      - conftest.py (pytest fixtures)
+    Classify file as production, test, example, or docs based on path.
+    Only production files contribute to the repository health score.
     """
     normalized = file_path.replace("\\", "/").lower()
     parts = normalized.split("/")
 
-    # Check if any directory component is 'tests' or 'test'
-    if "tests" in parts or "test" in parts:
-        return True
+    # Exclude directories
+    if "docs" in parts or "doc" in parts:
+        return "docs"
+    
+    if "examples" in parts or "example" in parts:
+        return "example"
 
-    # Check filename patterns
+    if "tests" in parts or "test" in parts:
+        return "test"
+
+    # Check filename patterns for test files
     basename = parts[-1] if parts else ""
     if basename.startswith("test_") and basename.endswith(".py"):
-        return True
+        return "test"
     if basename.endswith("_test.py"):
-        return True
+        return "test"
     if basename == "conftest.py":
-        return True
+        return "test"
 
-    return False
+    return "production"
 
 
 # ----------------------------------------------------------
 # Documentation Coverage (Python)
 # ----------------------------------------------------------
 
-def compute_doc_coverage(code: str, language: str) -> float:
+def compute_doc_coverage(code: str, language: str) -> tuple[float, int]:
     if language != "Python":
-        return 0.0
+        return 0.0, 0
 
     try:
         tree = ast.parse(code)
@@ -138,9 +138,9 @@ def compute_doc_coverage(code: str, language: str) -> float:
                 documented += 1
 
     if total == 0:
-        return 0.0
+        return 0.0, 0
 
-    return round((documented / total) * 100, 1)
+    return round((documented / total) * 100, 1), (total - documented)
 
 
 # ----------------------------------------------------------
@@ -200,7 +200,6 @@ def _analyze_file_worker(args):
             "documentation_coverage": None,
             "content": code,
             "is_code": False,
-            "is_test": False,
             "file_type": "non_code",
         }
 
@@ -264,10 +263,10 @@ def _analyze_file_worker(args):
             file_time_complexity = "O(n)"
 
     # Documentation coverage
-    doc_coverage = compute_doc_coverage(code, language)
+    doc_coverage_pct, missing_docs_count = compute_doc_coverage(code, language)
 
-    # Test file classification
-    test_flag = is_test_file(relative_path)
+    # File classification
+    file_type = classify_file_type(relative_path)
 
     return {
         "file_name": file_name,
@@ -282,11 +281,11 @@ def _analyze_file_worker(args):
         "cyclomatic_complexity": file_cyclomatic,
         "max_cyclomatic_complexity": file_max_cyclomatic,
         "time_complexity": file_time_complexity,
-        "documentation_coverage": doc_coverage,
+        "documentation_coverage": doc_coverage_pct,
+        "undocumented_functions": missing_docs_count,
         "content": code,
         "is_code": True,
-        "is_test": test_flag,
-        "file_type": "test" if test_flag else "production",
+        "file_type": file_type,
     }
 
 

@@ -8,7 +8,7 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import ast
 import torch
-from typing import Dict, List
+from typing import Dict, List, Any
 
 from backend.app.config import HF_TOKEN
 from backend.app.services.retriever_service import CodeRetriever
@@ -81,13 +81,15 @@ def _heuristic_analysis(code: str, complexity: str = "O(1)", filename: str = "")
     # Generate performance issue from complexity param
     # --------------------------------------------------
 
-    if complexity in ("O(n³)", "O(n^3)", "O(n^k)"):
+    depth = complexity.get("max_loop_depth", 0)
+
+    if depth >= 3:
         issues.append({
             "type": "performance",
             "severity": "high",
-            "message": "Deeply nested loops detected — high time complexity."
+            "message": f"Deeply nested loops detected (depth {depth}) — high time complexity."
         })
-    elif complexity in ("O(n²)", "O(n^2)"):
+    elif depth == 2:
         issues.append({
             "type": "performance",
             "severity": "medium",
@@ -99,11 +101,13 @@ def _heuristic_analysis(code: str, complexity: str = "O(1)", filename: str = "")
     # --------------------------------------------------
 
     condition_count = sum(1 for l in lines if l.lstrip().startswith(("if ", "elif ")))
-    if condition_count > 10 and complexity not in ("O(1)", "O(n)"):
+    cc = complexity.get("cyclomatic_complexity", 1)
+    
+    if condition_count > 10 and cc > 5:
         issues.append({
             "type": "maintainability",
             "severity": "medium",
-            "message": f"High cyclomatic complexity: high branching ({condition_count} conditions) combined with deep nesting."
+            "message": f"High cyclomatic complexity ({cc}): high branching ({condition_count} conditions) combined with deep nesting."
         })
 
     # Detect long files
@@ -160,65 +164,90 @@ def _generate_explanation(
     code: str,
     issues: List[Dict],
     security_issues: List[Dict],
-    complexity: str,
+    complexity: Dict[str, Any],
     quality_score: int,
     functions: List[str],
     imports: List[str],
     language: str,
-    doc_coverage: float = 0.0
+    doc_coverage: float = 0.0,
+    undocumented_count: int = 0,
+    file_name: str = ""
 ) -> str:
     """
     Generate a meaningful, file-specific explanation
-    based on actual analysis signals.
+    using a deterministic hybrid extraction engine.
     """
 
     total_lines = len(code.splitlines())
-    parts = []
+    cc = complexity.get("cyclomatic_complexity", 1)
+    depth = complexity.get("max_loop_depth", 0)
+    branches = complexity.get("branches", 0)
 
-    # Overview
+    # 1. Purpose Summary
+    purpose = f"This `{language}` file"
+    if file_name:
+        purpose += f" (`{file_name}`)"
+    if "test" in file_name.lower():
+        purpose += " contains test suites to verify functionality."
+    elif "example" in file_name.lower():
+        purpose += " provides usage examples and documentation."
+    elif total_lines > 200:
+        purpose += " acts as a core module, managing significant system logic."
+    else:
+        purpose += " provides focused utility or component logic."
+
+    # 2. Key Responsibilities
+    responsibilities = []
     if functions:
-        fn_list = ", ".join(functions[:5])
-        suffix = f" and {len(functions) - 5} more" if len(functions) > 5 else ""
-        parts.append(f"This {language} file defines {len(functions)} function(s): {fn_list}{suffix}.")
+        fn_list = ", ".join(f"`{f}`" for f in functions[:5])
+        suffix = f", plus {len(functions) - 5} more." if len(functions) > 5 else "."
+        responsibilities.append(f"Defines {len(functions)} core function(s): {fn_list}{suffix}")
+    if imports:
+        responsibilities.append(f"Integrates with {len(imports)} dependencies, including: {', '.join(imports[:3])}.")
+
+    # 3. Design Observations
+    design = []
+    if doc_coverage < 100.0 and undocumented_count > 0:
+        design.append(f"**Documentation:** Coverage is at {doc_coverage:.1f}% ({undocumented_count} functions/classes lack docstrings).")
+    
+    if cc > 10:
+        design.append(f"**Complexity:** High cyclomatic complexity ({cc}) indicates dense branching logic.")
+    elif cc > 5:
+        design.append(f"**Complexity:** Moderate complexity ({cc}) with {branches} branches.")
     else:
-        parts.append(f"This {language} file contains {total_lines} lines with no explicit function definitions.")
+        design.append(f"**Complexity:** Logic is straightforward with minimal branching ({cc}).")
 
-    # Quality assessment
-    if quality_score >= 90:
-        parts.append("Code quality is excellent with minimal issues detected.")
-    elif quality_score >= 75:
-        parts.append("Code quality is good with minor areas for improvement.")
-    elif quality_score >= 50:
-        parts.append("Code quality is moderate — several improvements recommended.")
-    else:
-        parts.append("Code quality needs significant improvement.")
+    if total_lines > 300:
+        design.append(f"**Size:** File length ({total_lines} lines) may impact maintainability.")
 
-    # Complexity note
-    if complexity not in ("O(1)", "O(n)"):
-        parts.append(f"Estimated time complexity is {complexity}, which may impact performance on large inputs.")
-
-    # Documentation coverage note
-    if functions and doc_coverage < 100.0:
-        documented = int(len(functions) * doc_coverage / 100)
-        missing = len(functions) - documented
-        parts.append(f"Documentation coverage: {doc_coverage}% ({missing} of {len(functions)} functions lack docstrings).")
-
-    # Security note
+    # 4. Risk Analysis
+    risks = []
     if security_issues:
         sev_counts = {}
         for s in security_issues:
             sev = s.get("severity", "Medium") if isinstance(s, dict) else "High"
             sev_counts[sev] = sev_counts.get(sev, 0) + 1
         sev_str = ", ".join(f"{v} {k}" for k, v in sorted(sev_counts.items()))
-        parts.append(f"Security analysis found {len(security_issues)} issue(s) ({sev_str}).")
-
-    # Structural issues note
+        risks.append(f"⚠️ **Security Risks:** Detected {len(security_issues)} issue(s) ({sev_str}).")
+    
     real_issues = [i for i in issues if isinstance(i, dict)]
     if real_issues:
-        categories = set(i.get("type", "general") for i in real_issues)
-        parts.append(f"Static analysis detected {len(real_issues)} structural/style issue(s) in categories: {', '.join(sorted(categories))}.")
+        risks.append(f"🛠 **Code Quality:** Static analysis found {len(real_issues)} structural/style area(s) for improvement.")
 
-    return " ".join(parts)
+    if not risks:
+        risks.append("✅ **Health:** No critical security or structural risks detected.")
+
+    # Assemble Markdown
+    md = f"### Purpose Summary\n{purpose}\n\n"
+    if responsibilities:
+        md += "### Key Responsibilities\n" + "\n".join(f"- {r}" for r in responsibilities) + "\n\n"
+    
+    if design:
+        md += "### Design Observations\n" + "\n".join(f"- {d}" for d in design) + "\n\n"
+    
+    md += "### Risk Analysis\n" + "\n".join(f"- {r}" for r in risks)
+    
+    return md
 
 
 # ----------------------------------------------------------
@@ -226,7 +255,7 @@ def _generate_explanation(
 # ----------------------------------------------------------
 
 def _generate_suggestions(
-    complexity: str,
+    complexity: Dict[str, Any],
     security_issues: List[Dict],
     issues: List[Dict],
     functions: List[str],
@@ -241,7 +270,8 @@ def _generate_suggestions(
     suggestions = []
 
     # Complexity suggestions
-    if complexity in ("O(n^2)", "O(n^3)", "O(n^k)"):
+    depth = complexity.get("max_loop_depth", 0)
+    if depth >= 2:
         suggestions.append(
             "Consider reducing nested loops using sets, hash maps, or vectorized operations for better performance."
         )
@@ -377,23 +407,15 @@ Code:
     # Complexity from AST analyzer
     # ----------------------------------------------
 
-    complexity = "O(1)"
+    comp_data = {
+        "cyclomatic_complexity": 1,
+        "max_loop_depth": 0,
+        "branches": sum(fn.get("branches", 0) for fn in complexity_metrics) if complexity_metrics else 0
+    }
 
     if complexity_metrics:
-
-        nested_depth = max(
-            fn.get("max_loop_depth", 0)
-            for fn in complexity_metrics
-        )
-
-        if nested_depth == 1:
-            complexity = "O(n)"
-
-        elif nested_depth == 2:
-            complexity = "O(n\u00b2)"
-
-        elif nested_depth >= 3:
-            complexity = "O(n^k)"
+        comp_data["max_loop_depth"] = max(fn.get("max_loop_depth", 0) for fn in complexity_metrics)
+        comp_data["cyclomatic_complexity"] = max(fn.get("cyclomatic_complexity", 1) for fn in complexity_metrics)
 
     # ------------------------------------------------------
     # Heuristic issue detection
@@ -408,17 +430,19 @@ Code:
     if complexity_metrics and len(complexity_metrics) > 0:
         _filename = complexity_metrics[0].get("_filename", "")
 
-    heuristic_issues = _heuristic_analysis(code, complexity=complexity, filename=_filename)
+    heuristic_issues = _heuristic_analysis(code, complexity=comp_data, filename=_filename)
 
     # Merge heuristic issues (already structured dicts)
     issues = list(heuristic_issues)
 
-    quality_score = compute_quality_score(
+    score_result = compute_quality_score(
         probs[1],
-        complexity,
+        comp_data,
         security_issues,
         is_test_file=is_test_file
     )
+    quality_score = score_result if isinstance(score_result, int) else score_result[0]
+    breakdown = score_result[1] if isinstance(score_result, tuple) else {}
 
     # ------------------------------------------------------
     # STEP 6: Generate file-specific explanation
@@ -433,16 +457,17 @@ Code:
         code=code,
         issues=issues,
         security_issues=security_issues,
-        complexity=complexity,
+        complexity=comp_data,
         quality_score=quality_score,
         functions=functions,
         imports=imports,
         language=language,
-        doc_coverage=_doc_coverage
+        doc_coverage=_doc_coverage,
+        file_name=_filename
     )
 
     suggestions = _generate_suggestions(
-        complexity=complexity,
+        complexity=comp_data,
         security_issues=security_issues,
         issues=issues,
         functions=functions,
@@ -461,10 +486,12 @@ Code:
             "issue_unlikely": round(probs[0], 3)
         },
         "code_quality_score": quality_score,
+        "breakdown": breakdown,
         "analysis": {
             "issues": issues,
             "security_risks": security_issues,
-            "time_complexity": complexity,
+            "time_complexity": "O(1)",  # Kept for backward compatibility parsing
+            "complexity": comp_data,
             "explanation": explanation,
             "suggestions": suggestions
         },

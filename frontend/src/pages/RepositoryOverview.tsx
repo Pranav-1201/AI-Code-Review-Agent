@@ -3,7 +3,7 @@ import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreRing } from "@/components/ScoreRing";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, FileCode, Code2, AlertTriangle, ChevronRight, ChevronDown, Folder, FolderOpen } from "lucide-react";
+import { GitBranch, FileCode, Code2, AlertTriangle, ChevronRight, ChevronDown, Folder, FolderOpen, CheckCircle2, ShieldCheck, Layers } from "lucide-react";
 
 // ----------------------------------------------------------
 // Tree Builder
@@ -159,10 +159,19 @@ export default function RepositoryOverview() {
       </div>
 
       <div className="grid md:grid-cols-3 gap-6">
-        <Card className="bg-card border-border/50">
+        <Card className="bg-card border-border/50 flex flex-col">
           <CardHeader><CardTitle className="text-sm text-muted-foreground">Project Health</CardTitle></CardHeader>
-          <CardContent className="flex justify-center">
+          <CardContent className="flex flex-col items-center justify-center flex-1">
             <ScoreRing score={summary.healthScore} size={140} />
+            <div className="mt-4 text-center">
+              <p className="text-xs text-muted-foreground">Computed exclusively from</p>
+              <p className="text-sm font-semibold">{summary.production_files || 0} production files</p>
+              {summary.test_files > 0 && (
+                <p className="text-[10px] text-muted-foreground/60 mt-1">
+                  ({summary.test_files} non-production files excluded)
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -197,6 +206,60 @@ export default function RepositoryOverview() {
           </CardContent>
         </Card>
       </div>
+
+      {currentReport.insights && (
+        <Card className="bg-primary/5 border-primary/20">
+          <CardHeader><CardTitle className="text-lg flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-primary" /> Key Insights</CardTitle></CardHeader>
+          <CardContent className="grid md:grid-cols-2 gap-6">
+            
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-warning" /> Top Actions Needed
+              </h3>
+              {currentReport.insights.top_critical_issues.length > 0 ? (
+                 <ul className="space-y-2">
+                    {currentReport.insights.top_critical_issues.slice(0,3).map((issue: any, i: number) => (
+                      <li key={i} className="text-sm bg-card p-3 rounded-lg border border-border/50 flex flex-col gap-1">
+                        <span className="font-semibold text-foreground/90">{issue.message}</span>
+                        <span className="text-xs text-muted-foreground truncate font-mono">Found in {issue.affected_files.length} file(s)</span>
+                      </li>
+                    ))}
+                 </ul>
+              ) : (
+                <div className="text-sm bg-card p-3 rounded-lg border border-border/50 flex items-center gap-2 text-primary">
+                  <CheckCircle2 className="w-4 h-4" /> No critical issues detected.
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
+                <Layers className="w-4 h-4 text-info" /> Architecture & Dependencies
+              </h3>
+              <ul className="space-y-2">
+                {currentReport.insights.most_central_file && currentReport.insights.most_central_file !== "None" && (
+                   <li className="text-sm bg-card p-3 rounded-lg border border-border/50 flex justify-between items-center">
+                     <span className="text-muted-foreground">Most Central Hub</span>
+                     <span className="font-mono text-xs truncate max-w-[200px]" title={currentReport.insights.most_central_file}>{currentReport.insights.most_central_file}</span>
+                   </li>
+                )}
+                {currentReport.insights.most_reused_module && currentReport.insights.most_reused_module !== "None" && (
+                   <li className="text-sm bg-card p-3 rounded-lg border border-border/50 flex justify-between items-center">
+                     <span className="text-muted-foreground">Highest Reuse</span>
+                     <span className="font-mono text-xs truncate max-w-[200px]" title={currentReport.insights.most_reused_module}>{currentReport.insights.most_reused_module}</span>
+                   </li>
+                )}
+                {currentReport.insights.most_complex_files.length > 0 && (
+                  <li className="text-sm bg-card p-3 rounded-lg border border-border/50 flex justify-between items-center">
+                     <span className="text-muted-foreground">Highest Complexity</span>
+                     <span className="font-mono text-xs truncate max-w-[200px]" title={currentReport.insights.most_complex_files[0].file_path}>{currentReport.insights.most_complex_files[0].file_path}</span>
+                   </li>
+                )}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Architecture Tree */}
       <Card className="bg-card border-border/50">

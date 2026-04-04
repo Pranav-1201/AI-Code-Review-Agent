@@ -3,6 +3,10 @@ export interface FileIssue {
   severity: "Low" | "Medium" | "High" | "Critical";
   category: "security" | "performance" | "style" | "logic" | "maintainability";
   line?: number;
+  why_it_matters?: string;
+  how_to_fix?: string;
+  snippet?: string;
+  confidence?: number;
 }
 
 export interface SecurityVulnerability {
@@ -11,7 +15,11 @@ export interface SecurityVulnerability {
   description: string;
   file: string;
   line?: number;
-  recommendation: string;
+  recommendation?: string;
+  why_it_matters?: string;
+  how_to_fix?: string;
+  snippet?: string;
+  confidence?: number;
 }
 
 export interface FileAnalysis {
@@ -23,9 +31,13 @@ export interface FileAnalysis {
   issues: FileIssue[];
   security: SecurityVulnerability[];
 
-  complexity: string;
+  complexity: string; // Deprecated or kept for fallback
   cyclomaticComplexity: number;
   maxCyclomaticComplexity: number;
+  maxNestingDepth?: number;
+  branches?: number;
+
+  breakdown?: Record<string, number>;
 
   linesOfCode: number;
 
@@ -114,6 +126,13 @@ export interface ScanReport {
       message: string;
       severity: string;
     }[];
+  };
+
+  insights?: {
+    top_critical_issues: any[];
+    most_complex_files: any[];
+    most_central_file: string;
+    most_reused_module: string;
   };
 
   files: FileAnalysis[];

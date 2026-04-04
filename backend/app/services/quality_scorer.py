@@ -20,15 +20,15 @@
 #   - Non-code files: default 100 (not processed)
 # ==========================================================
 
-from typing import List, Union, Dict
+from typing import List, Union, Dict, Tuple, Any
 
 
 def compute_quality_score(
     issue_probability: float,
-    complexity: str,
+    complexity: Dict[str, Any],
     security_issues: List[Union[str, Dict]],
     is_test_file: bool = False
-) -> int:
+) -> Tuple[int, Dict[str, int]]:
     """
     Compute an overall code quality score.
 
@@ -37,8 +37,8 @@ def compute_quality_score(
     issue_probability : float
         Probability that the model believes the code contains issues.
 
-    complexity : str
-        Estimated algorithmic complexity.
+    complexity : Dict[str, Any]
+        Estimated algorithmic complexity dict.
 
     security_issues : List[Union[str, Dict]]
         List of detected security issues (strings or dicts).
@@ -50,8 +50,8 @@ def compute_quality_score(
 
     Returns
     -------
-    int
-        Score between 0 and 100.
+    Tuple[int, Dict[str, int]]
+        (Score between 0 and 100, Breakdown Dictionary)
     """
 
     # ----------------------------------------------------------
@@ -63,49 +63,59 @@ def compute_quality_score(
 
     if is_test_file:
         score = 100
-        score -= int(issue_probability * 15)  # Light AI penalty
+        ai_pen = int(issue_probability * 15)
+        score -= ai_pen  # Light AI penalty
+        sec_pen = 0
         # Only penalize High/Critical security in test files
         for issue in security_issues:
             if isinstance(issue, dict):
                 sev = issue.get("severity", "Medium").lower()
                 if sev in ("critical", "high"):
-                    score -= 5
-        return max(75, min(score, 100))
+                    sec_pen += 5
+        
+        score -= sec_pen
+        final_score = max(75, min(score, 100))
+        return (final_score, {"heuristics": -ai_pen, "security": -sec_pen, "complexity": 0})
 
     # ----------------------------------------------------------
     # Production file scoring: full model
     # ----------------------------------------------------------
 
     score = 100
+    breakdown = {"heuristics": 0, "security": 0, "complexity": 0}
 
     # ------------------------------------------------------
     # Penalize if AI predicts issues
-    # Reduced from 40 to 20 — CodeBERT regularly outputs
-    # 0.45-0.55 for perfectly clean files, which was capping
-    # scores at ~80 even for excellent code.
     # ------------------------------------------------------
 
-    score -= int(issue_probability * 20)
+    ai_pen = int(issue_probability * 20)
+    score -= ai_pen
+    breakdown["heuristics"] -= ai_pen
 
     # ------------------------------------------------------
-    # Penalize based on complexity
-    # Reduced penalties — O(n²) is common in frameworks
-    # and shouldn't crater the score by itself.
+    # Penalize based on complexity (Exponential mathematical drop)
     # ------------------------------------------------------
 
-    complexity_penalties = {
-        "O(n²)": 10,
-        "O(n^2)": 10,
-        "O(n³)": 18,
-        "O(n^3)": 18,
-        "O(n^k)": 22
-    }
+    cc = complexity.get("cyclomatic_complexity", 1)
+    depth = complexity.get("max_loop_depth", 0)
 
-    score -= complexity_penalties.get(complexity, 0)
+    # Base penalty: CC exponential
+    cc_pen = 0
+    if cc > 3:
+        cc_pen = int((cc - 3) ** 1.3)  # Gentle exponential scaling
+    
+    # Loop depth penalty
+    if depth == 2:
+        cc_pen += 5
+    elif depth >= 3:
+        cc_pen += 15
+        
+    cc_pen = min(cc_pen, 35) # Cap max complexity deduction at 35 points
+    score -= cc_pen
+    breakdown["complexity"] -= cc_pen
 
     # ------------------------------------------------------
     # Penalize security issues (severity-weighted)
-    # Info-level issues get 0 penalty (informational only)
     # ------------------------------------------------------
 
     severity_weights = {
@@ -116,12 +126,16 @@ def compute_quality_score(
         "info": 0
     }
 
+    sec_pen = 0
     for issue in security_issues:
         if isinstance(issue, dict):
             sev = issue.get("severity", "High").lower()
-            score -= severity_weights.get(sev, 3)
+            sec_pen += severity_weights.get(sev, 3)
         else:
-            score -= 3
+            sec_pen += 3
+
+    score -= sec_pen
+    breakdown["security"] -= sec_pen
 
     # ------------------------------------------------------
     # Bonus for clean, small files with no issues
@@ -129,14 +143,19 @@ def compute_quality_score(
     # ------------------------------------------------------
 
     if (len(security_issues) == 0
-        and complexity in ("O(1)", "O(n)")
+        and cc <= 5
+        and depth <= 1
         and issue_probability < 0.6):
-        score = max(score, 88)  # Floor for clean files
+        if score < 95:
+            bonus = min(95 - score, 15)  # Cap bonus
+            score += bonus
+            breakdown["heuristics"] += int(bonus * 0.5)
+            breakdown["complexity"] += int(bonus * 0.5)
 
     # ------------------------------------------------------
     # Clamp score within valid range
     # ------------------------------------------------------
 
-    score = max(0, min(score, 100))
+    final_score = max(0, min(score, 100))
 
-    return score
+    return (final_score, breakdown)

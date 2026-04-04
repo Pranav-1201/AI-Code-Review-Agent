@@ -6,9 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { FileCode, AlertTriangle, Search, Filter } from "lucide-react";
+import { Search, Filter, AlertTriangle, FileCode, Beaker, FileKey, Layers, Activity } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getDisplayName } from "@/lib/response-mapper";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
 
 const VISIBLE_FILES = 50; // Virtual limit for sidebar
 
@@ -201,16 +203,22 @@ export default function FileAnalysis() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-3 rounded-lg bg-secondary/20">
-                    <p className="text-xs text-muted-foreground">Complexity</p>
-                    <p className="font-mono font-bold mt-1">{file.complexity}</p>
-                  </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="p-3 rounded-lg bg-secondary/20">
                     <p className="text-xs text-muted-foreground">Cyclomatic</p>
                     <p className={`font-mono font-bold mt-1 ${file.cyclomaticComplexity > 10 ? (file.cyclomaticComplexity > 30 ? "text-destructive" : "text-warning") : "text-primary"}`}>
                       {file.cyclomaticComplexity}
                     </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/20">
+                    <p className="text-xs text-muted-foreground">Max Nesting</p>
+                    <p className={`font-mono font-bold mt-1 ${(file.maxNestingDepth || 0) > 2 ? "text-warning" : "text-primary"}`}>
+                      {file.maxNestingDepth !== undefined ? file.maxNestingDepth : "N/A"}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/20">
+                    <p className="text-xs text-muted-foreground">Branches</p>
+                    <p className="font-mono font-bold mt-1">{file.branches !== undefined ? file.branches : "N/A"}</p>
                   </div>
                   <div className="p-3 rounded-lg bg-secondary/20">
                     <p className="text-xs text-muted-foreground">Lines</p>
@@ -220,6 +228,33 @@ export default function FileAnalysis() {
                     <p className="text-xs text-muted-foreground">Doc Coverage</p>
                     <p className="font-mono font-bold mt-1">{file.documentationCoverage}%</p>
                   </div>
+                </div>
+
+                {file.breakdown && Object.keys(file.breakdown).length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-border/50">
+                    <p className="text-xs text-muted-foreground mb-2">Score Breakdown</p>
+                    <div className="flex gap-4">
+                      {Object.entries(file.breakdown).map(([key, value]) => (
+                        <div key={key} className="flex items-center gap-1.5 text-sm">
+                          <span className="capitalize">{key}:</span>
+                          <span className={value < 0 ? "text-destructive font-bold" : value > 0 ? "text-primary font-bold" : ""}>
+                            {value > 0 ? `+${value}` : value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border/50">
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Beaker className="w-5 h-5 text-primary" /> Hybrid Analysis</CardTitle></CardHeader>
+              <CardContent>
+                <div className="prose prose-sm prose-invert max-w-none prose-h3:text-primary prose-h3:font-semibold prose-h3:mt-3 prose-p:leading-relaxed">
+                  <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
+                    {file.explanation || "No explanation generated."}
+                  </ReactMarkdown>
                 </div>
               </CardContent>
             </Card>
@@ -232,10 +267,17 @@ export default function FileAnalysis() {
                     <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-secondary/20">
                       <SeverityBadge severity={issue.severity} />
                       <div className="flex-1">
-                        <p className="text-sm">{issue.message}</p>
-                        <div className="flex gap-2 mt-1">
+                        <p className="text-sm font-semibold">{issue.message}</p>
+                        {issue.why_it_matters && (
+                          <p className="text-xs text-muted-foreground mt-1.5"><span className="font-medium text-foreground/80">Context:</span> {issue.why_it_matters}</p>
+                        )}
+                        {issue.how_to_fix && (
+                          <p className="text-xs text-primary/80 mt-1"><span className="font-medium text-primary">Fix:</span> {issue.how_to_fix}</p>
+                        )}
+                        <div className="flex gap-2 mt-2">
                           {issue.line && <Badge variant="outline" className="text-[10px] font-mono">Line {issue.line}</Badge>}
                           <Badge variant="outline" className="text-[10px]">{issue.category}</Badge>
+                          {issue.confidence && <Badge variant="outline" className="text-[10px] border-primary/20 text-primary/80">{(issue.confidence * 100).toFixed(0)}% Match</Badge>}
                         </div>
                       </div>
                     </div>

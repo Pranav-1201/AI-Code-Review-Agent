@@ -48,12 +48,39 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # ------------------------------------------------------
 
     def _add_issue(self, severity: str, description: str, recommendation: str, line: int = 0, issue_type: str = "Vulnerability"):
+        
+        # Determine why_it_matters dynamically
+        why_it_matters = "This represents a generic security risk or code smell that could weaken application stability."
+        if "Hardcoded credentials" in description:
+            why_it_matters = "Exposing secrets in code can lead to credential theft and complete system compromise."
+        elif "Dangerous Function" in issue_type:
+            why_it_matters = "Executing arbitrary strings or unvalidated input can allow attackers to hijack the application (RCE)."
+        elif "Shell Injection" in issue_type or "Command" in issue_type:
+            why_it_matters = "Running external commands with untrusted input can let attackers run unauthorized utilities on the server."
+        elif "Cryptographic" in issue_type or "MD5" in description or "SHA1" in description:
+            why_it_matters = "Weak hashing algorithms can be easily reversed using dictionary attacks or rainbow tables."
+            
+        # Determine confidence score deterministically
+        confidence = 0.8
+        if "Hardcoded" in description:
+            confidence = 0.6  # Might be a test literal
+        elif "[Intentional Pattern]" in description:
+            confidence = 0.95
+        elif "shell=True" in description:
+            confidence = 0.99
+        elif "eval(" in description or "exec(" in description:
+            confidence = 0.90
+
         self.issues.append({
             "type": issue_type,
             "severity": severity,
             "description": description,
             "recommendation": recommendation,
-            "line": line
+            "line": line,
+            "why_it_matters": why_it_matters,
+            "how_to_fix": recommendation,
+            "confidence": confidence,
+            "snippet": f"Line {line} indicates: {issue_type}"  # Simplified without full tree mapping
         })
 
     # ------------------------------------------------------

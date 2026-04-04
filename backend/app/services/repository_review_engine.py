@@ -13,6 +13,9 @@ from backend.app.analysis.dependency_analyzer import analyze_dependencies
 from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.duplicate_detector import detect_duplicates
 from backend.app.services.security_analyzer import detect_security_issues
+from backend.app.services.cache_manager import CacheManager
+
+_cache_manager = CacheManager()
 
 
 # ----------------------------------------------------------
@@ -25,6 +28,11 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     file_name = file_data["file_name"]
     file_path = file_data.get("file_path", file_name)
     file_is_test = file_data.get("is_test", False)
+    imports = file_data.get("imports", [])
+
+    cached_result = _cache_manager.get(code, imports, version="v3.1")
+    if cached_result:
+        return cached_result
 
     # SINGLE security analysis call per file — with full context:
     # - is_test_file: skips assert, downgrades subprocess
@@ -53,7 +61,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
             "max_loop_depth": 0,
             "cyclomatic_complexity": 1,
             "_filename": file_path,
-            "_doc_coverage": file_data.get("documentation_coverage", 0.0)
+            "_doc_coverage": file_data.get("documentation_coverage", 0.0),
+            "_undocumented_count": file_data.get("undocumented_functions", 0)
         }]
 
     max_depth = 0
@@ -161,15 +170,23 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
             formatted_issues.append({
                 "file": file_path,
                 "type": issue.get("type", "code_issue"),
-                "severity": issue.get("severity", "medium"),
-                "message": issue.get("message", "")
+                "severity": issue.get("severity", "medium").lower(),
+                "message": issue.get("message", ""),
+                "why_it_matters": issue.get("why_it_matters", "Fixing this improves code quality and performance."),
+                "how_to_fix": issue.get("how_to_fix", "Refactor the flagged area."),
+                "snippet": issue.get("snippet", ""),
+                "confidence": issue.get("confidence", 0.75)
             })
         else:
             formatted_issues.append({
                 "file": file_path,
                 "type": "code_issue",
                 "severity": "medium",
-                "message": str(issue)
+                "message": str(issue),
+                "why_it_matters": "Improves overall code quality.",
+                "how_to_fix": "Review the code around this hint.",
+                "snippet": "",
+                "confidence": 0.5
             })
 
     # Add security issues as issues too (for issue explorer)
@@ -178,7 +195,11 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
             "file": file_path,
             "type": "security",
             "severity": sec.get("severity", "High").lower(),
-            "message": sec.get("description", str(sec))
+            "message": sec.get("description", str(sec)),
+            "why_it_matters": sec.get("why_it_matters", "Security vulnerabilities can be exploited by attackers."),
+            "how_to_fix": sec.get("how_to_fix", sec.get("recommendation", "Review secure coding practices.")),
+            "snippet": sec.get("snippet", ""),
+            "confidence": sec.get("confidence", 0.8)
         })
 
     lines = len(code.splitlines())
@@ -186,23 +207,23 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
 
     # Get metrics from repo analyzer
     file_cyclomatic = file_data.get("cyclomatic_complexity", 0)
-    file_time_complexity = file_data.get("time_complexity", "O(1)")
     doc_coverage = file_data.get("documentation_coverage", 0)
+    undocumented_count = file_data.get("undocumented_functions", 0)
 
     report = generate_review_report(
         file_name=file_name,
         analysis_result=analysis_result,
         refactor_result=refactor_result,
         complexity_metrics=complexity_metrics,
-        smell_metrics=smells
+        smell_metrics=smells,
+        undocumented_count=undocumented_count
     )
 
-    return {
+    final_output = {
         "file_path": file_path,
         "file_name": file_name,
         "language": language,
         "score": score,
-        "complexity": file_time_complexity,
         "cyclomatic_complexity": file_cyclomatic,
         "max_cyclomatic_complexity": file_data.get("max_cyclomatic_complexity", 0),
         "lines": lines,
@@ -214,11 +235,16 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
         "patch": refactor_result.get("patch", None),
         "suggestions": refactor_result.get("suggestions", []),
         "explanation": refactor_result.get("explanation", ""),
+        "breakdown": analysis_result.get("breakdown", {}),
         "content": code,
         "documentation_coverage": doc_coverage,
+        "undocumented_functions": undocumented_count,
         "is_test": file_is_test,
         "file_type": file_data.get("file_type", "production"),
     }
+
+    _cache_manager.set(code, imports, final_output, version="v3.1")
+    return final_output
 
 
 # ==========================================================
@@ -337,11 +363,11 @@ class RepositoryReviewEngine:
 
             file_reports.append(file_report)
 
-            # Classify into production vs test for scoring
-            if result.get("is_test", False):
-                test_results.append(result)
-            else:
+            # Classify into production vs non-production for scoring
+            if result.get("file_type") == "production":
                 prod_results.append(result)
+            else:
+                test_results.append(result)
 
             # Count files with real issues (all code files)
             real_issues = [
@@ -354,7 +380,7 @@ class RepositoryReviewEngine:
                 issue_files += 1
 
             # Security issues: count only from production files
-            if not result.get("is_test", False):
+            if result.get("file_type") == "production":
                 security_issues += len(result.get("security_risks", []))
 
             for issue in result.get("issues", []):
@@ -428,6 +454,26 @@ class RepositoryReviewEngine:
                 }
 
         grouped_issues = list(issue_groups.values())
+        
+        # --------------------------------------------------
+        # Dependency Graph Analysis (Centrality / Reuse)
+        # --------------------------------------------------
+        most_central_file = "None"
+        most_reused_module = "None"
+        
+        if dependency_graph and "nodes" in dependency_graph and "links" in dependency_graph:
+            in_degrees = {}
+            out_degrees = {}
+            for link in dependency_graph["links"]:
+                src = link["source"]
+                tgt = link["target"]
+                out_degrees[src] = out_degrees.get(src, 0) + 1
+                in_degrees[tgt] = in_degrees.get(tgt, 0) + 1
+                
+            if in_degrees:
+                most_reused_module = max(in_degrees.items(), key=lambda x: x[1])[0]
+            if out_degrees:
+                most_central_file = max(out_degrees.items(), key=lambda x: x[1])[0]
 
         # --------------------------------------------------
         # Maintainability warnings
@@ -458,11 +504,40 @@ class RepositoryReviewEngine:
                     "severity": "medium" if max_cc <= 20 else "high"
                 })
 
+        # --------------------------------------------------
+        # Insights Generation (Top Issues, Risks, Strengths)
+        # --------------------------------------------------
+        
+        # Top 5 Critical Issues
+        critical_issues = sorted(
+            [i for i in grouped_issues if i.get("type") == "security" or i.get("severity") in ("critical", "high")],
+            key=lambda x: (x.get("confidence", 0), x.get("count", 0)),
+            reverse=True
+        )[:5]
+        
+        # Most Complex Files
+        complex_files = sorted(
+            [f for f in prod_results if f.get("cyclomatic_complexity", 0) > 3],
+            key=lambda x: x.get("cyclomatic_complexity", 0),
+            reverse=True
+        )[:5]
+
+        insights = {
+            "top_critical_issues": critical_issues,
+            "most_complex_files": [{
+                "file_path": f["file_path"],
+                "cyclomatic_complexity": f.get("cyclomatic_complexity", 0),
+                "score": f["score"]
+            } for f in complex_files],
+            "most_central_file": most_central_file,
+            "most_reused_module": most_reused_module
+        }
+
         summary = {
             "files_analyzed": total_file_count,
             "code_files": code_file_count,
             "production_files": prod_count,
-            "test_files": len(test_results),
+            "non_production_files": len(test_results),
             "files_with_issues": issue_files,
             "average_quality_score": avg_score,
             "total_security_issues": security_issues,
@@ -513,5 +588,6 @@ class RepositoryReviewEngine:
             "dependencies": dependencies,
             "dependency_graph": dependency_graph,
             "duplicates": duplicates,
-            "visualizations": visualizations
+            "visualizations": visualizations,
+            "insights": insights
         }

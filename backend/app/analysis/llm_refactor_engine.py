@@ -271,7 +271,7 @@ class LLMRefactorEngine:
 
             if changes:
                 improvement_desc = ". ".join(changes) + "."
-                explanation = f"{explanation} Improvements applied: {improvement_desc}"
+                explanation = f"{explanation}\n\n**Suggested improvements (unapplied):** {improvement_desc}"
 
         # --------------------------------------------------
         # Generate patch only if code changed

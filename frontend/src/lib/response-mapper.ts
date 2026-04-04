@@ -118,9 +118,10 @@ export function mapApiResponse(data: any, repoUrl: string): ScanReport {
       avg_documentation_coverage: avgDocCoverage,
       avg_cyclomatic_complexity: avgCyclomatic,
       production_files: summary.production_files,
-      test_files: summary.test_files,
+      test_files: summary.test_files || summary.non_production_files,
       maintainability_warnings: summary.maintainability_warnings || [],
     },
+    insights: data.insights || undefined,
     files: mappedFiles,
     dependencies,
     duplicates: backendDuplicates,
@@ -152,6 +153,10 @@ function mapFile(f: any): FileAnalysis {
       severity: mapSeverity(i.severity || "Medium"),
       category: mapCategory(i.type || i.category || ""),
       line: i.line || i.line_number,
+      why_it_matters: i.why_it_matters,
+      how_to_fix: i.how_to_fix,
+      snippet: i.snippet,
+      confidence: i.confidence,
     };
   }).filter(Boolean) as FileIssue[];
 
@@ -175,6 +180,10 @@ function mapFile(f: any): FileAnalysis {
       file: s.file || f.path || f.file_path || f.name || "",
       line: s.line || s.line_number,
       recommendation: s.recommendation || s.fix || "",
+      why_it_matters: s.why_it_matters,
+      how_to_fix: s.how_to_fix,
+      snippet: s.snippet,
+      confidence: s.confidence,
     };
   });
 
@@ -198,8 +207,11 @@ function mapFile(f: any): FileAnalysis {
     issues,
     security,
     complexity: f.time_complexity || (typeof f.complexity === "string" ? f.complexity : null) || "O(1)",
-    cyclomaticComplexity: f.cyclomatic_complexity || f.cyclomaticComplexity || 0,
+    cyclomaticComplexity: f.cyclomatic_complexity || f.cyclomaticComplexity || (typeof f.complexity === "object" ? f.complexity?.cyclomatic_complexity : 0) || 0,
     maxCyclomaticComplexity: f.max_cyclomatic_complexity || f.maxCyclomaticComplexity || 0,
+    maxNestingDepth: typeof f.complexity === "object" ? f.complexity?.max_loop_depth : undefined,
+    branches: typeof f.complexity === "object" ? f.complexity?.branches : undefined,
+    breakdown: f.breakdown,
     linesOfCode: f.lines_of_code || f.linesOfCode || f.lines || f.loc || 0,
     explanation: f.explanation || f.refactor_summary || f.ai_explanation || f.summary || "",
     suggestions: f.suggestions || f.improvements || f.ai_suggestions || [],
