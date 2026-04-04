@@ -64,60 +64,42 @@ def get_retriever():
 # Heuristic Analysis
 # ----------------------------------------------------------
 
-def _heuristic_analysis(code: str):
+def _heuristic_analysis(code: str, complexity: str = "O(1)", filename: str = ""):
     """
-    Perform heuristic code analysis using AST for accurate
-    nesting-based complexity instead of naive loop counting.
+    Perform heuristic code analysis for structural issues.
+    Complexity is provided by the caller (from ComplexityAnalyzer),
+    NOT re-calculated here — single source of truth.
     """
 
+    # Use TOTAL line count (matching wc -l), not stripped
+    line_count = len(code.splitlines())
     lines = [l.strip() for l in code.split("\n") if l.strip()]
-    line_count = len(lines)
 
     issues = []
 
     # --------------------------------------------------
-    # AST-based nesting depth analysis for complexity
+    # Generate performance issue from complexity param
     # --------------------------------------------------
 
-    max_nesting = 0
-    loop_count = 0
-
-    try:
-        tree = ast.parse(code)
-
-        def _measure_nesting(node, depth=0):
-            nonlocal max_nesting, loop_count
-
-            if isinstance(node, (ast.For, ast.While, ast.AsyncFor)):
-                loop_count += 1
-                depth += 1
-                max_nesting = max(max_nesting, depth)
-
-            for child in ast.iter_child_nodes(node):
-                _measure_nesting(child, depth)
-
-        _measure_nesting(tree)
-    except SyntaxError:
-        # Fallback to line-based counting
-        loop_count = sum(1 for l in lines if l.startswith(("for ", "while ")))
-        max_nesting = min(loop_count, 2)
-
-    # Detect potential performance issues based on NESTING DEPTH + BRANCHING, not flat loop counts
-    if max_nesting >= 3:
+    if complexity in ("O(n³)", "O(n^3)", "O(n^k)"):
         issues.append({
             "type": "performance",
             "severity": "high",
-            "message": f"Deeply nested loops detected (depth {max_nesting}, {loop_count} total loops)."
+            "message": "Deeply nested loops detected — high time complexity."
         })
-    elif max_nesting == 2:
+    elif complexity in ("O(n²)", "O(n^2)"):
         issues.append({
             "type": "performance",
             "severity": "medium",
-            "message": f"Nested loop detected (depth 2) — possible performance bottleneck."
+            "message": "Nested loop detected (depth 2) — possible performance bottleneck."
         })
 
+    # --------------------------------------------------
+    # Cyclomatic branching check (only when nesting exists)
+    # --------------------------------------------------
+
     condition_count = sum(1 for l in lines if l.lstrip().startswith(("if ", "elif ")))
-    if condition_count > 10 and max_nesting >= 2:
+    if condition_count > 10 and complexity not in ("O(1)", "O(n)"):
         issues.append({
             "type": "maintainability",
             "severity": "medium",
@@ -125,51 +107,49 @@ def _heuristic_analysis(code: str):
         })
 
     # Detect long files
-    if line_count > 200:
+    if line_count > 300:
         issues.append({
             "type": "maintainability",
             "severity": "medium",
             "message": f"File is {line_count} lines long \u2014 consider splitting into smaller modules"
         })
-    elif line_count > 100:
+    elif line_count > 150:
         issues.append({
             "type": "style",
             "severity": "low",
             "message": f"File is {line_count} lines \u2014 approaching recommended module size limit"
         })
 
-    # Detect missing if __name__ guard — only for actual script execution
-    has_main_guard = any("__name__" in l and "__main__" in l for l in lines)
+    # --------------------------------------------------
+    # Detect missing if __name__ guard
+    # Skip for __main__.py — it IS the entry point by
+    # definition, the guard is meaningless there.
+    # --------------------------------------------------
 
-    # Only flag if file has real script-level execution indicators
-    script_execution_patterns = (
-        ".run(", "main(", "sys.exit(", "app.run(",
-        "cli(", "click.command", "argparse"
-    )
-    has_script_execution = any(
-        any(pat in l for pat in script_execution_patterns)
-        for l in lines
-        if l and not l.startswith(("def ", "class ", "#", "@", " ", "\t"))
-    )
+    basename = filename.replace("\\", "/").split("/")[-1].lower() if filename else ""
+    is_main_module = basename == "__main__.py"
 
-    if has_script_execution and not has_main_guard:
-        issues.append({
-            "type": "style",
-            "severity": "low",
-            "message": "Top-level function calls detected without if __name__ == '__main__' guard"
-        })
+    if not is_main_module:
+        has_main_guard = any("__name__" in l and "__main__" in l for l in lines)
 
-    # Complexity from AST nesting depth
-    if max_nesting >= 3:
-        complexity = "O(n\u00b3)"
-    elif max_nesting >= 2:
-        complexity = "O(n\u00b2)"
-    elif loop_count >= 1:
-        complexity = "O(n)"
-    else:
-        complexity = "O(1)"
+        script_execution_patterns = (
+            ".run(", "main(", "sys.exit(", "app.run(",
+            "cli(", "click.command", "argparse"
+        )
+        has_script_execution = any(
+            any(pat in l for pat in script_execution_patterns)
+            for l in lines
+            if l and not l.startswith(("def ", "class ", "#", "@", " ", "\t"))
+        )
 
-    return issues, complexity
+        if has_script_execution and not has_main_guard:
+            issues.append({
+                "type": "style",
+                "severity": "low",
+                "message": "Top-level function calls detected without if __name__ == '__main__' guard"
+            })
+
+    return issues
 
 
 # ----------------------------------------------------------
@@ -184,14 +164,15 @@ def _generate_explanation(
     quality_score: int,
     functions: List[str],
     imports: List[str],
-    language: str
+    language: str,
+    doc_coverage: float = 0.0
 ) -> str:
     """
     Generate a meaningful, file-specific explanation
     based on actual analysis signals.
     """
 
-    lines = len([l for l in code.split("\n") if l.strip()])
+    total_lines = len(code.splitlines())
     parts = []
 
     # Overview
@@ -200,7 +181,7 @@ def _generate_explanation(
         suffix = f" and {len(functions) - 5} more" if len(functions) > 5 else ""
         parts.append(f"This {language} file defines {len(functions)} function(s): {fn_list}{suffix}.")
     else:
-        parts.append(f"This {language} file contains {lines} lines of code with no explicit function definitions.")
+        parts.append(f"This {language} file contains {total_lines} lines with no explicit function definitions.")
 
     # Quality assessment
     if quality_score >= 90:
@@ -216,6 +197,12 @@ def _generate_explanation(
     if complexity not in ("O(1)", "O(n)"):
         parts.append(f"Estimated time complexity is {complexity}, which may impact performance on large inputs.")
 
+    # Documentation coverage note
+    if functions and doc_coverage < 100.0:
+        documented = int(len(functions) * doc_coverage / 100)
+        missing = len(functions) - documented
+        parts.append(f"Documentation coverage: {doc_coverage}% ({missing} of {len(functions)} functions lack docstrings).")
+
     # Security note
     if security_issues:
         sev_counts = {}
@@ -225,12 +212,12 @@ def _generate_explanation(
         sev_str = ", ".join(f"{v} {k}" for k, v in sorted(sev_counts.items()))
         parts.append(f"Security analysis found {len(security_issues)} issue(s) ({sev_str}).")
 
-    # Issues note
+    # Structural issues note
     real_issues = [i for i in issues if isinstance(i, dict)]
     if real_issues:
         categories = set(i.get("type", "general") for i in real_issues)
-        parts.append(f"Static analysis detected {len(real_issues)} structural/style issue(s) in categories: {', '.join(categories)}.")
-        
+        parts.append(f"Static analysis detected {len(real_issues)} structural/style issue(s) in categories: {', '.join(sorted(categories))}.")
+
     return " ".join(parts)
 
 
@@ -410,9 +397,18 @@ Code:
 
     # ------------------------------------------------------
     # Heuristic issue detection
+    # Single source of truth: complexity comes from the
+    # ComplexityAnalyzer (path 1 above). _heuristic_analysis
+    # generates issue messages FROM that complexity, not
+    # its own competing calculation.
     # ------------------------------------------------------
 
-    heuristic_issues, heuristic_complexity = _heuristic_analysis(code)
+    # Extract filename for __main__.py guard suppression
+    _filename = ""
+    if complexity_metrics and len(complexity_metrics) > 0:
+        _filename = complexity_metrics[0].get("_filename", "")
+
+    heuristic_issues = _heuristic_analysis(code, complexity=complexity, filename=_filename)
 
     # Merge heuristic issues (already structured dicts)
     issues = list(heuristic_issues)
@@ -428,6 +424,11 @@ Code:
     # STEP 6: Generate file-specific explanation
     # ------------------------------------------------------
 
+    # Extract doc coverage if available from complexity_metrics metadata
+    _doc_coverage = 0.0
+    if complexity_metrics and len(complexity_metrics) > 0:
+        _doc_coverage = complexity_metrics[0].get("_doc_coverage", 0.0)
+
     explanation = _generate_explanation(
         code=code,
         issues=issues,
@@ -436,7 +437,8 @@ Code:
         quality_score=quality_score,
         functions=functions,
         imports=imports,
-        language=language
+        language=language,
+        doc_coverage=_doc_coverage
     )
 
     suggestions = _generate_suggestions(

@@ -80,44 +80,58 @@ def compute_quality_score(
 
     # ------------------------------------------------------
     # Penalize if AI predicts issues
+    # Reduced from 40 to 20 — CodeBERT regularly outputs
+    # 0.45-0.55 for perfectly clean files, which was capping
+    # scores at ~80 even for excellent code.
     # ------------------------------------------------------
 
-    score -= int(issue_probability * 40)
+    score -= int(issue_probability * 20)
 
     # ------------------------------------------------------
     # Penalize based on complexity
+    # Reduced penalties — O(n²) is common in frameworks
+    # and shouldn't crater the score by itself.
     # ------------------------------------------------------
 
     complexity_penalties = {
-        "O(n²)": 15,
-        "O(n^2)": 15,
-        "O(n³)": 25,
-        "O(n^3)": 25,
-        "O(n^k)": 30
+        "O(n²)": 10,
+        "O(n^2)": 10,
+        "O(n³)": 18,
+        "O(n^3)": 18,
+        "O(n^k)": 22
     }
 
     score -= complexity_penalties.get(complexity, 0)
 
     # ------------------------------------------------------
     # Penalize security issues (severity-weighted)
-    # Less aggressive than before — Critical was 15, now 12
-    # to avoid over-penalizing framework code that has
-    # legitimate eval/exec usage.
+    # Info-level issues get 0 penalty (informational only)
     # ------------------------------------------------------
 
     severity_weights = {
         "critical": 12,
         "high": 8,
         "medium": 4,
-        "low": 1
+        "low": 1,
+        "info": 0
     }
 
     for issue in security_issues:
         if isinstance(issue, dict):
             sev = issue.get("severity", "High").lower()
-            score -= severity_weights.get(sev, 5)
+            score -= severity_weights.get(sev, 3)
         else:
-            score -= 5
+            score -= 3
+
+    # ------------------------------------------------------
+    # Bonus for clean, small files with no issues
+    # Small well-structured files deserve 95+ scores
+    # ------------------------------------------------------
+
+    if (len(security_issues) == 0
+        and complexity in ("O(1)", "O(n)")
+        and issue_probability < 0.6):
+        score = max(score, 88)  # Floor for clean files
 
     # ------------------------------------------------------
     # Clamp score within valid range

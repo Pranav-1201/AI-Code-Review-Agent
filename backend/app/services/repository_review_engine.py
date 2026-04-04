@@ -40,6 +40,22 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     complexity_metrics = file_data.get("complexity_metrics", [])
     smells = file_data.get("code_smells", [])
 
+    # Inject metadata into complexity_metrics so llm_service
+    # can access filename (for __main__.py guard suppression)
+    # and doc_coverage (for explanation generation) without
+    # changing the analyze_code() signature.
+    if complexity_metrics:
+        complexity_metrics[0]["_filename"] = file_path
+        complexity_metrics[0]["_doc_coverage"] = file_data.get("documentation_coverage", 0.0)
+    else:
+        # Create a stub entry to carry metadata
+        complexity_metrics = [{
+            "max_loop_depth": 0,
+            "cyclomatic_complexity": 1,
+            "_filename": file_path,
+            "_doc_coverage": file_data.get("documentation_coverage", 0.0)
+        }]
+
     max_depth = 0
     for fn in complexity_metrics:
         max_depth = max(max_depth, fn.get("max_loop_depth", 0))

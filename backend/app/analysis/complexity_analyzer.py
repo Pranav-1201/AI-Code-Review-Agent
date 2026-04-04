@@ -87,19 +87,11 @@ class ComplexityAnalyzer(ast.NodeVisitor):
     def visit_AsyncFor(self, node):
         self._enter_loop(node)
 
-    # Comprehensions (hidden loops)
-
-    def visit_ListComp(self, node):
-        self._enter_loop(node)
-
-    def visit_SetComp(self, node):
-        self._enter_loop(node)
-
-    def visit_DictComp(self, node):
-        self._enter_loop(node)
-
-    def visit_GeneratorExp(self, node):
-        self._enter_loop(node)
+    # NOTE: Comprehensions (ListComp, SetComp, DictComp, GeneratorExp)
+    # are intentionally NOT counted as loops. They are O(n) linear
+    # operations and should not inflate nesting depth. Counting them
+    # caused false O(n²) for files like logging.py where a list
+    # comprehension inside a while loop was reported as depth-2.
 
     def _enter_loop(self, node):
 

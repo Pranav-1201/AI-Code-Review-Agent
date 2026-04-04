@@ -57,6 +57,32 @@ class SecurityAnalyzer(ast.NodeVisitor):
         })
 
     # ------------------------------------------------------
+    # Context-aware reasoning for [Intentional Pattern]
+    # Maps file paths to human-readable explanations of
+    # WHY a dangerous function is expected in that context.
+    # ------------------------------------------------------
+
+    def _get_framework_reason(self, func_name: str) -> str:
+        fp = self.file_path.lower()
+        if "config" in fp:
+            if func_name == "exec":
+                return "config file loading — executes Python config files from a trusted path"
+            elif func_name == "compile":
+                return "config file loading — compiles Python config source before exec"
+            return "configuration subsystem — processes trusted operator-provided config"
+        elif "cli" in fp:
+            if func_name == "eval":
+                return "CLI shell/REPL — replicates standard Python interactive interpreter behavior"
+            elif func_name == "compile":
+                return "CLI startup — compiles PYTHONSTARTUP file for shell context"
+            return "CLI command framework — operates on operator-controlled inputs"
+        elif "app" in fp:
+            return "application factory — framework-level initialization code"
+        elif "__init__" in fp:
+            return "package initialization — framework bootstrap code"
+        return "framework-level code — operates on trusted internal data"
+
+    # ------------------------------------------------------
     # Dangerous function detection
     # ------------------------------------------------------
 
@@ -76,7 +102,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
                 if self._is_framework_context:
                     severity = "Low"
-                    desc = "[Intentional Pattern] Use of eval() detected config/framework context."
+                    reason = self._get_framework_reason("eval")
+                    desc = f"[Intentional Pattern] eval() in {reason}. Operator-level risk only — not user-input driven."
                 else:
                     severity = "Low" if is_constant_arg else "Critical"
                     desc = "Use of eval() detected which may allow arbitrary code execution."
@@ -93,7 +120,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
                 if self._is_framework_context:
                     severity = "Low"
-                    desc = "[Intentional Pattern] Use of exec() detected config/framework context."
+                    reason = self._get_framework_reason("exec")
+                    desc = f"[Intentional Pattern] exec() in {reason}. Operator-level risk only — not user-input driven."
                 else:
                     severity = "Low" if is_constant_arg else "Critical"
                     desc = "Use of exec() detected which may allow execution of unsafe code."
@@ -110,7 +138,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
                 if self._is_framework_context:
                     severity = "Info"
-                    desc = "[Intentional Pattern] Use of compile() detected in framework code."
+                    reason = self._get_framework_reason("compile")
+                    desc = f"[Intentional Pattern] compile() in {reason}. Low risk — typically pairs with exec/eval."
                 else:
                     severity = "Low" if is_constant_arg else "Medium"
                     desc = "Use of compile() detected which may enable dynamic code execution."
