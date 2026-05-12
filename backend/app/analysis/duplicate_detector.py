@@ -8,18 +8,25 @@ from typing import List, Dict
 from collections import defaultdict
 
 
+import re
+
 def _normalize_line(line: str) -> str:
     """
-    Normalize a line of code for comparison:
+    Normalize a line of code for structural comparison:
     - strip whitespace
     - lowercase
     - remove comments
+    - abstract string literals to ""
     """
     line = line.strip()
 
-    # Remove Python comments
+    # Remove Python comments (simple heuristic)
     if "#" in line:
         line = line[:line.index("#")].strip()
+
+    # Abstract strings (both single and double quotes)
+    line = re.sub(r'".*?"', '""', line)
+    line = re.sub(r"'.*?'", "''", line)
 
     return line.lower()
 

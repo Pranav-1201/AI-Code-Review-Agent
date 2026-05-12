@@ -40,7 +40,8 @@ def generate_review_report(
     analysis_result: Dict,
     refactor_result: Optional[Dict] = None,
     complexity_metrics=None,
-    smell_metrics=None
+    smell_metrics=None,
+    undocumented_count: int = 0
 ) -> str:
     """
     Generate a readable AI review report and persist results.
@@ -76,6 +77,7 @@ def generate_review_report(
         "suggestions": suggestions,
         "complexity_metrics": complexity_metrics,
         "code_smells": smell_metrics,
+        "undocumented_count": undocumented_count,
         "ai_explanation": explanation,
         "improved_code": improved_code,
         "patch": patch

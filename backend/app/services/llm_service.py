@@ -64,12 +64,14 @@ def get_retriever():
 # Heuristic Analysis
 # ----------------------------------------------------------
 
-def _heuristic_analysis(code: str, complexity: str = "O(1)", filename: str = ""):
+def _heuristic_analysis(code: str, complexity: dict = None, filename: str = ""):
     """
     Perform heuristic code analysis for structural issues.
     Complexity is provided by the caller (from ComplexityAnalyzer),
     NOT re-calculated here — single source of truth.
     """
+    if complexity is None:
+        complexity = {}
 
     # Use TOTAL line count (matching wc -l), not stripped
     line_count = len(code.splitlines())

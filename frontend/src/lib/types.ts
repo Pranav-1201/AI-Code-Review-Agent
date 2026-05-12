@@ -31,11 +31,10 @@ export interface FileAnalysis {
   issues: FileIssue[];
   security: SecurityVulnerability[];
 
-  complexity: string; // Deprecated or kept for fallback
   cyclomaticComplexity: number;
   maxCyclomaticComplexity: number;
-  maxNestingDepth?: number;
-  branches?: number;
+  maxNestingDepth: number;
+  branches: number;
 
   breakdown?: Record<string, number>;
 

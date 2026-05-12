@@ -109,6 +109,7 @@ def run_pipeline(repo_path: str, scan_id: str = None):
         "dependencies": result["dependencies"],
         "duplicates": result["duplicates"],
         "visualizations": result["visualizations"],
+        "insights": result.get("insights", {}),
         "dependency_graph": dependency_graph,
         "call_graph": dict(call_graph)
     }
@@ -134,7 +135,6 @@ def run_scan_pipeline(scan_id: str, repo_url: str):
             [
                 "git", "clone",
                 "--depth", "1",
-                "--filter=blob:none",
                 "--single-branch",
                 repo_url,
                 repo_dir
@@ -151,6 +151,7 @@ def run_scan_pipeline(scan_id: str, repo_url: str):
         update_scan(scan_id, "finalizing", 90,
                     stage="finalizing", stage_detail="Computing health score...")
 
+        print(f"DEBUG: run_pipeline returned {type(result)} with {len(result) if isinstance(result, list) else 'N/A'} items")
         complete_scan(scan_id, result)
 
     except Exception as e:

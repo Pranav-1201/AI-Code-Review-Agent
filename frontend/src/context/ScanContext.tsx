@@ -48,12 +48,24 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
 
       console.log("Raw API Response:", rawData);
 
-      const report = mapApiResponse(rawData, repoUrl);
+      if (rawData && rawData.error) {
+        throw new Error(`Backend error: ${rawData.error}`);
+      }
 
-      // Safety check
-      if (!report || !report.files || report.files.length === 0) {
+      const normalized = Array.isArray(rawData)
+        ? { file_reports: rawData }
+        : rawData;
+
+      const files = normalized?.file_reports
+                 ?? normalized?.reports
+                 ?? normalized?.files
+                 ?? [];
+
+      if (files.length === 0) {
         throw new Error("Scan finished but no files were analyzed.");
       }
+
+      const report = mapApiResponse(normalized, repoUrl);
 
       // Store report
       setCurrentReport(report);

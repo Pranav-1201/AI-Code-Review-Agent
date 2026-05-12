@@ -17,13 +17,14 @@ class CacheManager:
         if not os.path.exists(CACHE_DIR):
             os.makedirs(CACHE_DIR, exist_ok=True)
 
-    def _generate_key(self, content: str, imports: List[str] = None) -> str:
+    def _generate_key(self, content: str, imports: List[str] = None, version: str = None) -> str:
         imports_str = ",".join(sorted(imports)) if imports else ""
-        raw_key = f"{content}___IMPORTS___{imports_str}"
+        version_str = version or ""
+        raw_key = f"{version_str}___{content}___IMPORTS___{imports_str}"
         return hashlib.md5(raw_key.encode("utf-8")).hexdigest()
 
-    def get(self, content: str, imports: List[str] = None) -> Optional[Dict[str, Any]]:
-        key = self._generate_key(content, imports)
+    def get(self, content: str, imports: List[str] = None, version: str = None) -> Optional[Dict[str, Any]]:
+        key = self._generate_key(content, imports, version)
         cache_path = os.path.join(CACHE_DIR, f"{key}.json")
         if os.path.exists(cache_path):
             try:
@@ -33,8 +34,8 @@ class CacheManager:
                 pass
         return None
 
-    def set(self, content: str, imports: List[str], result: Dict[str, Any]):
-        key = self._generate_key(content, imports)
+    def set(self, content: str, imports: List[str], result: Dict[str, Any], version: str = None):
+        key = self._generate_key(content, imports, version)
         cache_path = os.path.join(CACHE_DIR, f"{key}.json")
         try:
             with open(cache_path, "w", encoding="utf-8") as f:
