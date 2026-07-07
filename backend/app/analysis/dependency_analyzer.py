@@ -1,13 +1,112 @@
 # ==========================================================
 # File: dependency_analyzer.py
 # Purpose: Extract repository dependencies from multiple
-#          package manager formats
+#          package manager formats and check for outdated
+#          versions against the PyPI JSON API.
 # ==========================================================
 
 import os
 import re
 import json
+import time
+import urllib.request
+import urllib.error
+from typing import Optional
 
+
+# ----------------------------------------------------------
+# PyPI Version Cache
+# ----------------------------------------------------------
+# In-memory cache keyed by lowercase package name.
+# Each entry: {"latest": "1.2.3", "fetched_at": <timestamp>}
+# TTL of 1 hour prevents redundant network calls within
+# a single server session while keeping data reasonably fresh.
+# ----------------------------------------------------------
+
+_PYPI_VERSION_CACHE: dict = {}
+_CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+# ----------------------------------------------------------
+# PyPI Helpers
+# ----------------------------------------------------------
+
+def _fetch_latest_pypi_version(package_name: str) -> Optional[str]:
+    """
+    Fetch the latest published version of a Python package
+    from the PyPI JSON API (https://pypi.org/pypi/{name}/json).
+
+    Returns the version string on success, or None if:
+    - the package does not exist on PyPI
+    - the network call fails or times out
+    - the response cannot be parsed
+
+    Results are cached in _PYPI_VERSION_CACHE for _CACHE_TTL_SECONDS
+    to avoid hammering the API when many packages share a repo.
+    """
+
+    name_lower = package_name.lower().strip()
+    if not name_lower:
+        return None
+
+    # Return cached value if still within TTL
+    cached = _PYPI_VERSION_CACHE.get(name_lower)
+    if cached and (time.time() - cached["fetched_at"]) < _CACHE_TTL_SECONDS:
+        return cached["latest"]
+
+    try:
+        url = f"https://pypi.org/pypi/{name_lower}/json"
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "et-code-analyzer/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            latest = data["info"]["version"]
+
+            # Store in cache
+            _PYPI_VERSION_CACHE[name_lower] = {
+                "latest": latest,
+                "fetched_at": time.time()
+            }
+            return latest
+
+    except Exception:
+        # Network failure, package not found, or JSON parse error —
+        # all handled silently so analysis continues uninterrupted
+        return None
+
+
+def _is_version_outdated(current: str, latest: str) -> bool:
+    """
+    Compare two version strings using PEP 440 semantics.
+    Returns True if current is strictly older than latest.
+
+    Primary: uses the `packaging` library for correct PEP 440
+    comparisons (handles pre-releases, post-releases, epochs).
+
+    Fallback: simple string inequality if `packaging` is not
+    installed — not semantically perfect but never crashes.
+    """
+
+    if not current or not latest:
+        return False
+
+    # Version strings that cannot be compared meaningfully
+    if current in ("unknown", "latest", "*", ""):
+        return False
+
+    try:
+        from packaging.version import Version
+        return Version(current) < Version(latest)
+    except Exception:
+        # Fallback: treat any version mismatch as potentially outdated
+        return current.strip() != latest.strip()
+
+
+# ----------------------------------------------------------
+# Main Analyzer
+# ----------------------------------------------------------
 
 def analyze_dependencies(repo_path):
 
@@ -28,8 +127,8 @@ def analyze_dependencies(repo_path):
             dependencies.append({
                 "name": name.strip(),
                 "version": version.strip() if version else "unknown",
-                "latest_version": version.strip() if version else "unknown",
-                "is_outdated": False,
+                "latest_version": "unknown",   # enriched below
+                "is_outdated": False,           # enriched below
                 "risk_level": "Low",
                 "vulnerabilities": [],
                 "type": dep_type
@@ -231,5 +330,40 @@ def analyze_dependencies(repo_path):
 
         except Exception:
             pass
+
+    # --------------------------------------------------
+    # PyPI Version Enrichment
+    # --------------------------------------------------
+    # For every Python dependency with a known pinned version,
+    # fetch the current latest version from PyPI and determine
+    # whether the pinned version is outdated.
+    #
+    # - Node packages are skipped here (npm audit is Phase 4)
+    # - Packages with version "unknown" / "latest" / "*" are
+    #   skipped because there is nothing meaningful to compare
+    # - Network failures are silently ignored — the dependency
+    #   is still reported, just without is_outdated data
+    # --------------------------------------------------
+
+    for dep in dependencies:
+
+        # Only enrich Python packages for now
+        if dep["type"] not in ("python",):
+            continue
+
+        # Skip unpinned or placeholder versions
+        if dep["version"] in ("unknown", "latest", "*", ""):
+            continue
+
+        latest = _fetch_latest_pypi_version(dep["name"])
+
+        if latest:
+            dep["latest_version"] = latest
+            dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
+
+            # Upgrade risk level for outdated packages so the
+            # frontend can surface them with appropriate prominence
+            if dep["is_outdated"]:
+                dep["risk_level"] = "Medium"
 
     return dependencies

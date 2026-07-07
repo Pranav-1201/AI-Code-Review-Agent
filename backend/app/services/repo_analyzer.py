@@ -82,39 +82,78 @@ def count_lines(code: str) -> int:
 # Test File Detection
 # ----------------------------------------------------------
 
-def classify_file_type(file_path: str) -> str:
+def classify_file_type(file_path: str, content: str = "") -> str: # PHASE 1: added content
     """
     Classify file as production, test, example, or docs based on path.
     Only production files contribute to the repository health score.
     """
-    normalized = file_path.replace("\\", "/").lower()
-    parts = normalized.split("/")
+    # PHASE 1: 2-pass role classifier
+    path_lower = file_path.replace("\\", "/").lower()
+    filename = os.path.basename(path_lower)
 
-    # Exclude directories
-    if "docs" in parts or "doc" in parts:
-        return "docs"
+    if any(seg in path_lower for seg in ('/test/', '/tests/', '/spec/')):
+        return 'test'
+    if filename.startswith('test_') or filename.endswith('_test.py') or filename == 'conftest.py':
+        return 'test'
+    if any(seg in filename for seg in ('cli', 'command', 'cmd')):
+        return 'cli_parser'
+    if any(seg in filename for seg in ('model', 'schema', 'entity', 'dto')):
+        return 'data_model'
+        
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return 'utility'
+        
+    has_cli_import = any(
+        (isinstance(node, ast.Import) and any(a.name in ('click', 'argparse') for a in node.names))
+        or (isinstance(node, ast.ImportFrom) and getattr(node, 'module', None) in ('click', 'argparse'))
+        for node in ast.walk(tree)
+    )
+    func_count = sum(1 for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+    if has_cli_import and func_count > 10:
+        return 'cli_parser'
+        
+    ORCHESTRATOR_BASES = {
+        'Flask', 'Blueprint', 'FastAPI', 'APIRouter',
+        'BaseView', 'View', 'MethodView', 'Router',
+        'WSGIApplication', 'Application',
+    }
     
-    if "examples" in parts or "example" in parts:
-        return "example"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef):
+            for base in node.bases:
+                base_name = (
+                    base.id if isinstance(base, ast.Name)
+                    else getattr(base, 'attr', '')
+                )
+                if base_name in ORCHESTRATOR_BASES:
+                    return 'orchestrator'
 
-    if "tests" in parts or "test" in parts:
-        return "test"
-
-    # Check filename patterns for test files
-    basename = parts[-1] if parts else ""
-    if basename.startswith("test_") and basename.endswith(".py"):
-        return "test"
-    if basename.endswith("_test.py"):
-        return "test"
-    if basename == "conftest.py":
-        return "test"
-
-    return "production"
+    return 'utility'
 
 
 # ----------------------------------------------------------
 # Documentation Coverage (Python)
 # ----------------------------------------------------------
+
+# PHASE 1: Docstring suppression predicates
+_LIFECYCLE_METHODS = frozenset({
+    'setUp', 'tearDown', 'setUpClass', 'tearDownClass',
+    'setUpModule', 'tearDownModule',
+})
+
+def _should_suppress_docstring_warning(func_name: str) -> bool:
+    """Return True for functions that must not be flagged for missing docstrings."""
+    if func_name.startswith('_'):        # private / dunder
+        return True
+    if func_name.startswith('test_'):    # pytest-style tests
+        return True
+    if func_name[0].isupper() and func_name.startswith('Test'):  # TestFooBar class
+        return True
+    if func_name in _LIFECYCLE_METHODS:
+        return True
+    return False
 
 def compute_doc_coverage(code: str, language: str) -> tuple[float, int]:
     if language != "Python":
@@ -130,6 +169,9 @@ def compute_doc_coverage(code: str, language: str) -> tuple[float, int]:
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            # PHASE 1: exempt private, test, and lifecycle functions
+            if _should_suppress_docstring_warning(node.name):
+                continue
             total += 1
             if (node.body
                 and isinstance(node.body[0], ast.Expr)
@@ -201,12 +243,16 @@ def _analyze_file_worker(args):
             "content": code,
             "is_code": False,
             "file_type": "non_code",
+            "_file_role": "non_code", # PHASE 1: inject role
         }
 
     # --------------------------------------------------
     # Code files: full analysis
     # --------------------------------------------------
     analysis = {"functions": [], "imports": []}
+
+    # PHASE 1: classify role before analysis
+    file_type = classify_file_type(relative_path, code)
 
     if ext == ".py":
         try:
@@ -227,7 +273,7 @@ def _analyze_file_worker(args):
             tree = ast.parse(code)
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    metrics = complexity_analyzer.analyze_function(node)
+                    metrics = complexity_analyzer.analyze_function(node, role=file_type) # PHASE 1: Thread role
                     metrics["function"] = node.name
                     complexity_results.append(metrics)
         except Exception:
@@ -247,6 +293,13 @@ def _analyze_file_worker(args):
             fn.get("cyclomatic_complexity", 0)
             for fn in complexity_results
         ]
+    else:
+        # No function definitions found — module-level file (e.g. __init__.py, signals.py)
+        # Use baseline McCabe score of 1.0 to prevent 'undefined' showing in reports
+        file_cyclomatic = 1.0
+        file_max_cyclomatic = 1
+        file_time_complexity = "O(1)"
+        
         file_cyclomatic = round(sum(cc_values) / len(cc_values), 1)
         file_max_cyclomatic = max(cc_values)
 
@@ -264,9 +317,6 @@ def _analyze_file_worker(args):
 
     # Documentation coverage
     doc_coverage_pct, missing_docs_count = compute_doc_coverage(code, language)
-
-    # File classification
-    file_type = classify_file_type(relative_path)
 
     return {
         "file_name": file_name,
@@ -286,6 +336,7 @@ def _analyze_file_worker(args):
         "content": code,
         "is_code": True,
         "file_type": file_type,
+        "_file_role": file_type, # PHASE 1: inject role
     }
 
 

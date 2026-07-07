@@ -6,6 +6,33 @@
 import ast
 from typing import List, Dict
 
+# PHASE 1: SHA constants
+SHA_CONTEXT_SIGNALS: dict[str, list[str]] = {
+    'hmac_digest': [
+        'hmac.new', 'hmac.digest', 'itsdangerous', 'signer', 'timestampsigner',
+        'urlsafeserializer', 'want_bytes',
+    ],
+    'password_hash': [
+        'pbkdf2', 'check_password', 'password', 'passwd', 'set_password',
+        'hash_password',
+    ],
+}
+
+SHA_SEVERITY_MAP: dict[str, tuple[str, str]] = {
+    'hmac_digest': (
+        'Info',
+        'SHA-1 in HMAC context — computationally secure for message signing',
+    ),
+    'bare_hash': (
+        'Medium',
+        'SHA-1 used for data integrity — collision risk exists; consider SHA-256',
+    ),
+    'password_hash': (
+        'Critical',
+        'SHA-1 used for password hashing — trivially broken with rainbow tables; use bcrypt/argon2',
+    ),
+}
+
 
 class SecurityAnalyzer(ast.NodeVisitor):
     """
@@ -15,11 +42,15 @@ class SecurityAnalyzer(ast.NodeVisitor):
     description, recommendation, and line number.
     """
 
-    def __init__(self, is_test: bool = False, file_path: str = ""):
+    def __init__(self, is_test: bool = False, file_path: str = "", source: str = ""):
 
         self.issues: List[Dict] = []
         self.is_test = is_test
         self.file_path = file_path.replace("\\", "/").lower()
+
+        # PHASE 1: source lines and parent map
+        self._source_lines: list[str] = source.splitlines() if source else []
+        self._parent_map: dict = {}
 
         # Framework-aware file patterns where eval/exec/compile
         # are expected and controlled (not user-input driven)
@@ -113,7 +144,42 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # Dangerous function detection
     # ------------------------------------------------------
 
+    def _classify_subprocess_call(self, node: ast.Call) -> tuple[str, str]:
+        shell_true = any(
+            kw.arg == 'shell'
+            and isinstance(kw.value, ast.Constant)
+            and kw.value.value is True
+            for kw in node.keywords
+        )
+
+        if not node.args:
+            return 'Low', 'subprocess call with no positional arguments'
+
+        arg0 = node.args[0]
+
+        if isinstance(arg0, ast.List):
+            if shell_true:
+                return 'Medium', 'subprocess list arg with shell=True — shell flag is redundant and risky'
+            return 'Low', 'constant list args with shell=False — safe invocation pattern'
+
+        if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+            if shell_true:
+                return 'High', 'string command with shell=True — command injection risk if input is unsanitised'
+            if ' ' in arg0.value:
+                return 'Medium', 'space-separated string command — prefer list form to avoid shell-splitting ambiguity'
+            return 'Low', 'single-token constant string — low risk but list form is preferred'
+
+        # Dynamic arg (ast.Name, ast.Call, ast.JoinedStr f-string, ast.BinOp, etc.)
+        if shell_true:
+            return 'High', 'dynamic argument with shell=True — command injection risk; sanitise all inputs'
+        return 'Medium', 'dynamic argument to subprocess — validate and sanitise all inputs'
+
     def visit_Call(self, node):
+
+        # PHASE 1 FIX: track whether this node was already classified
+        # by _classify_subprocess_call so the generic shell=True block
+        # does not emit a duplicate finding on the same node.
+        _handled_as_subprocess = False
 
         line = getattr(node, "lineno", 0)
 
@@ -199,15 +265,16 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             # subprocess commands
             if attr in {"Popen", "call", "run"}:
-                is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], (ast.List, ast.Tuple, ast.Constant))
-                severity = "Low" if (self.is_test or is_constant_arg) else "Medium"
+                # PHASE 1: argument-type-aware severity
+                severity, message = self._classify_subprocess_call(node)
                 self._add_issue(
                     severity=severity,
-                    description="[Verify Context] Use of subprocess without sanitization may allow command injection.",
+                    description=message,
                     recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
                     line=line,
                     issue_type="Command Injection"
                 )
+                _handled_as_subprocess = True                 # PHASE 1 FIX
 
             # unsafe deserialization
             if attr == "loads":
@@ -238,7 +305,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
         for keyword in node.keywords:
 
-            if keyword.arg == "shell":
+            # Generic shell=True check — guard against duplicate
+            if keyword.arg == "shell" and not _handled_as_subprocess: # PHASE 1 FIX
 
                 if isinstance(keyword.value, ast.Constant):
 
@@ -357,15 +425,42 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # Weak hash detection
     # ------------------------------------------------------
 
+    def _classify_sha_context(self, node: ast.AST) -> str:
+        # Window: 5 lines starting at node's line (1-indexed)
+        start = max(0, getattr(node, "lineno", 1) - 1)
+        end = min(start + 6, len(self._source_lines))
+        window = '\n'.join(self._source_lines[start:end]).lower()
+
+        # password_hash takes priority
+        if any(sig in window for sig in SHA_CONTEXT_SIGNALS['password_hash']):
+            return 'password_hash'
+        if any(sig in window for sig in SHA_CONTEXT_SIGNALS['hmac_digest']):
+            return 'hmac_digest'
+
+        # Parent function name heuristic
+        parent = self._parent_map.get(node)
+        while parent is not None:
+            if isinstance(parent, ast.FunctionDef):
+                fname = parent.name.lower()
+                if any(kw in fname for kw in ('sign', 'digest', 'token', 'mac', 'hmac')):
+                    return 'hmac_digest'
+                break
+            parent = self._parent_map.get(parent)
+
+        return 'bare_hash'
+
     def visit_Attribute(self, node):
 
         line = getattr(node, "lineno", 0)
 
         if isinstance(node.value, ast.Name) and node.value.id == "hashlib":
             if node.attr in ("md5", "sha1"):
+                # PHASE 1: context-aware severity instead of flat Medium
+                context = self._classify_sha_context(node)
+                severity, message = SHA_SEVERITY_MAP[context]
                 self._add_issue(
-                    severity="Medium",
-                    description=f"Use of weak hash algorithm hashlib.{node.attr}() detected.",
+                    severity=severity,
+                    description=message,
                     recommendation="Use hashlib.sha256() or hashlib.sha3_256() for secure hashing. MD5 and SHA1 are vulnerable to collision attacks.",
                     line=line,
                     issue_type="Weak Cryptography"
@@ -441,8 +536,16 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
 
         analyzer = SecurityAnalyzer(
             is_test=is_test_file,
-            file_path=file_path
+            file_path=file_path,
+            source=code # PHASE 1: Add source parameter
         )
+
+        # PHASE 1: build parent map for upward traversal
+        analyzer._parent_map = {
+            child: node
+            for node in ast.walk(tree)
+            for child in ast.iter_child_nodes(node)
+        }
 
         analyzer.visit(tree)
 

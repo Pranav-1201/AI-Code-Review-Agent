@@ -21,6 +21,18 @@ import ast
 from typing import Dict
 
 
+# PHASE 1: Role-aware complexity thresholds
+COMPLEXITY_THRESHOLDS: dict[str, dict[str, int]] = {
+    'orchestrator': {'warn': 25, 'error': 40},
+    'cli_parser':   {'warn': 18, 'error': 30},
+    'utility':      {'warn': 10, 'error': 20},
+    'data_model':   {'warn': 12, 'error': 22},
+    'test':         {'warn': 5,  'error': 10},
+}
+_DEFAULT_ROLE = 'utility'
+
+
+
 class ComplexityAnalyzer(ast.NodeVisitor):
     """
     AST-based analyzer that computes complexity metrics
@@ -143,7 +155,7 @@ class ComplexityAnalyzer(ast.NodeVisitor):
     # Main Analysis Entry
     # ======================================================
 
-    def analyze_function(self, node: ast.FunctionDef) -> Dict:
+    def analyze_function(self, node: ast.FunctionDef, role: str = 'utility') -> Dict: # PHASE 1: role parameter
 
         self.reset_state()
 
@@ -158,8 +170,8 @@ class ComplexityAnalyzer(ast.NodeVisitor):
             "branches": self.branches,
             "time_complexity": self.estimate_time_complexity(),
             "recursive": self.is_recursive,
-            "risk_level": self.get_risk_level(),
-            "hotspot": self.is_hotspot()
+            "risk_level": self.get_risk_level(self.cyclomatic_complexity, role=role), # PHASE 1: Thread role and cc
+            "hotspot": self.is_hotspot(role=role) # PHASE 1: Thread role
         }
 
     # ======================================================
@@ -203,26 +215,24 @@ class ComplexityAnalyzer(ast.NodeVisitor):
     # Risk Classification
     # ======================================================
 
-    def get_risk_level(self) -> str:
+    def get_risk_level(self, cc: int, role: str = 'utility') -> str: # PHASE 1: role parameter and lookup
 
-        c = self.cyclomatic_complexity
-
-        if c <= 5:
-            return "LOW"
-
-        if c <= 10:
-            return "MEDIUM"
-
-        return "HIGH"
+        # PHASE 1: Use role-aware thresholds
+        thresholds = COMPLEXITY_THRESHOLDS.get(role, COMPLEXITY_THRESHOLDS[_DEFAULT_ROLE])
+        if cc >= thresholds['error']:
+            return 'error'
+        if cc >= thresholds['warn']:
+            return 'warning'
+        return 'ok'
 
     # ======================================================
     # Hotspot Detection
     # ======================================================
 
-    def is_hotspot(self) -> bool:
+    def is_hotspot(self, role: str = 'utility') -> bool: # PHASE 1: role parameter
 
         return (
-            self.cyclomatic_complexity > 10
+            self.get_risk_level(self.cyclomatic_complexity, role=role) == 'error' # PHASE 1: Use get_risk_level
             or self.max_loop_depth >= 3
             or self.is_recursive
         )

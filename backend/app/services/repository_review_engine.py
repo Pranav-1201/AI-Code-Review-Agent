@@ -398,9 +398,28 @@ class RepositoryReviewEngine:
         code_file_count = len(results)
 
         if prod_count > 0:
-            avg_score = round(
-                sum(r["score"] for r in prod_results) / prod_count, 2
+            # --------------------------------------------------
+            # Source-stratified quality score
+            # production=1.0, example=0.1, docs=0.05, test=0.0
+            # Prevents example/docs files from fully diluting score
+            # --------------------------------------------------
+            FILE_TYPE_WEIGHTS = {
+                "production": 1.0,
+                "example":    0.1,
+                "docs":       0.05,
+                "test":       0.0,
+            }
+            weighted_sum = sum(
+                r["score"] * FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0)
+                for r in results
+                if FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0) > 0
             )
+            weight_total = sum(
+                FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0)
+                for r in results
+                if FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0) > 0
+            )
+            avg_score = round(weighted_sum / weight_total, 2) if weight_total > 0 else 0
             avg_doc = round(
                 sum(r.get("documentation_coverage", 0) for r in prod_results) / prod_count, 1
             )
