@@ -162,7 +162,7 @@ def compute_doc_coverage(code: str, language: str) -> tuple[float, int]:
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return 0.0
+        return 0.0, 0
 
     total = 0
     documented = 0
@@ -293,13 +293,6 @@ def _analyze_file_worker(args):
             fn.get("cyclomatic_complexity", 0)
             for fn in complexity_results
         ]
-    else:
-        # No function definitions found — module-level file (e.g. __init__.py, signals.py)
-        # Use baseline McCabe score of 1.0 to prevent 'undefined' showing in reports
-        file_cyclomatic = 1.0
-        file_max_cyclomatic = 1
-        file_time_complexity = "O(1)"
-        
         file_cyclomatic = round(sum(cc_values) / len(cc_values), 1)
         file_max_cyclomatic = max(cc_values)
 
@@ -314,6 +307,12 @@ def _analyze_file_worker(args):
         has_recursive = any(fn.get("recursive", False) for fn in complexity_results)
         if has_recursive and max_depth <= 1:
             file_time_complexity = "O(n)"
+    else:
+        # No function definitions found — module-level file (e.g. __init__.py, signals.py)
+        # Use baseline McCabe score of 1.0 to prevent 'undefined' showing in reports
+        file_cyclomatic = 1.0
+        file_max_cyclomatic = 1
+        file_time_complexity = "O(1)"
 
     # Documentation coverage
     doc_coverage_pct, missing_docs_count = compute_doc_coverage(code, language)
