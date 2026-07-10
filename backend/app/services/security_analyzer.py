@@ -6,6 +6,8 @@
 import ast
 from typing import List, Dict
 
+from backend.app.analysis.ast_parser import parse_module
+
 # PHASE 1: SHA constants
 SHA_CONTEXT_SIGNALS: dict[str, list[str]] = {
     'hmac_digest': [
@@ -532,7 +534,13 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
 
     try:
 
-        tree = ast.parse(code)
+        # PHASE 2: parse_module() runs ParentTracker, so every node already
+        # carries a .parent back-reference before any visitor touches the
+        # tree. Single source of parent truth for the analysis pipeline.
+        tree = parse_module(code)
+
+        if tree is None:  # SyntaxError
+            return []
 
         analyzer = SecurityAnalyzer(
             is_test=is_test_file,
@@ -540,11 +548,13 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
             source=code # PHASE 1: Add source parameter
         )
 
-        # PHASE 1: build parent map for upward traversal
+        # Backward compat: _parent_map is still exposed (used by
+        # _classify_sha_context) but is now derived from the ParentTracker
+        # annotations rather than rebuilt by a second independent walk.
         analyzer._parent_map = {
-            child: node
+            node: node.parent
             for node in ast.walk(tree)
-            for child in ast.iter_child_nodes(node)
+            if getattr(node, "parent", None) is not None
         }
 
         analyzer.visit(tree)
