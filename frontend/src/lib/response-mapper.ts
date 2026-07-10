@@ -192,7 +192,9 @@ function mapFile(f: any): FileAnalysis {
   const filePath = rawPath.replace(/\\/g, "/");
   const fileName = f.file_name || (filePath ? filePath.split("/").pop() : "") || f.name || "unknown";
 
-  // Determine file type from backend classification
+  // Determine coarse file type from backend classification.
+  // Backend `file_type` is the coarse contract value (production/test/non_code);
+  // the fine 5-tier role travels separately in `file_role` (surfaced below).
   let fileType: "production" | "test" | "non_code" = "production";
   if (f.file_type === "test" || f.is_test === true) {
     fileType = "test";
@@ -210,6 +212,7 @@ function mapFile(f: any): FileAnalysis {
     maxCyclomaticComplexity: f.max_cyclomatic_complexity || f.maxCyclomaticComplexity || 0,
     maxNestingDepth: f.max_loop_depth || f.maxNestingDepth || 0,
     branches: f.branches || 0,
+    complexity: f.complexity || f.time_complexity || "O(1)",
     breakdown: f.breakdown,
     linesOfCode: f.lines_of_code || f.linesOfCode || f.lines || f.loc || 0,
     explanation: f.explanation || f.refactor_summary || f.ai_explanation || f.summary || "",
@@ -224,6 +227,7 @@ function mapFile(f: any): FileAnalysis {
     })),
     documentationCoverage: f.documentation_coverage || f.documentationCoverage || f.doc_coverage || 0,
     fileType,
+    fileRole: f.file_role || f.fileRole || undefined,
   };
 }
 

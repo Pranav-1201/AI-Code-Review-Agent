@@ -36,6 +36,9 @@ export interface FileAnalysis {
   maxNestingDepth: number;
   branches: number;
 
+  /** Estimated time-complexity string (e.g. "O(n)"), from the backend. */
+  complexity?: string;
+
   breakdown?: Record<string, number>;
 
   linesOfCode: number;
@@ -53,8 +56,11 @@ export interface FileAnalysis {
 
   documentationCoverage: number;
 
-  /** Classification: "production" | "test" | "non_code" */
+  /** Coarse classification (scoring + display): "production" | "test" | "non_code" */
   fileType: "production" | "test" | "non_code";
+
+  /** Fine 5-tier backend role, surfaced for display. Optional for backward compat. */
+  fileRole?: "utility" | "orchestrator" | "cli_parser" | "data_model" | "test" | "non_code";
 }
 
 export interface Dependency {

@@ -248,6 +248,9 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
         "is_test": file_is_test,
         "file_type": file_data.get("file_type", "production"),   # coarse
         "file_role": file_role,                                   # fine (surfaced for UI)
+        # Carry the real per-file time complexity computed by repo_analyzer
+        # (was dropped here, so file_report defaulted to "O(1)" for everything).
+        "complexity": file_data.get("time_complexity", "O(1)"),
     }
 
     _cache_manager.set(code, imports, final_output, version="v3.2")
