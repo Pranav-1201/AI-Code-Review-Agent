@@ -590,9 +590,9 @@ Code:
     if complexity_metrics and len(complexity_metrics) > 0:
         _filename = complexity_metrics[0].get("_filename", "")
 
-    # PHASE 1: extract role injected by repo_analyzer._analyze_file_worker
-    file_analysis_result = kwargs
-    file_role = file_analysis_result.get("_file_role", "utility")
+    # Defect C: role is now passed explicitly by repository_review_engine.
+    # Keep the legacy _file_role key as a fallback for any other caller.
+    file_role = kwargs.get("file_role", kwargs.get("_file_role", "utility"))
     
     heuristic_issues = _heuristic_analysis(code, complexity=comp_data, filename=_filename, file_role=file_role)
     issues = list(heuristic_issues)

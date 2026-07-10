@@ -134,6 +134,32 @@ def classify_file_type(file_path: str, content: str = "") -> str: # PHASE 1: add
 
 
 # ----------------------------------------------------------
+# Two-field contract (Chunk 0 — fixes Defect A)
+# ----------------------------------------------------------
+# classify_file_type() returns a FINE role, used only for
+# role-aware complexity thresholds: one of
+#   {test, cli_parser, data_model, utility, orchestrator}.
+# The score aggregation (repository_review_engine) and the
+# frontend understand only a COARSE type:
+#   {production, test, non_code}.
+# coarse_file_type() maps fine -> coarse so both layers agree.
+# Previously the fine role was stored in `file_type`, and the
+# aggregator filtered `file_type == 'production'` — which a fine
+# role never equals — so every production file was dropped and
+# the health score collapsed to a constant.
+# ----------------------------------------------------------
+
+_NON_PRODUCTION_ROLES = frozenset({"test", "non_code"})
+
+
+def coarse_file_type(file_role: str) -> str:
+    """Map a fine 5-tier role to the coarse scoring/frontend type."""
+    if file_role in _NON_PRODUCTION_ROLES:
+        return file_role
+    return "production"
+
+
+# ----------------------------------------------------------
 # Documentation Coverage (Python)
 # ----------------------------------------------------------
 
@@ -242,8 +268,9 @@ def _analyze_file_worker(args):
             "documentation_coverage": None,
             "content": code,
             "is_code": False,
-            "file_type": "non_code",
-            "_file_role": "non_code", # PHASE 1: inject role
+            "file_type": "non_code",   # coarse (scoring/frontend)
+            "file_role": "non_code",   # fine (thresholds)
+            "is_test": False,
         }
 
     # --------------------------------------------------
@@ -251,8 +278,11 @@ def _analyze_file_worker(args):
     # --------------------------------------------------
     analysis = {"functions": [], "imports": []}
 
-    # PHASE 1: classify role before analysis
-    file_type = classify_file_type(relative_path, code)
+    # Chunk 0 two-field contract:
+    #   file_role = fine 5-tier role  -> drives complexity thresholds
+    #   file_type = coarse type       -> drives scoring + frontend
+    file_role = classify_file_type(relative_path, code)
+    file_type = coarse_file_type(file_role)
 
     if ext == ".py":
         try:
@@ -273,7 +303,7 @@ def _analyze_file_worker(args):
             tree = ast.parse(code)
             for node in ast.walk(tree):
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    metrics = complexity_analyzer.analyze_function(node, role=file_type) # PHASE 1: Thread role
+                    metrics = complexity_analyzer.analyze_function(node, role=file_role) # Chunk 0: thread FINE role
                     metrics["function"] = node.name
                     complexity_results.append(metrics)
         except Exception:
@@ -334,8 +364,9 @@ def _analyze_file_worker(args):
         "undocumented_functions": missing_docs_count,
         "content": code,
         "is_code": True,
-        "file_type": file_type,
-        "_file_role": file_type, # PHASE 1: inject role
+        "file_type": file_type,          # coarse: production/test/non_code
+        "file_role": file_role,          # fine: utility/orchestrator/cli_parser/data_model/test
+        "is_test": file_role == "test",  # Defect B: give the engine a real is_test signal
     }
 
 

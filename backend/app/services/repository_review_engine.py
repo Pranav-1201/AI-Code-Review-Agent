@@ -27,10 +27,15 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     code = file_data["content"]
     file_name = file_data["file_name"]
     file_path = file_data.get("file_path", file_name)
-    file_is_test = file_data.get("is_test", False)
+    # Defect B: repo_analyzer now emits a real is_test; fall back to the fine role.
+    file_is_test = file_data.get("is_test", file_data.get("file_role") == "test")
+    # Defect C: the fine role must reach llm_service (was defaulting to 'utility').
+    file_role = file_data.get("file_role", "utility")
     imports = file_data.get("imports", [])
 
-    cached_result = _cache_manager.get(code, imports, version="v3.1")
+    # Chunk 0: bumped v3.1 -> v3.2 so results cached under the broken
+    # health-score / complexity regressions are not served after the fix.
+    cached_result = _cache_manager.get(code, imports, version="v3.2")
     if cached_result:
         return cached_result
 
@@ -86,7 +91,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
             complexity_metrics=complexity_metrics,
             language=file_data.get("language", "python"),
             security_issues=security_issues,
-            is_test_file=file_is_test
+            is_test_file=file_is_test,
+            file_role=file_role  # Defect C: role-aware heuristics in llm_service
         )
 
         analysis_section = analysis_result.get("analysis", {})
@@ -240,10 +246,11 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
         "documentation_coverage": doc_coverage,
         "undocumented_functions": undocumented_count,
         "is_test": file_is_test,
-        "file_type": file_data.get("file_type", "production"),
+        "file_type": file_data.get("file_type", "production"),   # coarse
+        "file_role": file_role,                                   # fine (surfaced for UI)
     }
 
-    _cache_manager.set(code, imports, final_output, version="v3.1")
+    _cache_manager.set(code, imports, final_output, version="v3.2")
     return final_output
 
 
@@ -302,6 +309,7 @@ class RepositoryReviewEngine:
                     "documentation_coverage": 0,
                     "is_test": False,
                     "file_type": "non_code",
+                    "file_role": "non_code",
                 })
                 continue
 
@@ -358,7 +366,8 @@ class RepositoryReviewEngine:
                 "time_complexity": result.get("complexity", "O(1)"),
 
                 "is_test": result.get("is_test", False),
-                "file_type": result.get("file_type", "production"),
+                "file_type": result.get("file_type", "production"),   # coarse
+                "file_role": result.get("file_role", "utility"),      # fine (surfaced for UI)
             }
 
             file_reports.append(file_report)
