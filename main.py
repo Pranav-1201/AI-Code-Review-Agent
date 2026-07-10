@@ -129,11 +129,13 @@ def run_scan_pipeline(scan_id: str, repo_url: str):
         update_scan(scan_id, "cloning", 5,
                     stage="cloning", stage_detail="Cloning repository...")
 
-        subprocess.run(["git", "config", "--global", "http.postBuffer", "524288000"])
-
+        # Defect G: apply the large-repo post-buffer to THIS clone only,
+        # via `git -c`, instead of mutating the user's global git config.
         subprocess.run(
             [
-                "git", "clone",
+                "git",
+                "-c", "http.postBuffer=524288000",
+                "clone",
                 "--depth", "1",
                 "--single-branch",
                 repo_url,
