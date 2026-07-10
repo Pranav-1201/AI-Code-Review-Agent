@@ -12,6 +12,7 @@ from typing import Dict, List, Any
 from backend.app.services.retriever_service import CodeRetriever
 from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.services.quality_scorer import compute_quality_score
+from backend.app.analysis.cohesion_analyzer import size_verdict
 
 
 # ----------------------------------------------------------
@@ -167,11 +168,12 @@ def _compute_deterministic_probability(
 # Heuristic Analysis
 # ----------------------------------------------------------
 
-def _heuristic_analysis(code: str, complexity: dict = None, filename: str = "", file_role: str = 'utility'): # PHASE 1: Added file_role
+def _heuristic_analysis(code: str, complexity: dict = None, filename: str = "", file_role: str = 'utility', cohesion: dict = None): # PHASE 1: file_role; PHASE 2: cohesion
     """
     Perform heuristic code analysis for structural issues.
     Complexity is provided by the caller (from ComplexityAnalyzer),
     NOT re-calculated here — single source of truth.
+    The same applies to `cohesion` (from cohesion_analyzer.size_verdict).
     """
     if complexity is None:
         complexity = {}
@@ -218,18 +220,21 @@ def _heuristic_analysis(code: str, complexity: dict = None, filename: str = "", 
             )
         })
 
-    # Detect long files
-    if line_count > 300:
+    # PHASE 2: cohesion-gated size check.
+    # Replaces the old flat `line_count > 300` (and the > 150 "approaching
+    # the limit" nag). Size alone is not a defect: a long, highly cohesive
+    # module (Flask's sessions.py) is fine. Only long AND incoherent is a
+    # smell. `cohesion` is computed once in repo_analyzer; it is recomputed
+    # here only when a caller invokes this function directly.
+    if cohesion is None:
+        cohesion = size_verdict(code, filename)
+
+    if cohesion.get("should_flag_size"):
         issues.append({
             "type": "maintainability",
             "severity": "medium",
-            "message": f"File is {line_count} lines long — consider splitting into smaller modules"
-        })
-    elif line_count > 150:
-        issues.append({
-            "type": "style",
-            "severity": "low",
-            "message": f"File is {line_count} lines — approaching recommended module size limit"
+            "message": cohesion.get("flag_reason")
+                       or f"File is {line_count} lines long with low cohesion — consider splitting"
         })
 
     # --------------------------------------------------
@@ -290,7 +295,8 @@ def _generate_explanation(
     language: str,
     doc_coverage: float = 0.0,
     undocumented_count: int = 0,
-    file_name: str = ""
+    file_name: str = "",
+    cohesion: Dict[str, Any] = None
 ) -> str:
     """
     Generate a meaningful, file-specific explanation
@@ -341,8 +347,13 @@ def _generate_explanation(
     else:
         design.append(f"**Complexity:** Logic is straightforward with minimal branching ({cc}).")
 
-    if total_lines > 300:
-        design.append(f"**Size:** File length ({total_lines} lines) may impact maintainability.")
+    # PHASE 2: same cohesion gate as the issue list — the prose must not
+    # claim a size problem the issue list does not report.
+    if cohesion and cohesion.get("should_flag_size"):
+        design.append(
+            f"**Size:** File length ({total_lines} lines) combined with low cohesion "
+            f"({cohesion.get('module_cohesion', 0):.2f}) may impact maintainability."
+        )
 
     # 4. Risk Analysis
     risks = []
@@ -385,7 +396,8 @@ def _generate_suggestions(
     issues: List[Dict],
     functions: List[str],
     imports: List[str],
-    code: str
+    code: str,
+    cohesion: Dict[str, Any] = None
 ) -> List[str]:
     """
     Generate actionable, file-specific suggestions
@@ -421,11 +433,13 @@ def _generate_suggestions(
                 "Use subprocess with list arguments instead of shell commands."
             )
 
-    # Long file suggestion
-    lines = len([l for l in code.split("\n") if l.strip()])
-    if lines > 200:
+    # PHASE 2: cohesion-gated. The old rule fired on NON-BLANK lines > 200,
+    # a different metric from the issue list's total-lines > 300, so a file
+    # could be told to split with no corresponding issue. One gate now.
+    if cohesion and cohesion.get("should_flag_size"):
         suggestions.append(
-            f"This file has {lines} lines. Consider splitting it into "
+            f"This file has {cohesion.get('line_count', 0)} lines and low cohesion "
+            f"({cohesion.get('module_cohesion', 0):.2f}). Consider splitting it into "
             "smaller, focused modules."
         )
 
@@ -593,8 +607,14 @@ Code:
     # Defect C: role is now passed explicitly by repository_review_engine.
     # Keep the legacy _file_role key as a fallback for any other caller.
     file_role = kwargs.get("file_role", kwargs.get("_file_role", "utility"))
-    
-    heuristic_issues = _heuristic_analysis(code, complexity=comp_data, filename=_filename, file_role=file_role)
+
+    # PHASE 2: cohesion verdict computed once in repo_analyzer and passed
+    # through. Computed here only for direct callers that omit it, so all
+    # four size-related outputs below agree on one decision.
+    cohesion = kwargs.get("cohesion") or size_verdict(code, _filename)
+
+    heuristic_issues = _heuristic_analysis(code, complexity=comp_data, filename=_filename,
+                                           file_role=file_role, cohesion=cohesion)
     issues = list(heuristic_issues)
 
     score_result = compute_quality_score(
@@ -625,7 +645,8 @@ Code:
         imports=imports,
         language=language,
         doc_coverage=_doc_coverage,
-        file_name=_filename
+        file_name=_filename,
+        cohesion=cohesion
     )
 
     suggestions = _generate_suggestions(
@@ -634,7 +655,8 @@ Code:
         issues=issues,
         functions=functions,
         imports=imports,
-        code=code
+        code=code,
+        cohesion=cohesion
     )
 
     # ------------------------------------------------------

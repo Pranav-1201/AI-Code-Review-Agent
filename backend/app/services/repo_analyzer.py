@@ -12,6 +12,7 @@ from backend.app.analysis.ast_parser import parse_python_file
 from backend.app.analysis.dead_code_detector import DeadCodeDetector
 from backend.app.analysis.call_graph import build_call_graph
 from backend.app.analysis.complexity_analyzer import ComplexityAnalyzer
+from backend.app.analysis.cohesion_analyzer import size_verdict, NO_SIZE_FLAG
 
 
 # ----------------------------------------------------------
@@ -271,6 +272,7 @@ def _analyze_file_worker(args):
             "file_type": "non_code",   # coarse (scoring/frontend)
             "file_role": "non_code",   # fine (thresholds)
             "is_test": False,
+            "cohesion": dict(NO_SIZE_FLAG),
         }
 
     # --------------------------------------------------
@@ -283,6 +285,12 @@ def _analyze_file_worker(args):
     #   file_type = coarse type       -> drives scoring + frontend
     file_role = classify_file_type(relative_path, code)
     file_type = coarse_file_type(file_role)
+
+    # PHASE 2: cohesion-gated size verdict, computed ONCE here.
+    # Every downstream "this file is too long" claim reads
+    # cohesion["should_flag_size"] instead of applying its own
+    # line-count threshold.
+    cohesion = size_verdict(code, relative_path) if ext == ".py" else dict(NO_SIZE_FLAG)
 
     if ext == ".py":
         try:
@@ -367,6 +375,7 @@ def _analyze_file_worker(args):
         "file_type": file_type,          # coarse: production/test/non_code
         "file_role": file_role,          # fine: utility/orchestrator/cli_parser/data_model/test
         "is_test": file_role == "test",  # Defect B: give the engine a real is_test signal
+        "cohesion": cohesion,            # PHASE 2: single source of truth for size flagging
     }
 
 

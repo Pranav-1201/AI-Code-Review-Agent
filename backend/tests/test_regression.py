@@ -139,17 +139,39 @@ class TestMainGuardRegression(unittest.TestCase):
             "An applicable file with top-level execution should still be flagged")
 
 
-class TestLineCountRegression(unittest.TestCase):
-    """Fix 4: Line count should use total lines, not stripped."""
+class TestSizeFlagRegression(unittest.TestCase):
+    """Phase 2: size flagging is cohesion-gated (line_count > 500 AND
+    module_cohesion < 0.40), replacing the old flat line-count rule. The
+    Fix-4 guarantee is carried forward: when the warning fires, it reports
+    the TOTAL line count, not the stripped count.
 
-    def test_total_lines_in_file_length_message(self):
-        # 350 total lines (including blanks), but only ~175 non-blank
-        code = ("x = 1\n\n") * 175  # 350 lines total
-        issues = _heuristic_analysis(code, complexity=CX_O1)
-        length_issues = [i for i in issues if "lines" in i.get("message", "")]
-        self.assertTrue(len(length_issues) >= 1, "Should flag a 350-line file")
-        self.assertIn("350", length_issues[0]["message"],
-            "Should report total line count, not stripped count")
+    (Was TestLineCountRegression; the old test asserted a 350-line file is
+    flagged, which the cohesion gate deliberately no longer does.)"""
+
+    def test_large_low_cohesion_file_flagged_with_total_line_count(self):
+        # 8 top-level functions that share nothing -> cohesion 0.0.
+        # Padded past the 500-line gate with BLANK lines, so the total line
+        # count is far larger than the non-blank count.
+        funcs = "".join(f"def f{i}(a{i}):\n    return a{i}\n\n" for i in range(8))
+        code = funcs + ("\n" * 520)
+        total = len(code.splitlines())
+        issues = _heuristic_analysis(code, complexity=CX_O1, filename="tangled.py")
+        size_issues = [i for i in issues if "cohesion" in i.get("message", "").lower()]
+        self.assertEqual(len(size_issues), 1, "large low-cohesion file must be flagged")
+        self.assertIn(str(total), size_issues[0]["message"],
+            "warning must report the TOTAL line count, not the stripped count")
+
+    def test_large_cohesive_file_not_flagged(self):
+        # Same size, but every function shares `registry` -> high cohesion.
+        # This is the Flask sessions.py regression: long but cohesive == fine.
+        funcs = "".join(
+            f"def f{i}(registry):\n    registry.append({i})\n    return registry\n\n"
+            for i in range(8))
+        code = funcs + ("\n" * 520)
+        issues = _heuristic_analysis(code, complexity=CX_O1, filename="cohesive.py")
+        size_issues = [i for i in issues if "cohesion" in i.get("message", "").lower()]
+        self.assertEqual(len(size_issues), 0,
+            "a long but cohesive file must NOT be flagged")
 
 
 class TestScoringRegression(unittest.TestCase):

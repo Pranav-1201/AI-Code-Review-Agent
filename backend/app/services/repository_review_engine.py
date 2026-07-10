@@ -14,6 +14,7 @@ from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.duplicate_detector import detect_duplicates
 from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.services.cache_manager import CacheManager
+from backend.app.analysis.cohesion_analyzer import NO_SIZE_FLAG
 
 _cache_manager = CacheManager()
 
@@ -31,11 +32,14 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     file_is_test = file_data.get("is_test", file_data.get("file_role") == "test")
     # Defect C: the fine role must reach llm_service (was defaulting to 'utility').
     file_role = file_data.get("file_role", "utility")
+    # PHASE 2: cohesion verdict computed once in repo_analyzer.
+    file_cohesion = file_data.get("cohesion") or dict(NO_SIZE_FLAG)
     imports = file_data.get("imports", [])
 
-    # Chunk 0: bumped v3.1 -> v3.2 so results cached under the broken
-    # health-score / complexity regressions are not served after the fix.
-    cached_result = _cache_manager.get(code, imports, version="v3.2")
+    # Cache version history:
+    #   v3.2  Chunk 0 - broken health-score / complexity results invalidated
+    #   v3.3  Phase 2 - cohesion-gated size flagging changes issue output
+    cached_result = _cache_manager.get(code, imports, version="v3.3")
     if cached_result:
         return cached_result
 
@@ -92,7 +96,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
             language=file_data.get("language", "python"),
             security_issues=security_issues,
             is_test_file=file_is_test,
-            file_role=file_role  # Defect C: role-aware heuristics in llm_service
+            file_role=file_role,     # Defect C: role-aware heuristics in llm_service
+            cohesion=file_cohesion   # PHASE 2: one size verdict for all outputs
         )
 
         analysis_section = analysis_result.get("analysis", {})
@@ -251,9 +256,12 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
         # Carry the real per-file time complexity computed by repo_analyzer
         # (was dropped here, so file_report defaulted to "O(1)" for everything).
         "complexity": file_data.get("time_complexity", "O(1)"),
+        # PHASE 2: carry the cohesion verdict so the repo-level
+        # maintainability warning reads the same decision as the file issues.
+        "cohesion": file_cohesion,
     }
 
-    _cache_manager.set(code, imports, final_output, version="v3.2")
+    _cache_manager.set(code, imports, final_output, version="v3.3")
     return final_output
 
 
@@ -519,11 +527,17 @@ class RepositoryReviewEngine:
             cc = r.get("cyclomatic_complexity", 0)
             max_cc = r.get("max_cyclomatic_complexity", 0)
 
-            if lines > 300:
+            # PHASE 2: cohesion-gated, reading the SAME should_flag_size
+            # decision the file-level issue used. Previously this applied its
+            # own flat `lines > 300`, so the repo warning and the file issue
+            # could disagree.
+            r_cohesion = r.get("cohesion") or NO_SIZE_FLAG
+            if r_cohesion.get("should_flag_size"):
                 maintainability_warnings.append({
                     "file": fpath,
                     "type": "long_file",
-                    "message": f"File is {lines} lines long — consider splitting into smaller modules",
+                    "message": r_cohesion.get("flag_reason")
+                               or f"File is {lines} lines long with low cohesion — consider splitting",
                     "severity": "medium"
                 })
 
