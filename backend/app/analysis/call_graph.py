@@ -329,3 +329,286 @@ def detect_unused_imports(
             unused.append(edge)
 
     return unused
+
+
+# ==========================================================
+# Phase 4: Interprocedural Call Graph (two-pass def/resolve)
+# ----------------------------------------------------------
+# Real function->function edges across a repository, replacing the
+# file-level name-bag (build_call_graph) for dead-code and cycle
+# analysis. Two passes:
+#
+#   Pass 1  collect every function/method DEFINITION with a qualified
+#           name (module::Class.method or module::func) plus metadata
+#           (decorators, entrypoint-ness, whether its class uses
+#           dynamic dispatch).
+#   Pass 2  resolve each call site to definition(s):
+#             name()          -> module-local def, else same-name defs
+#             self.m()        -> method m in the SAME class (precise)
+#             obj.m()         -> any method named m (conservative)
+#             getattr(o,x)()  -> UNRESOLVED (dynamic) — no fabricated edge
+#
+# Dynamic-dispatch awareness (the dogfooding edge case): this codebase's
+# own analyzers subclass ast.NodeVisitor and are dispatched via
+# self.visit(node) -> getattr(self, "visit_"+T)(). A naive detector would
+# flag every visit_* method as dead. Classes that use getattr(self, ...)()
+# or subclass a *Visitor base are marked dynamic; their methods are never
+# reported dead. Monkey-patching is not modelled — this codebase does none
+# in app code (only tests use mock.patch, which does not affect the graph).
+# ==========================================================
+
+from typing import Set as _Set  # local alias; module already imports Dict/List/Optional
+
+
+# Decorator name endings that mark a function as an externally-invoked
+# entrypoint (web route / CLI command / task) — called by a framework,
+# not by name in-code, so they must never be reported as dead.
+_ENTRYPOINT_DECORATOR_HINTS = (
+    "route", "get", "post", "put", "delete", "patch", "options", "head",
+    "websocket", "middleware", "task", "command", "cli", "callback",
+    "on_event", "exception_handler", "api_view", "action", "step",
+    "fixture", "hookimpl",
+)
+
+# Bases whose subclasses dispatch dynamically (getattr-based visit).
+_DYNAMIC_DISPATCH_BASES = ("NodeVisitor", "NodeTransformer", "Visitor")
+
+
+@dataclass
+class FuncNode:
+    qualname: str                    # module::Class.method | module::func
+    module: str
+    name: str                        # simple name
+    class_name: Optional[str]
+    lineno: int
+    decorators: List[str]
+    is_entrypoint: bool
+    in_dynamic_class: bool           # class dispatches via getattr -> never dead
+
+
+@dataclass
+class CallGraph:
+    nodes: Dict[str, FuncNode]           # qualname -> node
+    edges: Dict[str, "_Set[str]"]        # caller qualname -> callee qualnames
+    name_references: "_Set[str]"         # simple names used as a Load anywhere
+    unresolved_dynamic: int              # count of getattr()/computed call sites
+
+
+def _dotted_name(node: ast.AST) -> str:
+    """Best-effort dotted string for a decorator/attribute expression."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted_name(node.value)}.{node.attr}"
+    if isinstance(node, ast.Call):
+        return _dotted_name(node.func)
+    return ""
+
+
+def _is_dunder(name: str) -> bool:
+    return name.startswith("__") and name.endswith("__")
+
+
+def _class_is_dynamic(cls: ast.ClassDef) -> bool:
+    """A class dispatches dynamically if it subclasses a *Visitor base or
+    its body contains getattr(self, ...)()-style dispatch."""
+    for base in cls.bases:
+        if _dotted_name(base).split(".")[-1] in _DYNAMIC_DISPATCH_BASES:
+            return True
+    for node in ast.walk(cls):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id == "getattr":
+            # getattr(self, ...) / getattr(cls, ...) -> dynamic method access
+            if node.args and isinstance(node.args[0], ast.Name) \
+                    and node.args[0].id in ("self", "cls"):
+                return True
+    return False
+
+
+def _decorator_is_entrypoint(decorators: List[str]) -> bool:
+    for d in decorators:
+        leaf = d.split(".")[-1].lower()
+        if leaf in _ENTRYPOINT_DECORATOR_HINTS:
+            return True
+    return False
+
+
+def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
+    """
+    Build a function-level call graph across {file_path: source}.
+    Unparsable files are skipped. Never raises.
+    """
+    nodes: Dict[str, FuncNode] = {}
+    name_references: _Set[str] = set()
+    # (body, caller_qualname, module, class_ctx) records for pass 2
+    func_bodies: List[tuple] = []
+    # module -> {simple_name: qualname} for module-local resolution
+    module_funcs: Dict[str, Dict[str, str]] = defaultdict(dict)
+    # class_qual -> {method_name: qualname}
+    class_methods: Dict[str, Dict[str, str]] = defaultdict(dict)
+    # simple name -> set of qualnames (cross-module fallback)
+    name_index: Dict[str, _Set[str]] = defaultdict(set)
+
+    # -------- Pass 1: definitions --------
+    for path, source in sources.items():
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            continue
+        module = _module_key(path)
+
+        def visit(node, class_ctx: Optional[str], dynamic_ctx: bool):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    dyn = dynamic_ctx or _class_is_dynamic(child)
+                    new_ctx = (class_ctx + "." if class_ctx else "") + child.name
+                    visit(child, new_ctx, dyn)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    decos = [_dotted_name(d) for d in child.decorator_list]
+                    if class_ctx:
+                        qual = f"{module}::{class_ctx}.{child.name}"
+                    else:
+                        qual = f"{module}::{child.name}"
+                    entry = (_decorator_is_entrypoint(decos)
+                             or _is_dunder(child.name)
+                             or (class_ctx is None and child.name == "main"))
+                    nodes[qual] = FuncNode(
+                        qualname=qual, module=module, name=child.name,
+                        class_name=class_ctx, lineno=child.lineno,
+                        decorators=decos, is_entrypoint=entry,
+                        in_dynamic_class=dynamic_ctx,
+                    )
+                    name_index[child.name].add(qual)
+                    if class_ctx:
+                        class_methods[f"{module}::{class_ctx}"][child.name] = qual
+                    else:
+                        module_funcs[module][child.name] = qual
+                    func_bodies.append((child, qual, module, class_ctx))
+                    # nested functions/classes keep the same class context
+                    visit(child, class_ctx, dynamic_ctx)
+                else:
+                    visit(child, class_ctx, dynamic_ctx)
+
+        visit(tree, None, False)
+
+    # -------- Pass 2: resolve calls --------
+    edges: Dict[str, _Set[str]] = {q: set() for q in nodes}
+    unresolved = 0
+
+    for body, caller_qual, module, class_ctx in func_bodies:
+        class_qual = f"{module}::{class_ctx}" if class_ctx else None
+        for n in ast.walk(body):
+            # any Load of a def name keeps that def alive (callbacks, decorators)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                name_references.add(n.id)
+            if not isinstance(n, ast.Call):
+                continue
+            fn = n.func
+            if isinstance(fn, ast.Name):
+                nm = fn.id
+                if nm in module_funcs.get(module, {}):
+                    edges[caller_qual].add(module_funcs[module][nm])
+                elif nm in name_index:
+                    edges[caller_qual] |= name_index[nm]
+            elif isinstance(fn, ast.Attribute):
+                attr = fn.attr
+                recv = fn.value
+                if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and class_qual:
+                    if attr in class_methods.get(class_qual, {}):
+                        edges[caller_qual].add(class_methods[class_qual][attr])
+                    elif attr in name_index:
+                        edges[caller_qual] |= name_index[attr]
+                else:
+                    if attr in name_index:
+                        edges[caller_qual] |= name_index[attr]
+            else:
+                # getattr(...)(), computed call, subscript call -> dynamic
+                unresolved += 1
+
+    return CallGraph(nodes=nodes, edges=edges,
+                     name_references=name_references,
+                     unresolved_dynamic=unresolved)
+
+
+def find_dead_functions(graph: CallGraph) -> List[FuncNode]:
+    """
+    Functions defined but provably never used. A function is DEAD when it has
+    no incoming call edge AND its simple name is never referenced as a value
+    anywhere (callback/decorator use) AND it is not an entrypoint, a dunder,
+    or a method of a dynamic-dispatch class.
+
+    Conservative by construction: any uncertainty (cross-module same-name call,
+    dynamic dispatch, framework entrypoint) keeps a function ALIVE. It reports
+    false negatives before false positives — it will not cry wolf on the
+    NodeVisitor visit_* methods this codebase itself relies on.
+    """
+    called: _Set[str] = set()
+    for callees in graph.edges.values():
+        called |= callees
+
+    dead: List[FuncNode] = []
+    for qual, node in graph.nodes.items():
+        if qual in called:
+            continue
+        if node.is_entrypoint or node.in_dynamic_class or _is_dunder(node.name):
+            continue
+        if node.name in graph.name_references:
+            continue
+        dead.append(node)
+    return sorted(dead, key=lambda n: (n.module, n.lineno))
+
+
+def find_call_cycles(graph: CallGraph) -> List[List[str]]:
+    """
+    Strongly-connected components of size > 1 (mutual recursion) plus direct
+    self-recursion, via Tarjan's algorithm. Returns each cycle as a list of
+    qualnames. Stdlib only; iterative to avoid recursion-limit issues.
+    """
+    index_counter = [0]
+    stack: List[str] = []
+    on_stack: Dict[str, bool] = {}
+    index: Dict[str, int] = {}
+    lowlink: Dict[str, int] = {}
+    result: List[List[str]] = []
+    edges = graph.edges
+
+    def strongconnect(v: str):
+        work = [(v, iter(sorted(edges.get(v, ()))))]
+        index[v] = lowlink[v] = index_counter[0]
+        index_counter[0] += 1
+        stack.append(v); on_stack[v] = True
+        while work:
+            node, it = work[-1]
+            advanced = False
+            for w in it:
+                if w not in graph.nodes:
+                    continue
+                if w not in index:
+                    index[w] = lowlink[w] = index_counter[0]
+                    index_counter[0] += 1
+                    stack.append(w); on_stack[w] = True
+                    work.append((w, iter(sorted(edges.get(w, ())))))
+                    advanced = True
+                    break
+                elif on_stack.get(w):
+                    lowlink[node] = min(lowlink[node], index[w])
+            if advanced:
+                continue
+            if lowlink[node] == index[node]:
+                comp = []
+                while True:
+                    w = stack.pop(); on_stack[w] = False
+                    comp.append(w)
+                    if w == node:
+                        break
+                if len(comp) > 1 or (node in edges.get(node, set())):
+                    result.append(sorted(comp))
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                lowlink[parent] = min(lowlink[parent], lowlink[node])
+
+    for v in list(graph.nodes):
+        if v not in index:
+            strongconnect(v)
+    return result
