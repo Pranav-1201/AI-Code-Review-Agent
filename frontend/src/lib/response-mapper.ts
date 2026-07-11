@@ -157,6 +157,7 @@ function mapFile(f: any): FileAnalysis {
       how_to_fix: i.how_to_fix,
       snippet: i.snippet,
       confidence: i.confidence,
+      trust_boundary: i.trust_boundary,
     };
   }).filter(Boolean) as FileIssue[];
 
@@ -184,6 +185,7 @@ function mapFile(f: any): FileAnalysis {
       how_to_fix: s.how_to_fix,
       snippet: s.snippet,
       confidence: s.confidence,
+      trust_boundary: s.trust_boundary,
     };
   });
 

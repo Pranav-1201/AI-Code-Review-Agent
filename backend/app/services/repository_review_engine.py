@@ -39,7 +39,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
     # Cache version history:
     #   v3.2  Chunk 0 - broken health-score / complexity results invalidated
     #   v3.3  Phase 2 - cohesion-gated size flagging changes issue output
-    cached_result = _cache_manager.get(code, imports, version="v3.3")
+    #   v3.4  Phase 3 - taint trust_boundary + reachability confidence on issues
+    cached_result = _cache_manager.get(code, imports, version="v3.4")
     if cached_result:
         return cached_result
 
@@ -210,7 +211,10 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
             "why_it_matters": sec.get("why_it_matters", "Security vulnerabilities can be exploited by attackers."),
             "how_to_fix": sec.get("how_to_fix", sec.get("recommendation", "Review secure coding practices.")),
             "snippet": sec.get("snippet", ""),
-            "confidence": sec.get("confidence", 0.8)
+            "confidence": sec.get("confidence", 0.8),
+            # PHASE 3: taint provenance (untrusted_input/operator_input/parameter/
+            # internal/n-a) so the UI can explain WHY a sink is Critical vs Info.
+            "trust_boundary": sec.get("trust_boundary", "n/a"),
         })
 
     lines = len(code.splitlines())
@@ -261,7 +265,7 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
         "cohesion": file_cohesion,
     }
 
-    _cache_manager.set(code, imports, final_output, version="v3.3")
+    _cache_manager.set(code, imports, final_output, version="v3.4")
     return final_output
 
 

@@ -7,6 +7,7 @@ export interface FileIssue {
   how_to_fix?: string;
   snippet?: string;
   confidence?: number;
+  trust_boundary?: string;   // Phase 3: untrusted_input | operator_input | parameter | internal | n/a
 }
 
 export interface SecurityVulnerability {
@@ -20,6 +21,7 @@ export interface SecurityVulnerability {
   how_to_fix?: string;
   snippet?: string;
   confidence?: number;
+  trust_boundary?: string;   // Phase 3: untrusted_input | operator_input | parameter | internal | n/a
 }
 
 export interface FileAnalysis {
