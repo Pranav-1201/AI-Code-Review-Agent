@@ -7,6 +7,10 @@ import ast
 from typing import List, Dict
 
 from backend.app.analysis.ast_parser import parse_module
+from backend.app.analysis.symbol_table import SymbolTable
+from backend.app.analysis.taint_analyzer import (
+    build_taint_map, TRUST_UNTRUSTED, TRUST_OPERATOR, TRUST_PARAMETER,
+)
 
 # PHASE 1: SHA constants
 SHA_CONTEXT_SIGNALS: dict[str, list[str]] = {
@@ -44,11 +48,17 @@ class SecurityAnalyzer(ast.NodeVisitor):
     description, recommendation, and line number.
     """
 
-    def __init__(self, is_test: bool = False, file_path: str = "", source: str = ""):
+    def __init__(self, is_test: bool = False, file_path: str = "", source: str = "",
+                 taint_map: Dict = None):
 
         self.issues: List[Dict] = []
         self.is_test = is_test
         self.file_path = file_path.replace("\\", "/").lower()
+
+        # PHASE 3: per-sink taint verdicts keyed by Call node (may be empty).
+        # Populated by detect_security_issues() from the taint analyzer so
+        # visit_Call can look up a verdict by node identity.
+        self.taint_map = taint_map or {}
 
         # PHASE 1: source lines and parent map
         self._source_lines: list[str] = source.splitlines() if source else []
@@ -80,8 +90,10 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # Helper to add structured issue
     # ------------------------------------------------------
 
-    def _add_issue(self, severity: str, description: str, recommendation: str, line: int = 0, issue_type: str = "Vulnerability"):
-        
+    def _add_issue(self, severity: str, description: str, recommendation: str, line: int = 0,
+                   issue_type: str = "Vulnerability", trust_boundary: str = "n/a",
+                   confidence_override: float = None):
+
         # Determine why_it_matters dynamically
         why_it_matters = "This represents a generic security risk or code smell that could weaken application stability."
         if "Hardcoded credentials" in description:
@@ -93,16 +105,23 @@ class SecurityAnalyzer(ast.NodeVisitor):
         elif "Cryptographic" in issue_type or "MD5" in description or "SHA1" in description:
             why_it_matters = "Weak hashing algorithms can be easily reversed using dictionary attacks or rainbow tables."
             
-        # Determine confidence score deterministically
-        confidence = 0.8
-        if "Hardcoded" in description:
-            confidence = 0.6  # Might be a test literal
-        elif "[Intentional Pattern]" in description:
-            confidence = 0.95
-        elif "shell=True" in description:
-            confidence = 0.99
-        elif "eval(" in description or "exec(" in description:
-            confidence = 0.90
+        # Determine confidence score.
+        # PHASE 3: for taint-reachable sinks the caller passes a
+        # reachability-derived confidence (confidence_override), which retires
+        # the old description-keyword table for those findings. Non-taint issue
+        # types (hardcoded creds, SQL, weak hashes) keep the deterministic prior.
+        if confidence_override is not None:
+            confidence = confidence_override
+        else:
+            confidence = 0.8
+            if "Hardcoded" in description:
+                confidence = 0.6  # Might be a test literal
+            elif "[Intentional Pattern]" in description:
+                confidence = 0.95
+            elif "shell=True" in description:
+                confidence = 0.99
+            elif "eval(" in description or "exec(" in description:
+                confidence = 0.90
 
         self.issues.append({
             "type": issue_type,
@@ -113,8 +132,56 @@ class SecurityAnalyzer(ast.NodeVisitor):
             "why_it_matters": why_it_matters,
             "how_to_fix": recommendation,
             "confidence": confidence,
+            "trust_boundary": trust_boundary,   # PHASE 3: taint provenance
             "snippet": f"Line {line} indicates: {issue_type}"  # Simplified without full tree mapping
         })
+
+    # ------------------------------------------------------
+    # PHASE 3: taint overlay
+    # ------------------------------------------------------
+    def _apply_taint(self, node, severity: str, description: str):
+        """
+        Overlay the taint verdict for sink `node` onto a base (severity,
+        description). Returns (severity, description, trust_boundary,
+        confidence_override). Direction is downgrade-not-suppress:
+
+          - untrusted (web/remote) -> escalate to Critical (overrides the old
+            filename proxy: even in cli.py, eval(request.args[..]) is Critical)
+          - operator (argv/env/stdin) -> code-exec drops to Info; command/
+            deserialization keep severity but are annotated as local-only
+          - parameter -> unchanged severity, annotated (provenance unknown)
+          - internal / no verdict -> unchanged; confidence from reachability
+        """
+        verdict = self.taint_map.get(node)
+        if verdict is None:
+            return severity, description, "n/a", None
+
+        tb = verdict.trust_boundary
+        if tb == TRUST_UNTRUSTED:
+            # Untrusted reachability is authoritative: replace any framework/
+            # constant framing (e.g. "[Intentional Pattern] ... CLI") with a
+            # clean finding — that framing is exactly the filename proxy taint
+            # supersedes, and leaving it in would contradict the Critical verdict.
+            impact = {
+                "code_exec": "arbitrary code execution (RCE)",
+                "command": "OS command injection",
+                "deserialization": "unsafe deserialization / RCE",
+                "sql": "SQL injection",
+            }.get(verdict.category, "a security compromise")
+            desc = (f"{verdict.sink_name}() receives an argument reachable from "
+                    f"untrusted input ({verdict.source_kind}) — enables {impact}.")
+            return "Critical", desc, tb, verdict.confidence
+        if tb == TRUST_OPERATOR:
+            new_sev = "Info" if verdict.category == "code_exec" else severity
+            desc = (description + f" [Operator Input] argument derives from local "
+                    f"{verdict.source_kind}; not remotely reachable.")
+            return new_sev, desc, tb, verdict.confidence
+        if tb == TRUST_PARAMETER:
+            desc = (description + " Argument flows from an unvalidated parameter "
+                    "(provenance unknown without inter-procedural analysis).")
+            return severity, desc, tb, verdict.confidence
+        # internal / constant
+        return severity, description, tb, verdict.confidence
 
     # ------------------------------------------------------
     # Context-aware reasoning for [Intentional Pattern]
@@ -202,13 +269,17 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 else:
                     severity = "Low" if is_constant_arg else "Critical"
                     desc = "Use of eval() detected which may allow arbitrary code execution."
-                
+
+                # PHASE 3: taint reachability overrides the filename proxy above.
+                severity, desc, tb, conf = self._apply_taint(node, severity, desc)
                 self._add_issue(
                     severity=severity,
                     description=desc,
                     recommendation="Replace eval() with ast.literal_eval() for safe parsing, or use a proper parser for the expected input format.",
                     line=line,
-                    issue_type="Dangerous Function"
+                    issue_type="Dangerous Function",
+                    trust_boundary=tb,
+                    confidence_override=conf,
                 )
 
             elif name == "exec":
@@ -221,12 +292,15 @@ class SecurityAnalyzer(ast.NodeVisitor):
                     severity = "Low" if is_constant_arg else "Critical"
                     desc = "Use of exec() detected which may allow execution of unsafe code."
 
+                severity, desc, tb, conf = self._apply_taint(node, severity, desc)
                 self._add_issue(
                     severity=severity,
                     description=desc,
                     recommendation="Avoid exec() entirely. Use importlib for dynamic imports, or a sandboxed environment.",
                     line=line,
-                    issue_type="Dangerous Function"
+                    issue_type="Dangerous Function",
+                    trust_boundary=tb,
+                    confidence_override=conf,
                 )
 
             elif name == "compile":
@@ -239,12 +313,15 @@ class SecurityAnalyzer(ast.NodeVisitor):
                     severity = "Low" if is_constant_arg else "Medium"
                     desc = "Use of compile() detected which may enable dynamic code execution."
 
+                severity, desc, tb, conf = self._apply_taint(node, severity, desc)
                 self._add_issue(
                     severity=severity,
                     description=desc,
                     recommendation="Ensure compile() input is not derived from user input. Consider using safer alternatives.",
                     line=line,
-                    issue_type="Dangerous Function"
+                    issue_type="Dangerous Function",
+                    trust_boundary=tb,
+                    confidence_override=conf,
                 )
 
         # ----------------------------------------------
@@ -257,24 +334,34 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             # os.system
             if attr == "system":
+                severity, desc, tb, conf = self._apply_taint(
+                    node, "High",
+                    "Use of os.system() detected which may allow command injection.")
                 self._add_issue(
-                    severity="High",
-                    description="Use of os.system() detected which may allow command injection.",
+                    severity=severity,
+                    description=desc,
                     recommendation="Use subprocess.run() with a list of arguments instead of os.system() to prevent shell injection.",
                     line=line,
-                    issue_type="Command Injection"
+                    issue_type="Command Injection",
+                    trust_boundary=tb,
+                    confidence_override=conf,
                 )
 
             # subprocess commands
             if attr in {"Popen", "call", "run"}:
                 # PHASE 1: argument-type-aware severity
                 severity, message = self._classify_subprocess_call(node)
+                # PHASE 3: escalate to Critical when the command argument is
+                # data-flow reachable from untrusted input.
+                severity, message, tb, conf = self._apply_taint(node, severity, message)
                 self._add_issue(
                     severity=severity,
                     description=message,
                     recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
                     line=line,
-                    issue_type="Command Injection"
+                    issue_type="Command Injection",
+                    trust_boundary=tb,
+                    confidence_override=conf,
                 )
                 _handled_as_subprocess = True                 # PHASE 1 FIX
 
@@ -284,21 +371,31 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 if isinstance(node.func.value, ast.Name):
 
                     if node.func.value.id == "pickle":
+                        severity, desc, tb, conf = self._apply_taint(
+                            node, "Critical",
+                            "Use of pickle.loads() detected which may allow unsafe deserialization and remote code execution.")
                         self._add_issue(
-                            severity="Critical",
-                            description="Use of pickle.loads() detected which may allow unsafe deserialization and remote code execution.",
+                            severity=severity,
+                            description=desc,
                             recommendation="Use json.loads() for data serialization, or implement HMAC validation before unpickling.",
                             line=line,
-                            issue_type="Unsafe Deserialization"
+                            issue_type="Unsafe Deserialization",
+                            trust_boundary=tb,
+                            confidence_override=conf,
                         )
 
                     elif node.func.value.id == "yaml":
+                        severity, desc, tb, conf = self._apply_taint(
+                            node, "High",
+                            "Use of yaml.loads() detected which may allow unsafe deserialization.")
                         self._add_issue(
-                            severity="High",
-                            description="Use of yaml.loads() detected which may allow unsafe deserialization.",
+                            severity=severity,
+                            description=desc,
                             recommendation="Use yaml.safe_load() instead of yaml.load() to prevent arbitrary code execution.",
                             line=line,
-                            issue_type="Unsafe Deserialization"
+                            issue_type="Unsafe Deserialization",
+                            trust_boundary=tb,
+                            confidence_override=conf,
                         )
 
         # ----------------------------------------------
@@ -542,10 +639,23 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
         if tree is None:  # SyntaxError
             return []
 
+        # PHASE 3: build the scope-correct symbol table and per-sink taint
+        # verdicts for this module, then hand them to the analyzer. This is the
+        # point where the Phase 2 SymbolTable becomes a real pipeline consumer:
+        # detect_security_issues() is called per file by
+        # repository_review_engine.analyze_single_file(). Taint is an overlay —
+        # if it ever fails, core detection must still run.
+        try:
+            st = SymbolTable(tree).build()
+            taint_map = build_taint_map(tree, st)
+        except Exception:
+            taint_map = {}
+
         analyzer = SecurityAnalyzer(
             is_test=is_test_file,
             file_path=file_path,
-            source=code # PHASE 1: Add source parameter
+            source=code, # PHASE 1: Add source parameter
+            taint_map=taint_map,
         )
 
         # Backward compat: _parent_map is still exposed (used by
