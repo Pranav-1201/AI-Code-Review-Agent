@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import ast
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -421,3 +422,177 @@ def analyze_taint(code: str) -> List[TaintVerdict]:
     st = SymbolTable(tree).build()
     verdicts = build_taint_map(tree, st)
     return sorted(verdicts.values(), key=lambda v: (v.line, v.sink_name))
+
+
+# ==========================================================
+# Phase 4: Inter-procedural taint (across function boundaries)
+# ----------------------------------------------------------
+# Closes the intra-procedural gap: a value that flows through a
+# CALL — a tainted argument passed into a function whose body sinks
+# the corresponding parameter — is now tracked, using the same
+# def/resolve idea as the interprocedural call graph.
+#
+#     def run(cmd):            # cmd -> os.system(cmd)   [param sink]
+#         os.system(cmd)
+#     def view():
+#         run(request.args["c"])   # untrusted arg -> Critical
+#
+# Approach (repo-level; the per-file security path stays intra):
+#   1. summarise each function: which PARAMETER flows to which sink.
+#   2. resolve each call site to a local callee and map positional
+#      args -> callee params.
+#   3. seed (callee, param) as untrusted when a caller passes an
+#      untrusted arg; add a propagation edge when it passes one of
+#      its own (still-unknown) parameters — then run to a fixpoint,
+#      so multi-hop chains (view -> a -> run) resolve.
+#   4. emit a finding for every param-sink whose parameter is tainted.
+#
+# Documented limits (honest under-report, not fabrication): positional
+# args only (kwargs/*args ignored), and taint is tracked param-IN, not
+# return-OUT — eval(wrapper(untrusted)) where wrapper RETURNS its arg is
+# not yet propagated (return-summary taint is a later refinement).
+# ==========================================================
+
+from backend.app.analysis.call_graph import _module_key  # dotted module key
+
+
+@dataclass
+class InterProcFinding:
+    sink_name: str
+    category: str
+    file: str
+    line: int
+    source_kind: str
+    callee: str              # qualname of the function containing the sink
+    trust_boundary: str
+    confidence: float
+
+
+def _positional_params(func_node: ast.AST, is_method: bool) -> List[str]:
+    a = func_node.args
+    names = [p.arg for p in (list(a.posonlyargs) + list(a.args))]
+    if is_method and names and names[0] in ("self", "cls"):
+        names = names[1:]
+    return names
+
+
+def propagate_interprocedural_taint(sources: Dict[str, str]) -> List[InterProcFinding]:
+    """Return sink findings reachable from untrusted input ACROSS function
+    calls. See module note for the algorithm and documented limits. Never raises."""
+    # ---- collect per-module trees / symbol tables ----
+    modules: Dict[str, tuple] = {}          # module_key -> (tree, st, file_path)
+    for path, code in sources.items():
+        tree = parse_module(code)
+        if tree is None:
+            continue
+        modules[_module_key(path)] = (tree, SymbolTable(tree).build(), path)
+
+    # ---- pass 1: function registry + param->sink summaries ----
+    # qualname -> dict(module, params, scope_id, class_ctx, file, body,
+    #                  param_sinks:[(sink_name,category,line,param_name)])
+    funcs: Dict[str, dict] = {}
+    module_funcs: Dict[str, Dict[str, str]] = defaultdict(dict)
+    class_methods: Dict[str, Dict[str, str]] = defaultdict(dict)
+    name_index: Dict[str, set] = defaultdict(set)   # module-level name -> qualnames
+
+    for module, (tree, st, path) in modules.items():
+        def collect(node, class_ctx):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.ClassDef):
+                    new_ctx = (class_ctx + "." if class_ctx else "") + child.name
+                    collect(child, new_ctx)
+                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    qual = (f"{module}::{class_ctx}.{child.name}" if class_ctx
+                            else f"{module}::{child.name}")
+                    params = _positional_params(child, is_method=bool(class_ctx))
+                    scope_id = st.scope_of_node.get(child)
+                    param_sinks = []
+                    if scope_id is not None:
+                        for n in ast.walk(child):
+                            if not isinstance(n, ast.Call):
+                                continue
+                            sink = match_sink(n)
+                            if sink is None:
+                                continue
+                            sname, cat, arg_nodes = sink
+                            for arg in arg_nodes:
+                                info = _resolve_taint(arg, scope_id,
+                                                      getattr(n, "lineno", 0), st,
+                                                      0, frozenset())
+                                if info and info.tier == TRUST_PARAMETER:
+                                    pname = info.kind.split(":", 1)[-1]
+                                    param_sinks.append((sname, cat,
+                                                        getattr(n, "lineno", 0), pname))
+                    funcs[qual] = dict(module=module, params=params, scope_id=scope_id,
+                                       class_ctx=class_ctx, file=path, body=child,
+                                       param_sinks=param_sinks)
+                    if class_ctx:
+                        class_methods[f"{module}::{class_ctx}"][child.name] = qual
+                    else:
+                        module_funcs[module][child.name] = qual
+                        name_index[child.name].add(qual)
+                    collect(child, class_ctx)
+                else:
+                    collect(child, class_ctx)
+        collect(tree, None)
+
+    # ---- pass 2: call sites -> seeds + propagation edges ----
+    seeds: Dict[tuple, str] = {}                    # (callee_qual, param) -> source_kind
+    edges: List[tuple] = []                         # ((src_qual,p),(dst_qual,p))
+
+    for qual, info in funcs.items():
+        module, st = info["module"], modules[info["module"]][1]
+        class_ctx, caller_scope = info["class_ctx"], info["scope_id"]
+        class_qual = f"{module}::{class_ctx}" if class_ctx else None
+        for n in ast.walk(info["body"]):
+            if not isinstance(n, ast.Call):
+                continue
+            fn = n.func
+            callee = None
+            if isinstance(fn, ast.Name):
+                callee = module_funcs.get(module, {}).get(fn.id)
+                if callee is None:
+                    # cross-file fallback: resolve only a REPO-UNIQUE name, so
+                    # imported helpers link but ambiguous same-names do not
+                    # over-taint (conservative under-report).
+                    cand = name_index.get(fn.id)
+                    if cand and len(cand) == 1:
+                        callee = next(iter(cand))
+            elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) \
+                    and fn.value.id in ("self", "cls") and class_qual:
+                callee = class_methods.get(class_qual, {}).get(fn.attr)
+            if not callee or callee not in funcs:
+                continue
+            callee_params = funcs[callee]["params"]
+            for i, arg in enumerate(n.args):
+                if i >= len(callee_params):
+                    break
+                dst = (callee, callee_params[i])
+                info_t = _resolve_taint(arg, caller_scope, getattr(n, "lineno", 0),
+                                        st, 0, frozenset()) if caller_scope is not None else None
+                if info_t and info_t.tier == TRUST_UNTRUSTED:
+                    seeds[dst] = info_t.kind
+                elif info_t and info_t.tier == TRUST_PARAMETER:
+                    edges.append(((qual, info_t.kind.split(":", 1)[-1]), dst))
+
+    # ---- fixpoint: propagate tainted params along edges ----
+    tainted: Dict[tuple, str] = dict(seeds)
+    changed = True
+    while changed:
+        changed = False
+        for src, dst in edges:
+            if src in tainted and dst not in tainted:
+                tainted[dst] = tainted[src]
+                changed = True
+
+    # ---- emit findings ----
+    findings: List[InterProcFinding] = []
+    for qual, info in funcs.items():
+        for sname, cat, line, pname in info["param_sinks"]:
+            if (qual, pname) in tainted:
+                findings.append(InterProcFinding(
+                    sink_name=sname, category=cat, file=info["file"], line=line,
+                    source_kind=tainted[(qual, pname)], callee=qual,
+                    trust_boundary=TRUST_UNTRUSTED, confidence=0.85,
+                ))
+    return sorted(findings, key=lambda f: (f.file, f.line, f.sink_name))

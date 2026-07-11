@@ -15,6 +15,7 @@ from backend.app.analysis.duplicate_detector import detect_duplicates
 from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.services.cache_manager import CacheManager
 from backend.app.analysis.cohesion_analyzer import NO_SIZE_FLAG
+from backend.app.analysis.taint_analyzer import propagate_interprocedural_taint
 
 _cache_manager = CacheManager()
 
@@ -270,6 +271,94 @@ def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> 
 
 
 # ==========================================================
+# PHASE 4: Inter-procedural taint escalation (repo-level)
+# ----------------------------------------------------------
+# The per-file security pass is intra-procedural: a sink whose argument is
+# a bare parameter is reported at the "parameter" trust boundary. Once every
+# file is analysed we know the call graph, so we can escalate those sinks to
+# untrusted/Critical when a caller actually passes untrusted input into the
+# parameter. Upgrades the existing finding in place (no duplicate), keeping
+# security_risks and the issue-explorer copy consistent.
+# ==========================================================
+
+def _category_to_type(category: str) -> str:
+    return {
+        "code_exec": "Dangerous Function",
+        "command": "Command Injection",
+        "deserialization": "Unsafe Deserialization",
+    }.get(category, "Vulnerability")
+
+
+def apply_interprocedural_taint(results: List[Dict]) -> None:
+    """Escalate per-file sink findings that inter-procedural taint proves are
+    reachable from untrusted input across function calls. Mutates `results`
+    in place. Best-effort — never raises out."""
+    try:
+        sources = {r["file_path"]: r.get("content", "") for r in results
+                   if r.get("content")}
+        findings = propagate_interprocedural_taint(sources)
+    except Exception:
+        return
+
+    by_path: Dict[str, Dict] = {}
+    for r in results:
+        by_path[r["file_path"]] = r
+        by_path[r["file_path"].replace("\\", "/")] = r
+
+    for f in findings:
+        r = by_path.get(f.file) or by_path.get(f.file.replace("\\", "/"))
+        if not r:
+            continue
+        note = (f" Argument is reachable from untrusted input ({f.source_kind}) "
+                f"through a call chain — remote code/command execution risk.")
+        risks = r.setdefault("security_risks", [])
+        issues = r.setdefault("issues", [])
+
+        matched = next((s for s in risks
+                        if isinstance(s, dict) and s.get("line") == f.line), None)
+        if matched:
+            old_desc = matched.get("description", "")
+            matched["severity"] = "Critical"
+            matched["trust_boundary"] = "untrusted_input"
+            matched["confidence"] = max(matched.get("confidence", 0) or 0, f.confidence)
+            if "call chain" not in old_desc:
+                matched["description"] = old_desc + note
+            # keep the issue-explorer copy (matched by original description) in sync
+            for iss in issues:
+                if isinstance(iss, dict) and iss.get("type") == "security" \
+                        and iss.get("message") == old_desc:
+                    iss["severity"] = "critical"
+                    iss["trust_boundary"] = "untrusted_input"
+                    iss["confidence"] = matched["confidence"]
+                    iss["message"] = matched["description"]
+        else:
+            desc = (f"{f.sink_name}() receives an argument reachable from untrusted "
+                    f"input ({f.source_kind}) through a call chain — remote "
+                    f"code/command execution risk.")
+            risks.append({
+                "type": _category_to_type(f.category), "severity": "Critical",
+                "description": desc,
+                "recommendation": "Validate or parameterise the value at the trust "
+                                  "boundary before it reaches the sink.",
+                "line": f.line, "confidence": f.confidence,
+                "trust_boundary": "untrusted_input",
+                "why_it_matters": "Cross-function untrusted data reaching a dangerous "
+                                  "sink enables remote exploitation.",
+                "how_to_fix": "Sanitise or parameterise the value at the entry point.",
+                "snippet": f"Line {f.line}",
+            })
+            issues.append({
+                "file": f.file, "type": "security", "severity": "critical",
+                "message": desc,
+                "why_it_matters": "Cross-function untrusted data reaching a dangerous "
+                                  "sink enables remote exploitation.",
+                "how_to_fix": "Sanitise or parameterise the value at the entry point.",
+                "snippet": f"Line {f.line}", "confidence": f.confidence,
+                "trust_boundary": "untrusted_input",
+            })
+
+
+# ==========================================================
 # Repository Review Engine
 # ==========================================================
 
@@ -330,6 +419,10 @@ class RepositoryReviewEngine:
 
             result = analyze_single_file(file_data, self.refactor_engine)
             results.append(result)
+
+        # Phase 4: escalate sinks reachable from untrusted input across
+        # function calls now that every file (hence the call graph) is known.
+        apply_interprocedural_taint(results)
 
         # --------------------------------------------------
         # Aggregate results
