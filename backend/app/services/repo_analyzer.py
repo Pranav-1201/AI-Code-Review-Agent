@@ -10,7 +10,6 @@ from typing import List, Dict
 
 from backend.app.analysis.ast_parser import parse_python_file
 from backend.app.analysis.dead_code_detector import DeadCodeDetector
-from backend.app.analysis.call_graph import build_call_graph
 from backend.app.analysis.complexity_analyzer import ComplexityAnalyzer
 from backend.app.analysis.cohesion_analyzer import size_verdict, NO_SIZE_FLAG
 
@@ -415,19 +414,15 @@ class RepoAnalyzer:
                     seen_paths.add(fp)
                     files_data.append(result)
 
-        # Build call graph (code files only)
+        # Interprocedural dead-function detection (retires the file-level
+        # name-bag). Keyed by file_path so each file gets exactly its own dead
+        # functions, with dynamic-dispatch and entrypoint awareness.
         code_files = [f for f in files_data if f.get("is_code", True)]
-        call_graph = build_call_graph(code_files)
-
-        # Dead function detection
-        unused_functions = self.dead_code_detector.detect_repository_dead_functions(
-            code_files, call_graph
-        )
+        sources = {f["file_path"]: f.get("content", "") for f in code_files}
+        dead_by_path = self.dead_code_detector.detect_repository_dead_functions(sources)
 
         for file in code_files:
-            file["dead_code"]["unused_functions"] = [
-                f for f in file.get("functions", []) if f in unused_functions
-            ]
+            file["dead_code"]["unused_functions"] = dead_by_path.get(file["file_path"], [])
 
         print(f"Repository scan complete. {len(files_data)} files found ({len(code_files)} code files).")
         return files_data

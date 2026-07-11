@@ -220,3 +220,62 @@ print(os.getcwd())
     result = detector.analyze(code)
 
     assert result is not None
+
+
+# ---------------------------------------------------------
+# Fix F: alias-aware unused-import detection
+# ---------------------------------------------------------
+
+def test_aliased_import_used_is_not_flagged():
+    """`import numpy as np` used via `np` must NOT be reported unused."""
+    detector = DeadCodeDetector()
+    result = detector.analyze("import numpy as np\nprint(np.array([1]))\n")
+    assert "numpy" not in result["unused_imports"], \
+        "alias-blind regression: aliased-and-used import flagged unused"
+
+
+def test_aliased_import_unused_is_flagged():
+    detector = DeadCodeDetector()
+    result = detector.analyze("import numpy as np\nprint(1)\n")
+    assert "numpy" in result["unused_imports"]
+
+
+def test_plain_import_partial_usage_is_precise():
+    detector = DeadCodeDetector()
+    result = detector.analyze("import os\nimport sys\nprint(sys.argv)\n")
+    assert "os" in result["unused_imports"]
+    assert "sys" not in result["unused_imports"]
+
+
+# ---------------------------------------------------------
+# Interprocedural repository-level dead-function detection
+# ---------------------------------------------------------
+
+def test_interprocedural_dead_function_detection():
+    detector = DeadCodeDetector()
+    sources = {
+        "m.py": (
+            "def used():\n    return 1\n\n"
+            "def dead():\n    return 2\n\n"
+            "def main():\n    return used()\n"
+        )
+    }
+    dead = detector.detect_repository_dead_functions(sources)
+    assert "dead" in dead["m.py"]
+    assert "used" not in dead["m.py"]   # called
+    assert "main" not in dead["m.py"]   # entrypoint
+
+
+def test_interprocedural_visitor_methods_not_dead():
+    """NodeVisitor-style dispatch methods must not be reported dead even
+    though they have no static caller (dispatched via self.visit)."""
+    detector = DeadCodeDetector()
+    sources = {
+        "v.py": (
+            "import ast\n"
+            "class V(ast.NodeVisitor):\n"
+            "    def visit_Call(self, node):\n        return node\n"
+        )
+    }
+    dead = detector.detect_repository_dead_functions(sources)
+    assert "visit_Call" not in dead["v.py"]
