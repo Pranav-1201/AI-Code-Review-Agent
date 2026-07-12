@@ -16,6 +16,8 @@ from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.services.cache_manager import CacheManager
 from backend.app.analysis.cohesion_analyzer import NO_SIZE_FLAG
 from backend.app.analysis.taint_analyzer import propagate_interprocedural_taint
+from backend.app.analysis.framework_detector import summarize_frameworks
+from backend.app.analysis.architecture_analyzer import analyze_architecture
 
 _cache_manager = CacheManager()
 
@@ -720,6 +722,26 @@ class RepositoryReviewEngine:
             report["duplicates"] = duplicate_map.get(fpath, []) or duplicate_map.get(fname, [])
 
         # --------------------------------------------------
+        # PHASE 4: framework fingerprint + architecture smells
+        # (repo-level; real import-based evidence, replacing the
+        #  filename-substring framework guess)
+        # --------------------------------------------------
+        code_sources = {r["file_path"]: r.get("content", "")
+                        for r in results if r.get("content")}
+        try:
+            frameworks = summarize_frameworks(code_sources)
+        except Exception:
+            frameworks = {}
+        try:
+            architecture = analyze_architecture(code_sources)
+        except Exception:
+            architecture = {"god_objects": [], "layer_violations": []}
+
+        summary["frameworks"] = frameworks
+        summary["god_object_count"] = len(architecture.get("god_objects", []))
+        summary["layer_violation_count"] = len(architecture.get("layer_violations", []))
+
+        # --------------------------------------------------
         # Final repository report
         # --------------------------------------------------
 
@@ -731,5 +753,7 @@ class RepositoryReviewEngine:
             "dependency_graph": dependency_graph,
             "duplicates": duplicates,
             "visualizations": visualizations,
-            "insights": insights
+            "insights": insights,
+            "frameworks": frameworks,
+            "architecture": architecture,
         }
