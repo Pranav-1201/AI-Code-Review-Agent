@@ -105,6 +105,69 @@ def _is_version_outdated(current: str, latest: str) -> bool:
 
 
 # ----------------------------------------------------------
+# OSV.dev vulnerability lookup (24h cache)
+# ----------------------------------------------------------
+# Queries the Open Source Vulnerabilities database
+# (https://api.osv.dev/v1/query) for known CVEs affecting a pinned
+# package version. Cached for 24h and silent on failure, so a network
+# blip never breaks dependency analysis.
+
+_OSV_CACHE: dict = {}
+_OSV_TTL_SECONDS = 86400  # 24 hours
+
+
+def _osv_severity(vuln: dict) -> str:
+    ds = vuln.get("database_specific", {})
+    if isinstance(ds, dict) and ds.get("severity"):
+        return str(ds["severity"]).title()
+    if isinstance(vuln.get("severity"), list) and vuln["severity"]:
+        return "High"   # a CVSS vector is present — treat as High by default
+    return "Unknown"
+
+
+def _query_osv(name: str, version: str, ecosystem: str = "PyPI") -> list:
+    """Return [{id, summary, severity}] of known vulns for name@version."""
+    key = (ecosystem, name.lower().strip(), version.strip())
+    cached = _OSV_CACHE.get(key)
+    if cached and (time.time() - cached["fetched_at"]) < _OSV_TTL_SECONDS:
+        return cached["vulns"]
+
+    vulns: list = []
+    try:
+        payload = json.dumps({
+            "version": version,
+            "package": {"name": name, "ecosystem": ecosystem},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.osv.dev/v1/query", data=payload,
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "et-code-analyzer/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            for v in data.get("vulns", []) or []:
+                vulns.append({
+                    "id": v.get("id", ""),
+                    "summary": v.get("summary") or (v.get("details", "") or "")[:160],
+                    "severity": _osv_severity(v),
+                })
+    except Exception:
+        vulns = []
+
+    _OSV_CACHE[key] = {"vulns": vulns, "fetched_at": time.time()}
+    return vulns
+
+
+def _risk_from_vulns(vulns: list, current: str = "Low") -> str:
+    """Any CVE -> at least High; a Critical-rated CVE -> Critical."""
+    if not vulns:
+        return current
+    if any(str(v.get("severity", "")).lower() == "critical" for v in vulns):
+        return "Critical"
+    return "High"
+
+
+# ----------------------------------------------------------
 # Main Analyzer
 # ----------------------------------------------------------
 
@@ -365,5 +428,12 @@ def analyze_dependencies(repo_path):
             # frontend can surface them with appropriate prominence
             if dep["is_outdated"]:
                 dep["risk_level"] = "Medium"
+
+        # OSV.dev CVE lookup — known vulnerabilities for the PINNED version
+        # take precedence over the outdated-only heuristic above.
+        vulns = _query_osv(dep["name"], dep["version"], ecosystem="PyPI")
+        if vulns:
+            dep["vulnerabilities"] = vulns
+            dep["risk_level"] = _risk_from_vulns(vulns, current=dep["risk_level"])
 
     return dependencies
