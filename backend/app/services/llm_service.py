@@ -13,6 +13,7 @@ from backend.app.services.retriever_service import CodeRetriever
 from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.services.quality_scorer import compute_quality_score
 from backend.app.analysis.cohesion_analyzer import size_verdict
+from backend.app.services.explanation_engine import generate_explanation as _llm_explain
 
 
 # ----------------------------------------------------------
@@ -296,11 +297,16 @@ def _generate_explanation(
     doc_coverage: float = 0.0,
     undocumented_count: int = 0,
     file_name: str = "",
-    cohesion: Dict[str, Any] = None
-) -> str:
+    cohesion: Dict[str, Any] = None,
+    depth: str = "senior",
+    framework: str = ""
+):
     """
-    Generate a meaningful, file-specific explanation
-    using a deterministic hybrid extraction engine.
+    Build the deterministic explanation, then hand it to the Anthropic
+    explanation layer as GROUNDED FALLBACK. Returns (text, source) where
+    source is "llm" (real Anthropic output) or "deterministic" (the
+    markdown below, verbatim). The findings are always deterministic; the
+    LLM only paraphrases them. `depth` is the junior/senior toggle.
     """
 
     total_lines = len(code.splitlines())
@@ -375,7 +381,7 @@ def _generate_explanation(
     if not risks:
         risks.append("✅ **Health:** No critical security or structural risks detected.")
 
-    # Assemble Markdown
+    # Assemble the deterministic Markdown (the grounding + the fallback)
     md = f"### Purpose Summary\n{purpose}\n\n"
     if responsibilities:
         md += "### Key Responsibilities\n" + "\n".join(f"- {r}" for r in responsibilities) + "\n\n"
@@ -383,7 +389,21 @@ def _generate_explanation(
         md += "### Design Observations\n" + "\n".join(f"- {d}" for d in design) + "\n\n"
     md += "### Risk Analysis\n" + "\n".join(f"- {r}" for r in risks)
 
-    return md
+    # PHASE 5: hand the deterministic findings to the Anthropic explanation
+    # layer. When ENABLE_ANTHROPIC + a key are set it returns a real, grounded
+    # LLM explanation; otherwise it returns `md` verbatim (source=deterministic).
+    evidence = {
+        "file_name": file_name,
+        "language": language,
+        "framework": framework,
+        "complexity": complexity,
+        "quality_score": quality_score,
+        "cohesion": cohesion,
+        "security_findings": [s for s in security_issues if isinstance(s, dict)],
+        "issues": [i for i in issues if isinstance(i, dict)],
+    }
+    result = _llm_explain(evidence, deterministic_fallback=md, depth=depth)
+    return result["text"], result["source"]
 
 
 # ----------------------------------------------------------
@@ -635,7 +655,10 @@ Code:
     if complexity_metrics and len(complexity_metrics) > 0:
         _doc_coverage = complexity_metrics[0].get("_doc_coverage", 0.0)
 
-    explanation = _generate_explanation(
+    # PHASE 5: junior/senior explanation-depth toggle (caller-controlled).
+    explanation_depth = kwargs.get("explanation_depth", "senior")
+
+    explanation, explanation_source = _generate_explanation(
         code=code,
         issues=issues,
         security_issues=security_issues,
@@ -646,7 +669,9 @@ Code:
         language=language,
         doc_coverage=_doc_coverage,
         file_name=_filename,
-        cohesion=cohesion
+        cohesion=cohesion,
+        depth=explanation_depth,
+        framework=kwargs.get("framework", "")
     )
 
     suggestions = _generate_suggestions(
@@ -677,6 +702,7 @@ Code:
             "time_complexity": "O(1)",   # kept for backward-compatible parsing
             "complexity":      comp_data,
             "explanation":     explanation,
+            "explanation_source": explanation_source,   # PHASE 5: "llm" | "deterministic"
             "suggestions":     suggestions
         },
         "retrieved_context": context_chunks
