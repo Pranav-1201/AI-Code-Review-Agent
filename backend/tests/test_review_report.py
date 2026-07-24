@@ -73,15 +73,12 @@ smell_metrics = {
 # ---------------------------------------------------------
 
 @patch("app.services.report_generator.save_review")
-@patch("app.services.report_generator.get_vector_store")
-def test_generate_review_report(mock_vector_store, mock_save_review):
+def test_generate_review_report(mock_save_review):
     """
-    Ensure report is generated correctly and external
-    storage systems are called.
+    Ensure report is generated correctly and the review is persisted.
     """
 
     mock_save_review.return_value = 1
-    mock_vector_store.return_value.add_review.return_value = None
 
     report = generate_review_report(
         file_name="example.py",
@@ -104,15 +101,13 @@ def test_generate_review_report(mock_vector_store, mock_save_review):
 # ---------------------------------------------------------
 
 @patch("app.services.report_generator.save_review")
-@patch("app.services.report_generator.get_vector_store")
-def test_report_without_refactor(mock_vector_store, mock_save_review):
+def test_report_without_refactor(mock_save_review):
     """
     Ensure report still generates when refactor output
     is missing.
     """
 
     mock_save_review.return_value = 1
-    mock_vector_store.return_value.add_review.return_value = None
 
     report = generate_review_report(
         file_name="example.py",
@@ -131,14 +126,12 @@ def test_report_without_refactor(mock_vector_store, mock_save_review):
 # ---------------------------------------------------------
 
 @patch("app.services.report_generator.save_review")
-@patch("app.services.report_generator.get_vector_store")
-def test_empty_analysis(mock_vector_store, mock_save_review):
+def test_empty_analysis(mock_save_review):
     """
     Ensure generator handles missing analysis safely.
     """
 
     mock_save_review.return_value = 1
-    mock_vector_store.return_value.add_review.return_value = None
 
     report = generate_review_report(
         file_name="example.py",

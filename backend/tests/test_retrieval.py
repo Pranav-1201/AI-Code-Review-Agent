@@ -1,19 +1,18 @@
 """
-Unit tests for CodeRetriever.
+Unit tests for CodeRetriever (FAISS-backed semantic retrieval).
 
-This module tests the retrieval service used by the
-RAG system for semantic search of previous code reviews.
-
-Heavy vector database operations are mocked so tests:
-
-- run quickly
-- do not require real vector embeddings
-- remain deterministic
+PHASE 5 NOTE: these tests previously decorated every case with
+@patch("rag.vector_store.ReviewVectorStore") — the ChromaDB store, which
+CodeRetriever never calls. The patches were inert and the tests passed only
+via the no-index fallback. ChromaDB has been retired (audit item #7), so the
+tests now assert CodeRetriever's real contract instead: it always returns a
+list, handles empty/oversized queries safely, and degrades gracefully when
+the FAISS index or embedding model is unavailable.
 """
 
-import sys
 import os
-from unittest.mock import MagicMock, patch
+import sys
+from unittest.mock import MagicMock
 
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -21,113 +20,43 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from backend.app.services.retriever_service import CodeRetriever
 
 
-# Mock retrieval results
-MOCK_RESULTS = [
-    {"file": "example.py", "summary": "Nested loops detected"},
-    {"file": "util.py", "summary": "Inefficient loop structure"}
-]
-
-
-# ---------------------------------------------------------
-# Test: Basic retrieval
-# ---------------------------------------------------------
-
-@patch("rag.vector_store.ReviewVectorStore")
-def test_basic_retrieval(mock_vector_store):
-    """
-    Ensure retriever returns results for a valid query.
-    """
-
-    mock_instance = mock_vector_store.return_value
-    mock_instance.search.return_value = MOCK_RESULTS
-
+def test_retrieve_returns_list():
+    """A valid query always yields a list (index present or not)."""
     retriever = CodeRetriever()
-
     results = retriever.retrieve("nested loops inefficiency")
-
-    assert isinstance(results, list)
-    assert len(results) > 0
-
-
-# ---------------------------------------------------------
-# Test: Empty query
-# ---------------------------------------------------------
-
-@patch("rag.vector_store.ReviewVectorStore")
-def test_empty_query(mock_vector_store):
-    """
-    Retriever should handle empty queries safely.
-    """
-
-    mock_instance = mock_vector_store.return_value
-    mock_instance.search.return_value = []
-
-    retriever = CodeRetriever()
-
-    results = retriever.retrieve("")
-
     assert isinstance(results, list)
 
 
-# ---------------------------------------------------------
-# Test: No results found
-# ---------------------------------------------------------
-from unittest.mock import patch
-@patch("rag.vector_store.ReviewVectorStore")
-
-
-def test_no_results(mock_vector_store):
-    """
-    Retrieval should return empty list if nothing matches.
-    """
-
+def test_empty_query_returns_empty_list():
     retriever = CodeRetriever()
-
-    with patch.object(retriever, "retrieve", return_value=[]):
-
-        results = retriever.retrieve("completely unrelated query")
-
-        assert results == []
+    assert retriever.retrieve("") == []
 
 
-# ---------------------------------------------------------
-# Test: Large query input
-# ---------------------------------------------------------
-
-@patch("rag.vector_store.ReviewVectorStore")
-def test_large_query(mock_vector_store):
-    """
-    Retriever should handle large query strings safely.
-    """
-
-    mock_instance = mock_vector_store.return_value
-    mock_instance.search.return_value = MOCK_RESULTS
-
+def test_whitespace_query_returns_empty_list():
     retriever = CodeRetriever()
+    assert retriever.retrieve("   \n  ") == []
 
-    large_query = "inefficient loops " * 50
 
-    results = retriever.retrieve(large_query)
-
+def test_large_query_is_handled():
+    """Long queries are truncated internally and must not raise."""
+    retriever = CodeRetriever()
+    results = retriever.retrieve("inefficient loops " * 500)
     assert isinstance(results, list)
 
 
-# ---------------------------------------------------------
-# Test: Vector store failure
-# ---------------------------------------------------------
-
-@patch("rag.vector_store.ReviewVectorStore")
-def test_vector_store_failure(mock_vector_store):
-    """
-    Retriever should handle vector DB errors gracefully.
-    """
-
-    mock_instance = mock_vector_store.return_value
-    mock_instance.search.side_effect = Exception("Vector store error")
-
+def test_missing_index_falls_back_gracefully():
+    """With no FAISS index loaded, retrieval degrades instead of raising."""
     retriever = CodeRetriever()
+    retriever.index = None
+    results = retriever.retrieve("anything")
+    assert isinstance(results, list)
 
-    try:
-        retriever.retrieve("loops")
-    except Exception:
-        assert True
+
+def test_search_failure_is_swallowed():
+    """A backend failure returns [] rather than propagating."""
+    retriever = CodeRetriever()
+    retriever.index = MagicMock()
+    retriever.index.search.side_effect = Exception("index corrupted")
+    retriever.model = MagicMock()
+    retriever.model.encode.return_value = [[0.0, 0.1]]
+    assert retriever.retrieve("loops") == []

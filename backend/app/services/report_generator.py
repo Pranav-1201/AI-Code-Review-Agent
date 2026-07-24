@@ -1,13 +1,18 @@
 # ==========================================================
 # File: report_generator.py
 # Purpose: Convert AI analysis results into structured
-#          reports and persist them in database + vector DB
+#          reports and persist them in the database
+#
+# PHASE 5: the ChromaDB review vector store was retired here
+# (audit item #7). It was never actually written to — the only
+# add_review() call site was commented out — and it duplicated the
+# FAISS retrieval path. Semantic retrieval now lives solely in
+# retriever_service.CodeRetriever (FAISS).
 # ==========================================================
 
 from typing import Dict, Optional
 
 from backend.database.review_repository import save_review
-from rag.vector_store import ReviewVectorStore
 
 # Rich terminal visualization
 from rich.console import Console
@@ -17,18 +22,6 @@ from rich import box
 
 
 console = Console()
-
-# Lazy initialization of vector store
-_vector_store = None
-
-
-def get_vector_store():
-    global _vector_store
-
-    if _vector_store is None:
-        _vector_store = ReviewVectorStore()
-
-    return _vector_store
 
 
 # ----------------------------------------------------------
@@ -229,19 +222,6 @@ Patch
             summary="Automated AI review",
             report=report_data
         )
-
-# --------------------------------------------------
-# Index summary in vector store for RAG retrieval
-# --------------------------------------------------
-
-# vector_summary = f"""
-# File: {file_name}
-# Score: {score}
-# Issues: {issues}
-# Suggestions: {suggestions}
-# """
-
-# get_vector_store().add_review(review_id, vector_summary)
 
     except Exception as e:
         print(f"Failed to store review: {e}")
