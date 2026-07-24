@@ -5,14 +5,14 @@
 
 from backend.app.services.github_service import get_pr_files, post_pr_comment
 from backend.app.services.repository_review_engine import analyze_single_file
-from backend.app.analysis.llm_refactor_engine import LLMRefactorEngine
+from backend.app.analysis.heuristic_refactor_engine import HeuristicRefactorEngine
 
 
 def review_pull_request(repo, pr_number):
 
     files = get_pr_files(repo, pr_number)
 
-    refactor_engine = LLMRefactorEngine()
+    refactor_engine = HeuristicRefactorEngine()
 
     comments = []
 

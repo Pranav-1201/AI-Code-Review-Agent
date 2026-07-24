@@ -8,7 +8,7 @@ from typing import Dict, List
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.llm_service import analyze_code
 from backend.app.services.report_generator import generate_review_report
-from backend.app.analysis.llm_refactor_engine import LLMRefactorEngine
+from backend.app.analysis.heuristic_refactor_engine import HeuristicRefactorEngine
 from backend.app.analysis.dependency_analyzer import analyze_dependencies
 from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.duplicate_detector import detect_duplicates
@@ -26,7 +26,7 @@ _cache_manager = CacheManager()
 # Single File Analysis Worker
 # ----------------------------------------------------------
 
-def analyze_single_file(file_data: Dict, refactor_engine: LLMRefactorEngine) -> Dict:
+def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngine) -> Dict:
 
     code = file_data["content"]
     file_name = file_data["file_name"]
@@ -367,7 +367,7 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
 class RepositoryReviewEngine:
 
     def __init__(self):
-        self.refactor_engine = LLMRefactorEngine()
+        self.refactor_engine = HeuristicRefactorEngine()
 
     def review_repository(self, repo_path: str, repo_data) -> Dict:
 

@@ -1,11 +1,17 @@
 # ==========================================================
-# File: llm_refactor_engine.py
+# File: heuristic_refactor_engine.py
 # Location: backend/app/analysis
 #
 # Purpose
 # ----------------------------------------------------------
-# This module generates AI-assisted refactoring suggestions
-# based on the results of the repository analysis pipeline.
+# Deterministic, HEURISTIC refactoring suggestions from the
+# repository analysis pipeline. Renamed from LLMRefactorEngine
+# (Phase 5): the old name was a misnomer — there is no LLM here.
+# This engine applies rule-based AST transforms (placeholder
+# docstrings, `-> None` hints) and complexity/smell-driven
+# suggestion strings, then emits a diff patch. Natural-language
+# reasoning lives in the separate Anthropic explanation layer
+# (services/explanation_engine.py).
 #
 # It combines:
 # • Static analysis metrics
@@ -13,7 +19,6 @@
 # • Heuristic-based improvements (docstrings, type hints)
 #
 # The engine produces:
-# • explanations
 # • suggested improvements
 # • improved code (when heuristic rules apply)
 # • a diff patch representing the changes
@@ -25,10 +30,11 @@ from typing import Dict, Any, List
 from backend.app.analysis.patch_generator import PatchGenerator
 
 
-class LLMRefactorEngine:
+class HeuristicRefactorEngine:
     """
-    Orchestrates AI-assisted code refactoring based on
-    repository analysis results.
+    Applies deterministic, rule-based refactoring transforms and
+    suggestions from repository analysis results. No LLM involved
+    (see explanation_engine.py for the genuine LLM layer).
     """
 
     # ======================================================

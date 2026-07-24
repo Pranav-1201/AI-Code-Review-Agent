@@ -1,22 +1,17 @@
 """
-Unit tests for LLMRefactorEngine.
+Unit tests for HeuristicRefactorEngine (formerly the misnamed
+LLMRefactorEngine — it is deterministic and rule-based, no LLM).
 
-This module tests the AI-assisted refactoring component of the
-code review system.
-
-The LLM itself is mocked so tests:
-
-- do not load transformer models
-- do not call external APIs
-- run quickly
-- remain deterministic
+The engine applies AST-driven transforms (docstring/type-hint insertion)
+and complexity/smell suggestions. These tests are deterministic and touch
+no models or external APIs.
 
 Tests verify:
 - correct request handling
 - output structure
 - handling of empty inputs
 - handling of complex code
-- resilience to LLM failures
+- resilience to malformed input
 """
 
 import sys
@@ -28,7 +23,7 @@ import pytest
 # Allow importing backend modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from backend.app.analysis.llm_refactor_engine import LLMRefactorEngine
+from backend.app.analysis.heuristic_refactor_engine import HeuristicRefactorEngine
 
 
 # ---------------------------------------------------------
@@ -77,7 +72,7 @@ def process(arr):
         "code_smells": ["Deep Nesting"]
     }
 
-    engine = LLMRefactorEngine()
+    engine = HeuristicRefactorEngine()
 
     result = engine.generate_refactor(code, MOCK_LLM_RESPONSE, complexity, smells)
 
@@ -101,7 +96,7 @@ def test_empty_code(mock_analyze):
 
     mock_analyze.return_value = MOCK_LLM_RESPONSE
 
-    engine = LLMRefactorEngine()
+    engine = HeuristicRefactorEngine()
 
     smells = {"code_smells": []}
 
@@ -141,7 +136,7 @@ def complex_function(arr):
         "code_smells": ["Deep Nesting", "High Complexity"]
     }
 
-    engine = LLMRefactorEngine()
+    engine = HeuristicRefactorEngine()
 
     result = engine.generate_refactor(code, MOCK_LLM_RESPONSE, complexity, smells)
 
@@ -160,7 +155,7 @@ def test_llm_failure(mock_analyze):
 
     mock_analyze.side_effect = Exception("LLM service failed")
 
-    engine = LLMRefactorEngine()
+    engine = HeuristicRefactorEngine()
 
     smells = {"code_smells": []}
 
@@ -194,7 +189,7 @@ def large():
 
     smells = {"code_smells": []}
 
-    engine = LLMRefactorEngine()
+    engine = HeuristicRefactorEngine()
 
     result = engine.generate_refactor(code, MOCK_LLM_RESPONSE, {}, smells)
 
