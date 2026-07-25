@@ -1,8 +1,21 @@
 # AI Code Review Agent
 
-An **AI-powered repository analysis platform** that scans GitHub repositories and provides deep insights into **code quality, security vulnerabilities, maintainability, and architectural complexity**.
+A repository analysis platform that scans GitHub repositories and reports on
+**code quality, security vulnerabilities, maintainability, and architectural
+complexity**.
 
-The system combines **static code analysis, repository graph analysis, and AI-assisted recommendations** to help developers understand and improve their codebases.
+**What's deterministic vs. what's an LLM (the honest line):**
+Every *finding* — security issues and their taint trust boundaries, cyclomatic
+complexity, cohesion, dead code, import/call cycles, god objects, layer
+violations, dependency CVEs, and the health score — is produced by
+**deterministic static analysis** (Python `ast`). The same code always yields
+the same findings; no model is in that path.
+A **single optional LLM layer** (Anthropic, off unless `ENABLE_ANTHROPIC=true`
+and `ANTHROPIC_API_KEY` are set) turns those deterministic findings into a
+natural-language *explanation*. It only paraphrases the findings it is given —
+it does not detect issues. With the LLM disabled, explanations fall back to a
+deterministic template, and every explanation is labeled `llm` or
+`deterministic` so you always know which produced it.
 
 ---
 
@@ -15,8 +28,8 @@ AI Code Review Agent automatically analyzes a repository and generates a detaile
 * maintainability score
 * dependency structure
 * duplicate code detection
-* architectural insights
-* AI-generated refactoring suggestions
+* architectural insights (god objects, layer violations, import/call cycles)
+* deterministic refactoring suggestions, with optional LLM-written explanations
 
 It provides these insights through a **modern interactive dashboard** built with React.
 
@@ -104,15 +117,19 @@ Helps identify:
 
 ---
 
-## AI-Powered Code Insights
+## Code Insights
 
-The platform integrates **LLM-based reasoning** to generate:
+Two clearly separated layers:
 
-* refactoring suggestions
-* improvement recommendations
-* explanation of detected issues
-
-These suggestions help developers understand **why a problem exists and how to fix it**.
+* **Deterministic (always on):** refactoring transforms (docstring/type-hint
+  insertion, diff patches) and improvement suggestions are rule-based — produced
+  by the `HeuristicRefactorEngine` from static-analysis metrics. No model.
+* **LLM explanation (optional, Anthropic):** when `ENABLE_ANTHROPIC=true` and a
+  key are set, the `ExplanationEngine` turns the deterministic findings into a
+  plain-language explanation of **why a problem exists and how to fix it**,
+  grounded strictly in those findings (it is instructed not to invent issues).
+  Off by default; falls back to a deterministic explanation and labels its
+  output `llm` vs `deterministic`. A junior/senior depth toggle controls tone.
 
 ---
 
@@ -171,9 +188,10 @@ Repository Scanner
 │   ├── Duplicate Detector
 │   └── Security Analyzer
 │
-├── AI Engine
-│   ├── LLM Refactor Engine
-│   └── RAG Retrieval
+├── Heuristic Refactor Engine   (deterministic transforms + suggestions)
+│
+├── Explanation Engine          (optional Anthropic LLM, gated; grounded)
+│   └── RAG Retrieval           (FAISS)
 │
 ↓
 Review Report Generator
