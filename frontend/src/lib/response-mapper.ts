@@ -218,6 +218,7 @@ function mapFile(f: any): FileAnalysis {
     breakdown: f.breakdown,
     linesOfCode: f.lines_of_code || f.linesOfCode || f.lines || f.loc || 0,
     explanation: f.explanation || f.refactor_summary || f.ai_explanation || f.summary || "",
+    explanationSource: f.explanation_source || f.explanationSource || undefined,
     suggestions: f.suggestions || f.improvements || f.ai_suggestions || [],
     improved_code: f.improved_code || f.refactor_suggestion || f.refactored_code || "",
     original_code: f.original_code || f.content || f.source_code || "",

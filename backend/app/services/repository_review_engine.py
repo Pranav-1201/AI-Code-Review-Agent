@@ -44,7 +44,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
     #   v3.2  Chunk 0 - broken health-score / complexity results invalidated
     #   v3.3  Phase 2 - cohesion-gated size flagging changes issue output
     #   v3.4  Phase 3 - taint trust_boundary + reachability confidence on issues
-    cached_result = _cache_manager.get(code, imports, version="v3.4")
+    #   v3.5  Phase 5 - explanation_source label surfaced on the file report
+    cached_result = _cache_manager.get(code, imports, version="v3.5")
     if cached_result:
         return cached_result
 
@@ -255,6 +256,9 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
         "patch": refactor_result.get("patch", None),
         "suggestions": refactor_result.get("suggestions", []),
         "explanation": refactor_result.get("explanation", ""),
+        # PHASE 5: label whether `explanation` was produced by the LLM layer or
+        # the deterministic fallback, so the repo-scan path carries it too.
+        "explanation_source": analysis_section.get("explanation_source", "deterministic"),
         "breakdown": analysis_result.get("breakdown", {}),
         "content": code,
         "documentation_coverage": doc_coverage,
@@ -270,7 +274,7 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
         "cohesion": file_cohesion,
     }
 
-    _cache_manager.set(code, imports, final_output, version="v3.4")
+    _cache_manager.set(code, imports, final_output, version="v3.5")
     return final_output
 
 
@@ -411,6 +415,7 @@ class RepositoryReviewEngine:
                     "security_risks": [],
                     "suggestions": [],
                     "explanation": "",
+                    "explanation_source": "deterministic",
                     "improved_code": "",
                     "refactor_summary": "",
                     "content": file_data.get("content", ""),
@@ -468,6 +473,8 @@ class RepositoryReviewEngine:
 
                 "suggestions": result.get("suggestions", []),
                 "explanation": result.get("explanation", ""),
+                # PHASE 5: "llm" | "deterministic" — carried onto the file report.
+                "explanation_source": result.get("explanation_source", "deterministic"),
 
                 "improved_code": result.get("refactor_suggestion"),
                 "refactor_summary": result.get("refactor_summary"),

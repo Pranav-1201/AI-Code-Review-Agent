@@ -46,6 +46,8 @@ export interface FileAnalysis {
   linesOfCode: number;
 
   explanation: string;
+  /** Which layer produced `explanation`: "llm" (Anthropic) or "deterministic". */
+  explanationSource?: string;
   suggestions: string[];
 
   improved_code: string;
