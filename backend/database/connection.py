@@ -73,6 +73,28 @@ def init_db():
     ON reviews (repo_name, commit_id)
     """)
 
+    # ------------------------------------------------------
+    # Feedback Table (Phase 5)
+    # Thumbs up/down on a specific finding. An up-vote marks a
+    # true positive, a down-vote a false positive; the running
+    # precision estimate is up / (up + down).
+    # ------------------------------------------------------
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        review_id INTEGER,
+        finding_key TEXT,
+        vote TEXT CHECK (vote IN ('up', 'down')),
+        created_at TEXT DEFAULT (datetime('now'))
+    )
+    """)
+
+    cursor.execute("""
+    CREATE INDEX IF NOT EXISTS idx_feedback_review
+    ON feedback (review_id)
+    """)
+
     conn.commit()
     conn.close()
 

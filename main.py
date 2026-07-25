@@ -29,6 +29,7 @@ from backend.app.analysis.call_graph import build_call_graph
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.pr_review_engine import review_pull_request
 from backend.app.services.settings_manager import load_settings, save_settings, reset_settings
+from backend.database.review_repository import record_feedback, get_precision_estimate
 
 
 # ----------------------------------------------------------
@@ -56,13 +57,20 @@ app.add_middleware(
 
 class RepoRequest(BaseModel):
     repo_path: str
+    explanation_depth: str = "senior"   # PHASE 5: junior | senior
+
+
+class FeedbackRequest(BaseModel):
+    review_id: int
+    finding_key: str        # identifies the finding, e.g. "file.py:42:eval"
+    vote: str               # "up" (true positive) | "down" (false positive)
 
 
 # ----------------------------------------------------------
 # Core Pipeline
 # ----------------------------------------------------------
 
-def run_pipeline(repo_path: str, scan_id: str = None):
+def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "senior"):
 
     if scan_id:
         update_scan(scan_id, "analyzing", 20,
@@ -100,7 +108,7 @@ def run_pipeline(repo_path: str, scan_id: str = None):
     print("Running AI repository review...")
 
     engine = RepositoryReviewEngine()
-    result = engine.review_repository(repo_path, files)
+    result = engine.review_repository(repo_path, files, explanation_depth=explanation_depth)
 
     return {
         "repository_summary": result["repository_summary"],
@@ -119,7 +127,7 @@ def run_pipeline(repo_path: str, scan_id: str = None):
 # Background Scan Pipeline
 # ----------------------------------------------------------
 
-def run_scan_pipeline(scan_id: str, repo_url: str):
+def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "senior"):
 
     temp_dir = tempfile.mkdtemp()
     repo_dir = os.path.join(temp_dir, "repo")
@@ -148,7 +156,7 @@ def run_scan_pipeline(scan_id: str, repo_url: str):
         update_scan(scan_id, "analyzing", 15,
                     stage="cloning", stage_detail="Repository cloned successfully")
 
-        result = run_pipeline(repo_dir, scan_id=scan_id)
+        result = run_pipeline(repo_dir, scan_id=scan_id, explanation_depth=explanation_depth)
 
         update_scan(scan_id, "finalizing", 90,
                     stage="finalizing", stage_detail="Computing health score...")
@@ -184,7 +192,8 @@ def start_scan(request: RepoRequest, background_tasks: BackgroundTasks):
     background_tasks.add_task(
         run_scan_pipeline,
         scan_id,
-        request.repo_path
+        request.repo_path,
+        request.explanation_depth
     )
 
     return {"scan_id": scan_id}
@@ -222,6 +231,29 @@ def update_settings(settings: dict):
 def reset_all_settings():
     defaults = reset_settings()
     return {"status": "reset", "settings": defaults}
+
+
+# ----------------------------------------------------------
+# Feedback API (Phase 5)
+# Thumbs up/down on a finding, persisted to the DB, plus a
+# running precision estimate (up / (up + down)).
+# ----------------------------------------------------------
+
+@app.post("/feedback")
+def submit_feedback(feedback: FeedbackRequest):
+    try:
+        feedback_id = record_feedback(
+            feedback.review_id, feedback.finding_key, feedback.vote
+        )
+    except ValueError as e:
+        return {"status": "error", "detail": str(e)}
+    return {"status": "recorded", "feedback_id": feedback_id,
+            "precision": get_precision_estimate()}
+
+
+@app.get("/feedback/precision")
+def feedback_precision():
+    return get_precision_estimate()
 
 
 # ----------------------------------------------------------

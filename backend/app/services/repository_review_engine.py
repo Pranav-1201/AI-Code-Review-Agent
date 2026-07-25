@@ -26,7 +26,8 @@ _cache_manager = CacheManager()
 # Single File Analysis Worker
 # ----------------------------------------------------------
 
-def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngine) -> Dict:
+def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngine,
+                        explanation_depth: str = "senior") -> Dict:
 
     code = file_data["content"]
     file_name = file_data["file_name"]
@@ -101,7 +102,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
             security_issues=security_issues,
             is_test_file=file_is_test,
             file_role=file_role,     # Defect C: role-aware heuristics in llm_service
-            cohesion=file_cohesion   # PHASE 2: one size verdict for all outputs
+            cohesion=file_cohesion,  # PHASE 2: one size verdict for all outputs
+            explanation_depth=explanation_depth,  # PHASE 5: junior/senior toggle
         )
 
         analysis_section = analysis_result.get("analysis", {})
@@ -369,7 +371,8 @@ class RepositoryReviewEngine:
     def __init__(self):
         self.refactor_engine = HeuristicRefactorEngine()
 
-    def review_repository(self, repo_path: str, repo_data) -> Dict:
+    def review_repository(self, repo_path: str, repo_data,
+                          explanation_depth: str = "senior") -> Dict:
 
         # --------------------------------------------------
         # Repo-level analysis
@@ -419,7 +422,8 @@ class RepositoryReviewEngine:
                 })
                 continue
 
-            result = analyze_single_file(file_data, self.refactor_engine)
+            result = analyze_single_file(file_data, self.refactor_engine,
+                                         explanation_depth=explanation_depth)
             results.append(result)
 
         # Phase 4: escalate sinks reachable from untrusted input across
