@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import subprocess
 import tempfile
 import shutil
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,8 @@ from backend.app.services.scan_manager import (
     create_scan,
     update_scan,
     complete_scan,
-    get_scan
+    get_scan,
+    recover_interrupted_scans,
 )
 
 from backend.app.services.repository_review_engine import RepositoryReviewEngine
@@ -36,10 +38,26 @@ from backend.database.review_repository import record_feedback, get_precision_es
 # FastAPI App
 # ----------------------------------------------------------
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Zombie-scan recovery (Phase 6 / Chunk 5): scan work runs in-process,
+    # so any scan left non-terminal by a previous process was killed with
+    # it and cannot resume. Reconcile those rows once at startup so the UI
+    # never polls a dead scan forever.
+    try:
+        recovered = recover_interrupted_scans()
+        if recovered:
+            print(f"[startup] recovered {recovered} interrupted scan(s) from a previous run")
+    except Exception as e:  # never block startup on recovery
+        print(f"[startup] scan recovery skipped: {e!r}")
+    yield
+
+
 app = FastAPI(
     title="AI Repository Code Review Agent",
     description="AI-powered repository analysis",
-    version="1.0"
+    version="1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

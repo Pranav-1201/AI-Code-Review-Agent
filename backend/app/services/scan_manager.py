@@ -23,6 +23,11 @@ from typing import Dict, Optional
 _DB_PATH = os.getenv("SCAN_DB_PATH", "scan_states.db")
 _conn: Optional[sqlite3.Connection] = None
 
+# A scan is "done" only in one of these states. Everything else
+# (starting / cloning / analyzing / finalizing) is in-flight and, if seen
+# at process startup, is a zombie left by a killed previous process.
+_TERMINAL_STATUSES = ("complete", "error")
+
 
 # ----------------------------------------------------------
 # Connection & Schema Initializer
@@ -147,17 +152,26 @@ def complete_scan(scan_id: str, result):
     # Serialize result to JSON — handles dicts, lists, and None
     result_json = json.dumps(result, default=str) if result is not None else None
 
+    # A scan that finished with an error is terminal too, but it must be
+    # distinguishable from success. Emit status='error' (which the frontend
+    # poller already treats as a terminal failure and reads `status.error`
+    # from) instead of masquerading as 'complete'. Restart-interrupted scans
+    # use the same terminal state via recover_interrupted_scans().
+    is_error = isinstance(result, dict) and bool(result.get("error"))
+    status = "error" if is_error else "complete"
+    stage_detail = "Scan failed" if is_error else "Scan complete"
+
     db.execute(
         """
         UPDATE scan_states
-        SET status       = 'complete',
+        SET status       = ?,
             progress     = 100,
-            stage        = 'complete',
-            stage_detail = 'Scan complete',
+            stage        = ?,
+            stage_detail = ?,
             result       = ?
         WHERE scan_id = ?
         """,
-        (result_json, scan_id)
+        (status, status, stage_detail, result_json, scan_id)
     )
     db.commit()
 
@@ -183,7 +197,7 @@ def get_scan(scan_id: str) -> Optional[Dict]:
     result_raw = row["result"]
     result = json.loads(result_raw) if result_raw else None
 
-    return {
+    out = {
         "status":          row["status"],
         "progress":        row["progress"],
         "stage":           row["stage"],
@@ -193,3 +207,57 @@ def get_scan(scan_id: str) -> Optional[Dict]:
         "repo":            row["repo"],
         "result":          result,
     }
+
+    # Surface a top-level error message for terminal-failure scans so the
+    # frontend poller (which reads `status.error`) shows the real reason
+    # instead of "unknown reason". Additive — present only on failed scans.
+    if isinstance(result, dict) and result.get("error"):
+        out["error"] = result["error"]
+
+    return out
+
+
+# ----------------------------------------------------------
+# Zombie-scan recovery (Phase 6 / Chunk 5)
+# ----------------------------------------------------------
+
+def recover_interrupted_scans() -> int:
+    """Reconcile scans left mid-flight by a previous process.
+
+    Scan work runs in-process (FastAPI BackgroundTasks today), so any scan
+    still in a running state at startup was killed together with the
+    previous process — its task cannot resume. Without this, such a row
+    stays 'analyzing' forever and the UI polls a dead scan until its
+    client-side deadline.
+
+    We mark every non-terminal row terminal as status='error' with a clear
+    message (the frontend poller already treats 'error' as a terminal
+    failure). Terminal rows ('complete'/'error') are left untouched, so
+    calling this is idempotent. Returns the number of scans reconciled.
+    """
+    db = _get_connection()
+    placeholders = ",".join("?" for _ in _TERMINAL_STATUSES)
+
+    rows = db.execute(
+        f"SELECT scan_id FROM scan_states WHERE status NOT IN ({placeholders})",
+        _TERMINAL_STATUSES,
+    ).fetchall()
+    if not rows:
+        return 0
+
+    result_json = json.dumps(
+        {"error": "Scan interrupted by a server restart before it finished."}
+    )
+    db.execute(
+        f"""
+        UPDATE scan_states
+        SET status       = 'error',
+            stage        = 'interrupted',
+            stage_detail = 'Scan interrupted by a server restart',
+            result       = ?
+        WHERE status NOT IN ({placeholders})
+        """,
+        (result_json, *_TERMINAL_STATUSES),
+    )
+    db.commit()
+    return len(rows)
