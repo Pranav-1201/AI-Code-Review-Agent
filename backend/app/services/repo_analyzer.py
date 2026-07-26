@@ -7,6 +7,7 @@ import os
 import ast
 from pathlib import Path
 from typing import List, Dict
+from concurrent.futures import ProcessPoolExecutor
 
 from backend.app.analysis.ast_parser import parse_python_file
 from backend.app.analysis.dead_code_detector import DeadCodeDetector
@@ -379,6 +380,91 @@ def _analyze_file_worker(args):
 
 
 # ==========================================================
+# Parallel dispatch (Phase 6 / Chunk 5)
+# ==========================================================
+# The per-file structural pass is CPU-bound and embarrassingly
+# parallel: _analyze_file_worker is a module-level, stateless,
+# picklable worker (it constructs its own detectors), so it fans
+# out across processes cleanly. We only parallelize ABOVE a
+# threshold — pool startup (spawn on Windows especially) costs more
+# than it saves on tiny repos. All knobs are env-driven so a
+# container can tune them with no code change:
+#
+#   ANALYSIS_PARALLEL            "auto" (default) | "off"
+#   ANALYSIS_MAX_WORKERS         int   (default = os.cpu_count())
+#   ANALYSIS_PARALLEL_THRESHOLD  int   (default = 8 files to fan out)
+#
+# DETERMINISM CONTRACT: results are consumed in INPUT ORDER (both
+# billiard.Pool.map and ProcessPoolExecutor.map preserve order), so
+# the first-seen dedup in analyze_repository() is byte-identical to
+# the old sequential loop. Parallelism must never change which
+# duplicate wins or the order of files in the report.
+
+
+def _resolve_worker_count(n_files: int) -> int:
+    """How many workers to use for `n_files` (1 == run sequentially)."""
+    mode = os.getenv("ANALYSIS_PARALLEL", "auto").strip().lower()
+    if mode in ("off", "0", "false", "no", "sequential"):
+        return 1
+
+    try:
+        threshold = int(os.getenv("ANALYSIS_PARALLEL_THRESHOLD", "8"))
+    except ValueError:
+        threshold = 8
+    if n_files < max(threshold, 2):
+        return 1
+
+    try:
+        configured = int(os.getenv("ANALYSIS_MAX_WORKERS", "0"))
+    except ValueError:
+        configured = 0
+    max_workers = configured if configured > 0 else (os.cpu_count() or 1)
+    return max(1, min(max_workers, n_files))
+
+
+def _map_file_workers(worker_args: List) -> List:
+    """Run _analyze_file_worker over worker_args, PRESERVING order.
+
+    Pool preference: billiard.Pool (bundled with Celery, and the only
+    pool safe to create INSIDE a Celery prefork worker, whose children
+    are daemonic and reject a stdlib multiprocessing pool) -> stdlib
+    ProcessPoolExecutor -> plain sequential map.
+
+    A pool failure logs LOUDLY and then falls back. A *silent* drop to
+    sequential would make the pass look parallel while running serial —
+    the exact 'feature looks like it exists' failure this chunk is
+    guarding against — so the fallback always announces itself.
+    """
+    n = len(worker_args)
+    workers = _resolve_worker_count(n)
+
+    if workers <= 1:
+        return [_analyze_file_worker(a) for a in worker_args]
+
+    # Preferred: billiard (Celery-safe nested pool).
+    try:
+        from billiard import Pool as _BilliardPool  # ships with celery
+    except ImportError:
+        _BilliardPool = None
+    if _BilliardPool is not None:
+        try:
+            with _BilliardPool(processes=workers) as pool:
+                return list(pool.map(_analyze_file_worker, worker_args))
+        except Exception as e:  # noqa: BLE001 - fall through, but never silently
+            print(f"[parallel] billiard pool failed ({e!r}); "
+                  f"trying ProcessPoolExecutor")
+
+    # Fallback: stdlib process pool (fine outside a Celery worker).
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            return list(ex.map(_analyze_file_worker, worker_args))
+    except Exception as e:  # noqa: BLE001
+        print(f"[parallel] ProcessPoolExecutor failed ({e!r}); "
+              f"falling back to SEQUENTIAL for {n} files")
+        return [_analyze_file_worker(a) for a in worker_args]
+
+
+# ==========================================================
 # Repository Analyzer
 # ==========================================================
 
@@ -403,11 +489,16 @@ class RepoAnalyzer:
                 file_paths.append(path)
 
         worker_args = [(path, repo_path) for path in file_paths]
+
+        # PHASE 6 (Chunk 5): fan the per-file structural pass across
+        # processes. _map_file_workers preserves INPUT ORDER, so the
+        # first-seen dedup below is identical to the old sequential loop.
+        raw_results = _map_file_workers(worker_args)
+
         files_data = []
         seen_paths = set()
 
-        for args in worker_args:
-            result = _analyze_file_worker(args)
+        for result in raw_results:
             if result:
                 fp = result["file_path"]
                 if fp not in seen_paths:
