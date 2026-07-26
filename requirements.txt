@@ -28,6 +28,11 @@ pydantic
 python-multipart
 
 # ==========================================================
+# Incremental re-analysis (Phase 6 / Chunk 5)
+# ==========================================================
+GitPython            # git-diff-aware incremental re-scan (backend/app/services/incremental.py)
+
+# ==========================================================
 # Environment
 # ==========================================================
 python-dotenv

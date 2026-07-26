@@ -12,6 +12,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import subprocess
 import tempfile
 import shutil
+import hashlib
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
@@ -29,6 +30,7 @@ from backend.app.services.repository_review_engine import RepositoryReviewEngine
 from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.call_graph import build_call_graph
 from backend.app.services.repo_analyzer import analyze_repository
+from backend.app.services import incremental
 from backend.app.services.pr_review_engine import review_pull_request
 from backend.app.services.settings_manager import load_settings, save_settings, reset_settings
 from backend.database.review_repository import record_feedback, get_precision_estimate
@@ -88,7 +90,8 @@ class FeedbackRequest(BaseModel):
 # Core Pipeline
 # ----------------------------------------------------------
 
-def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "senior"):
+def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "senior",
+                 since_sha: str = None, prior_files=None):
 
     if scan_id:
         update_scan(scan_id, "analyzing", 20,
@@ -96,7 +99,9 @@ def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "
 
     print("Starting repository analysis...")
 
-    files = analyze_repository(repo_path)
+    # PHASE 6 (Chunk 5): when since_sha + prior_files are supplied, the engine
+    # re-analyzes only git-diff-changed files and reuses the rest.
+    files = analyze_repository(repo_path, since_sha=since_sha, prior_files=prior_files)
 
     print("Scanning repository at:", repo_path)
     print("Files found:", len(files))
@@ -137,7 +142,10 @@ def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "
         "visualizations": result["visualizations"],
         "insights": result.get("insights", {}),
         "dependency_graph": dependency_graph,
-        "call_graph": dict(call_graph)
+        "call_graph": dict(call_graph),
+        # Internal: raw per-file analysis for the incremental prior-store.
+        # run_scan_pipeline pops this before persisting the scan result.
+        "_files_data": files,
     }
 
 
@@ -145,50 +153,75 @@ def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "
 # Background Scan Pipeline
 # ----------------------------------------------------------
 
+# Persistent per-repo clone cache. Unlike a throwaway shallow clone, a cached
+# full clone lets a re-scan diff the previous commit against the new HEAD so
+# only changed files are re-analyzed (PHASE 6 / Chunk 5). Tradeoff: disk grows
+# with one clone per distinct repo_url (bounded by the number of repos scanned).
+CLONE_CACHE = os.path.join(tempfile.gettempdir(), "etproject_clones")
+
+
 def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "senior"):
 
-    temp_dir = tempfile.mkdtemp()
-    repo_dir = os.path.join(temp_dir, "repo")
+    os.makedirs(CLONE_CACHE, exist_ok=True)
+    repo_dir = os.path.join(CLONE_CACHE, hashlib.md5(repo_url.encode("utf-8")).hexdigest())
+
+    since_sha = None
+    prior_files = None
 
     try:
 
-        update_scan(scan_id, "cloning", 5,
-                    stage="cloning", stage_detail="Cloning repository...")
+        prior = incremental.load_prior(repo_url)
 
-        # Defect G: apply the large-repo post-buffer to THIS clone only,
-        # via `git -c`, instead of mutating the user's global git config.
-        subprocess.run(
-            [
-                "git",
-                "-c", "http.postBuffer=524288000",
-                "clone",
-                "--depth", "1",
-                "--single-branch",
-                repo_url,
-                repo_dir
-            ],
-            check=True,
-            timeout=120
-        )
+        if prior and os.path.isdir(os.path.join(repo_dir, ".git")):
+            # Re-scan: refresh the cached clone and diff against the last scan.
+            update_scan(scan_id, "cloning", 5, stage="cloning",
+                        stage_detail="Refreshing repository (incremental)...")
+            # Defect G: per-invocation config via `git -c`, never global.
+            subprocess.run(
+                ["git", "-C", repo_dir, "-c", "http.postBuffer=524288000",
+                 "fetch", "origin"],
+                check=True, timeout=180,
+            )
+            subprocess.run(
+                ["git", "-C", repo_dir, "reset", "--hard", "FETCH_HEAD"],
+                check=True, timeout=60,
+            )
+            since_sha = prior.get("sha")
+            prior_files = prior.get("files")
+        else:
+            # First scan (or cache miss): full clone WITH history so future
+            # re-scans can diff. Not shallow (no --depth 1) for that reason.
+            update_scan(scan_id, "cloning", 5, stage="cloning",
+                        stage_detail="Cloning repository...")
+            shutil.rmtree(repo_dir, ignore_errors=True)  # clear any stale/partial dir
+            subprocess.run(
+                ["git", "-c", "http.postBuffer=524288000", "clone",
+                 "--single-branch", repo_url, repo_dir],
+                check=True, timeout=300,
+            )
 
         update_scan(scan_id, "analyzing", 15,
-                    stage="cloning", stage_detail="Repository cloned successfully")
+                    stage="cloning", stage_detail="Repository ready")
 
-        result = run_pipeline(repo_dir, scan_id=scan_id, explanation_depth=explanation_depth)
+        result = run_pipeline(repo_dir, scan_id=scan_id,
+                              explanation_depth=explanation_depth,
+                              since_sha=since_sha, prior_files=prior_files)
+
+        # Pop the internal per-file payload before persisting the scan result.
+        files_data = result.pop("_files_data", None)
 
         update_scan(scan_id, "finalizing", 90,
                     stage="finalizing", stage_detail="Computing health score...")
 
-        print(f"DEBUG: run_pipeline returned {type(result)} with {len(result) if isinstance(result, list) else 'N/A'} items")
+        # Persist this scan's HEAD + per-file results for the next incremental run.
+        new_sha = incremental.head_sha(repo_dir)
+        incremental.save_prior(repo_url, new_sha, files_data)
+
         complete_scan(scan_id, result)
 
     except Exception as e:
 
         complete_scan(scan_id, {"error": str(e)})
-
-    finally:
-
-        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 # ----------------------------------------------------------

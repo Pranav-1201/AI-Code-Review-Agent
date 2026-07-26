@@ -13,6 +13,7 @@ from backend.app.analysis.ast_parser import parse_python_file
 from backend.app.analysis.dead_code_detector import DeadCodeDetector
 from backend.app.analysis.complexity_analyzer import ComplexityAnalyzer
 from backend.app.analysis.cohesion_analyzer import size_verdict, NO_SIZE_FLAG
+from backend.app.services import incremental
 
 
 # ----------------------------------------------------------
@@ -474,7 +475,9 @@ class RepoAnalyzer:
         self.dead_code_detector = DeadCodeDetector()
         self.complexity_analyzer = ComplexityAnalyzer()
 
-    def analyze_repository(self, repo_path: str) -> List[Dict]:
+    def analyze_repository(self, repo_path: str,
+                           since_sha: str = None,
+                           prior_files: List[Dict] = None) -> List[Dict]:
 
         repo_path = Path(repo_path)
         file_paths = []
@@ -488,12 +491,47 @@ class RepoAnalyzer:
                 path = Path(root) / file
                 file_paths.append(path)
 
-        worker_args = [(path, repo_path) for path in file_paths]
+        def _rel(path: Path) -> str:
+            try:
+                return str(path.relative_to(repo_path)).replace("\\", "/")
+            except ValueError:
+                return str(path).replace("\\", "/")
 
-        # PHASE 6 (Chunk 5): fan the per-file structural pass across
-        # processes. _map_file_workers preserves INPUT ORDER, so the
-        # first-seen dedup below is identical to the old sequential loop.
-        raw_results = _map_file_workers(worker_args)
+        # PHASE 6 (Chunk 5): incremental git-diff re-analysis. When a prior
+        # scan's SHA + per-file results are supplied AND the diff is
+        # computable, re-run the expensive per-file pass only on changed/new
+        # files and reuse prior results for the rest. Falls back to a full
+        # pass (logged, never silent) when the diff can't be computed. The
+        # cross-file reduce below always runs over the FULL set, so an
+        # unchanged file's cross-file verdict stays correct.
+        changed = None
+        reuse_by_path: Dict[str, Dict] = {}
+        if since_sha and prior_files:
+            changed = incremental.changed_files(str(repo_path), since_sha)
+            if changed is None:
+                print(f"[incremental] cannot diff since {str(since_sha)[:8]} "
+                      f"-> full analysis")
+            else:
+                reuse_by_path = {f["file_path"]: f for f in prior_files
+                                 if isinstance(f, dict) and "file_path" in f}
+
+        if changed is None:
+            # Full pass (default path — behaviour unchanged). PRESERVES INPUT
+            # ORDER so the first-seen dedup below matches the old sequential loop.
+            raw_results = _map_file_workers([(p, repo_path) for p in file_paths])
+        else:
+            # Incremental pass: analyze changed/new files, reuse the rest.
+            rels = {p: _rel(p) for p in file_paths}
+            to_analyze = [p for p in file_paths
+                          if rels[p] in changed or rels[p] not in reuse_by_path]
+            fresh = _map_file_workers([(p, repo_path) for p in to_analyze])
+            fresh_by_path = {r["file_path"]: r for r in fresh if r}
+            # Reassemble in walk order so output is identical to a full pass.
+            raw_results = [fresh_by_path.get(rels[p]) or reuse_by_path.get(rels[p])
+                           for p in file_paths]
+            print(f"[incremental] re-analyzed {len(to_analyze)}, "
+                  f"reused {len(file_paths) - len(to_analyze)} of "
+                  f"{len(file_paths)} files")
 
         files_data = []
         seen_paths = set()
@@ -519,6 +557,8 @@ class RepoAnalyzer:
         return files_data
 
 
-def analyze_repository(repo_path: str):
+def analyze_repository(repo_path: str, since_sha: str = None,
+                       prior_files: List[Dict] = None):
     analyzer = RepoAnalyzer()
-    return analyzer.analyze_repository(repo_path)
+    return analyzer.analyze_repository(repo_path, since_sha=since_sha,
+                                       prior_files=prior_files)
