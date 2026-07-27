@@ -13,6 +13,7 @@ from backend.app.analysis.ast_parser import parse_python_file
 from backend.app.analysis.dead_code_detector import DeadCodeDetector
 from backend.app.analysis.complexity_analyzer import ComplexityAnalyzer
 from backend.app.analysis.cohesion_analyzer import size_verdict, NO_SIZE_FLAG
+from backend.app.analysis import js_structure
 from backend.app.services import incremental
 
 
@@ -24,6 +25,11 @@ CODE_EXTENSIONS = (
     ".py", ".js", ".jsx", ".ts", ".tsx",
     ".java", ".cpp", ".c", ".h", ".hpp", ".cc", ".cxx"
 )
+
+# JS/TS family — these get tree-sitter structural analysis (Phase 6 / Chunk 5)
+# via js_structure, mirroring the Python AST path. Everything else in
+# CODE_EXTENSIONS (Java, C/C++) still gets metadata only.
+JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx")
 
 # Completely ignore non-code files
 NON_CODE_EXTENSIONS = ()
@@ -293,11 +299,20 @@ def _analyze_file_worker(args):
     # line-count threshold.
     cohesion = size_verdict(code, relative_path) if ext == ".py" else dict(NO_SIZE_FLAG)
 
+    # js holds the tree-sitter result for JS/TS so both the function inventory
+    # and the complexity block below read it without parsing twice.
+    js = {"functions": [], "complexity_metrics": []}
+
     if ext == ".py":
         try:
             analysis = parse_python_file(code)
         except Exception:
             pass
+    elif ext in JS_TS_EXTENSIONS:
+        # Phase 6 (Chunk 5): tree-sitter structural pass for JS/TS. Degrades to
+        # empty (today's behaviour) if tree-sitter is unavailable — never raises.
+        js = js_structure.analyze(code, ext, role=file_role)
+        analysis = {"functions": js.get("functions", []), "imports": []}
 
     # Dead code detection (Python only)
     dead_code = {"unused_imports": [], "unused_variables": []}
@@ -317,6 +332,10 @@ def _analyze_file_worker(args):
                     complexity_results.append(metrics)
         except Exception:
             pass
+    elif ext in JS_TS_EXTENSIONS:
+        # Same per-function shape as the Python branch, so the aggregation below
+        # (file cyclomatic avg, max, time complexity) is language-agnostic.
+        complexity_results = js.get("complexity_metrics", [])
 
     # --------------------------------------------------
     # Aggregate cyclomatic complexity
