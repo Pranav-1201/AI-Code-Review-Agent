@@ -1,0 +1,89 @@
+{
+  "f1_security_exec": {
+    "expected": [
+      {"type": "dangerous_function", "file": "app.py", "line": 5},
+      {"type": "dangerous_function", "file": "app.py", "line": 9},
+      {"type": "dangerous_function", "file": "app.py", "line": 13},
+      {"type": "dangerous_function", "file": "app.py", "line": 14}
+    ],
+    "decoys": [
+      {"type": "dangerous_function", "file": "app.py", "line": 18, "why": "eval() inside a string literal"},
+      {"type": "dangerous_function", "file": "app.py", "line": 19, "why": "exec() inside a comment"}
+    ]
+  },
+  "f2_security_injection": {
+    "expected": [
+      {"type": "command_injection", "file": "app.py", "line": 7},
+      {"type": "command_injection", "file": "app.py", "line": 11},
+      {"type": "sql_injection", "file": "app.py", "line": 19},
+      {"type": "sql_injection", "file": "app.py", "line": 24}
+    ],
+    "decoys": [
+      {"type": "command_injection", "file": "app.py", "line": 15, "why": "subprocess.run(list), shell=False - safe; analyzer over-flags it (FP)"},
+      {"type": "sql_injection", "file": "app.py", "line": 28, "why": "parameterized query with %s placeholder - safe"}
+    ]
+  },
+  "f3_security_deser": {
+    "expected": [
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 8},
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 12, "note": "pickle.load - analyzer MISSES this (FN, known gap)"},
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 16, "note": "yaml.load - analyzer MISSES this (FN, known gap)"}
+    ],
+    "decoys": [
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 20, "why": "yaml.safe_load - safe"},
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 24, "why": "json.loads - safe"}
+    ]
+  },
+  "f4_security_misc": {
+    "expected": [
+      {"type": "hardcoded_credential", "file": "app.py", "line": 8},
+      {"type": "hardcoded_credential", "file": "app.py", "line": 9},
+      {"type": "weak_crypto", "file": "app.py", "line": 14},
+      {"type": "race_condition", "file": "app.py", "line": 22},
+      {"type": "insecure_config", "file": "app.py", "line": 30}
+    ],
+    "decoys": [
+      {"type": "hardcoded_credential", "file": "app.py", "line": 10, "why": "read from os.environ"},
+      {"type": "weak_crypto", "file": "app.py", "line": 18, "why": "sha256"},
+      {"type": "race_condition", "file": "app.py", "line": 26, "why": "mkstemp (safe)"},
+      {"type": "insecure_config", "file": "app.py", "line": 34, "why": "verify=True"}
+    ]
+  },
+  "f5_dead_imports": {
+    "expected": [
+      {"type": "dead_import", "file": "app.py", "name": "os"},
+      {"type": "dead_import", "file": "app.py", "name": "math.sqrt"}
+    ],
+    "decoys": [
+      {"type": "dead_import", "file": "app.py", "name": "sys", "why": "used"},
+      {"type": "dead_import", "file": "app.py", "name": "json", "why": "used via alias j (alias-aware)"},
+      {"type": "dead_import", "file": "app.py", "name": "collections.OrderedDict", "why": "used"}
+    ]
+  },
+  "f6_dead_functions": {
+    "expected": [
+      {"type": "dead_function", "file": "main.py", "name": "_never_called"},
+      {"type": "dead_function", "file": "helpers.py", "name": "orphan"}
+    ],
+    "decoys": [
+      {"type": "dead_function", "file": "helpers.py", "name": "used_helper", "why": "imported and called by main.py"},
+      {"type": "dead_function", "file": "main.py", "name": "entry", "why": "reachable via __main__ entrypoint; analyzer over-flags it (FP, known gap)"}
+    ]
+  },
+  "f7_complexity_python": {
+    "expected": [
+      {"type": "high_complexity", "file": "app.py", "name": "tangled"}
+    ],
+    "decoys": [
+      {"type": "high_complexity", "file": "app.py", "name": "simple", "why": "cyclomatic complexity 1"}
+    ]
+  },
+  "f8_complexity_js": {
+    "expected": [
+      {"type": "high_complexity", "file": "app.js", "name": "tangledJs"}
+    ],
+    "decoys": [
+      {"type": "high_complexity", "file": "app.js", "name": "simpleJs", "why": "cyclomatic complexity 1"}
+    ]
+  }
+}

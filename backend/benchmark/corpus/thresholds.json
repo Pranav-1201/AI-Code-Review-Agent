@@ -1,0 +1,14 @@
+{
+  "_comment": "Per-finding-type regression floor for the FIXTURE gate. Baselines are the analyzer's ACTUAL measured precision/recall on the curated fixtures (see labels.json). Values below 1.0 encode KNOWN, documented analyzer behaviour: command_injection/dead_function precision 0.66 = over-flagging safe subprocess.run(list) and __main__ entrypoints; unsafe_deserialization recall 0.33 = misses pickle.load and yaml.load. The gate fails if any type drops BELOW these floors.",
+  "dangerous_function": {"precision": 1.0, "recall": 1.0},
+  "command_injection": {"precision": 0.66, "recall": 1.0},
+  "sql_injection": {"precision": 1.0, "recall": 1.0},
+  "unsafe_deserialization": {"precision": 1.0, "recall": 0.33},
+  "hardcoded_credential": {"precision": 1.0, "recall": 1.0},
+  "insecure_config": {"precision": 1.0, "recall": 1.0},
+  "weak_crypto": {"precision": 1.0, "recall": 1.0},
+  "race_condition": {"precision": 1.0, "recall": 1.0},
+  "dead_import": {"precision": 1.0, "recall": 1.0},
+  "dead_function": {"precision": 0.66, "recall": 1.0},
+  "high_complexity": {"precision": 1.0, "recall": 1.0}
+}

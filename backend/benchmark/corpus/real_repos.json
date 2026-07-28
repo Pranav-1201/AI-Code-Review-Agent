@@ -1,0 +1,35 @@
+[
+  {
+    "name": "flask",
+    "url": "https://github.com/pallets/flask.git",
+    "tag": "3.0.3",
+    "commit": "c12a5d874c5a014495eb2db8a73f40037bc813ac",
+    "role": "clean precision anchor",
+    "_note": "commit is the tag 3.0.3 dereferenced (annotated tag object 8503928... -> commit c12a5d8...)",
+    "labels": [
+      {"type": "dangerous_function", "file": "src/flask/cli.py", "line": 1005, "flag": false, "why": "exec of the developer's own PYTHONSTARTUP file - documented CLI feature, operator input, not untrusted -> analyzer FP"},
+      {"type": "dangerous_function", "file": "src/flask/config.py", "line": 212, "flag": false, "why": "Config.from_pyfile execs the developer's own config module - documented feature -> analyzer FP"},
+      {"type": "weak_crypto", "file": "src/flask/sessions.py", "line": 285, "flag": false, "why": "sha1 used inside HMAC signing context, not a password hash -> analyzer FP"},
+      {"type": "high_complexity", "file": "src/flask/sansio/app.py", "name": "add_url_rule", "flag": true, "why": "genuinely high-complexity routing registrar - legitimate finding"},
+      {"type": "high_complexity", "file": "src/flask/sansio/blueprints.py", "name": "register", "flag": true, "why": "genuinely high-complexity blueprint registration - legitimate finding"}
+    ]
+  },
+  {
+    "name": "bottle",
+    "url": "https://github.com/bottlepy/bottle.git",
+    "tag": "0.13.2",
+    "commit": "ab49e0c22491f8acfcb02e4a7b8c648843268233",
+    "role": "organic-mess recall anchor (authentic compile/eval in template engine)",
+    "_note": "commit is the tag 0.13.2 dereferenced (annotated tag object bc40ceb... -> commit ab49e0c...)",
+    "labels": [
+      {"type": "dangerous_function", "file": "bottle.py", "line": 145, "flag": false, "why": "exec(compile(...)) of a hardcoded py2/3 compat shim, no external input -> analyzer FP"},
+      {"type": "dangerous_function", "file": "bottle.py", "line": 4216, "flag": false, "why": "SimpleTemplate compiles the TEMPLATE source (framework internals), not untrusted input -> analyzer FP (the headline precision probe)"},
+      {"type": "dangerous_function", "file": "bottle.py", "line": 4258, "flag": false, "why": "SimpleTemplate execs its own compiled template code object -> analyzer FP"},
+      {"type": "unsafe_deserialization", "file": "bottle.py", "line": 1228, "flag": true, "why": "pickle.loads on cookie-derived data - a real, bottle-documented smell"},
+      {"type": "unsafe_deserialization", "file": "bottle.py", "line": 3090, "flag": true, "why": "pickle.loads on cookie-derived data - a real smell"},
+      {"type": "weak_crypto", "file": "bottle.py", "line": 2917, "flag": false, "why": "sha1 used as an ETag/cache validator, not a security hash -> analyzer FP"},
+      {"type": "high_complexity", "file": "bottle.py", "name": "_cast", "flag": true, "why": "genuinely high-complexity response coercion - legitimate finding"},
+      {"type": "high_complexity", "file": "bottle.py", "name": "static_file", "flag": true, "why": "genuinely high-complexity static-file handler - legitimate finding"}
+    ]
+  }
+]
