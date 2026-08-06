@@ -1,0 +1,28 @@
+# Keep the build context small and reproducible. The venv/node_modules/.git
+# especially would otherwise bloat the context by gigabytes.
+.git
+.gitignore
+venv/
+.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Frontend build artifacts + deps (the API image is Python-only).
+frontend/node_modules/
+frontend/dist/
+node_modules/
+
+# Local databases and caches — never bake dev state into the image.
+*.db
+*.db-wal
+*.db-shm
+scan_states.db*
+backend/database/reviews.db*
+backend/app/.cache/
+backend/benchmark/corpus/fixtures/.impeccable/
+
+# Tooling / editor / agent scratch.
+.claude/
+.pytest_cache/
+*.log

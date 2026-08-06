@@ -1,0 +1,56 @@
+# ==========================================================
+# Phase 6 / Chunk 5 — the whole stack: Redis broker + API + Celery worker.
+#   docker compose up --build
+# The API enqueues scans onto Redis; the worker (separate container) runs them
+# and writes progress/result to the SQLite scan store on a SHARED volume that
+# the API reads back via GET /scan/{id}. See DEPLOYMENT.md for the run + verify
+# checklist and the known caveats (single worker, SQLite-on-volume, image size).
+# ==========================================================
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command: uvicorn main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SCAN_DB_PATH: /data/scan_states.db
+    volumes:
+      - scan-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    # Prefork (billiard) pool: the per-file analysis map spawns child processes,
+    # which stdlib multiprocessing forbids under a daemonic prefork worker —
+    # billiard (bundled with Celery) is what makes that legal. Single worker
+    # service by design; see DEPLOYMENT.md before scaling to replicas.
+    command: celery -A backend.app.services.celery_app:celery_app worker --loglevel=info --concurrency=2
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      SCAN_DB_PATH: /data/scan_states.db
+    volumes:
+      - scan-data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  scan-data:
