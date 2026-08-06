@@ -44,6 +44,16 @@ tree-sitter-javascript>=0.23
 tree-sitter-typescript>=0.23
 
 # ==========================================================
+# Job queue (Phase 6 / Chunk 5)
+# ==========================================================
+# Celery dispatches repository scans to a separate worker process/container
+# (backend/app/services/celery_app.py + tasks.py; wired into POST /scan in
+# main.py). The [redis] extra pulls the redis client used as broker/result
+# backend in docker-compose. With no CELERY_BROKER_URL set, Celery runs eagerly
+# in-process, so the API and test suite work without a broker installed.
+celery[redis]>=5.3,<6
+
+# ==========================================================
 # Environment
 # ==========================================================
 python-dotenv

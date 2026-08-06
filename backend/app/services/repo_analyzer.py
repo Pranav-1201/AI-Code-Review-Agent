@@ -461,11 +461,21 @@ def _map_file_workers(worker_args: List) -> List:
     if workers <= 1:
         return [_analyze_file_worker(a) for a in worker_args]
 
-    # Preferred: billiard (Celery-safe nested pool).
-    try:
-        from billiard import Pool as _BilliardPool  # ships with celery
-    except ImportError:
-        _BilliardPool = None
+    # Preferred: billiard (Celery-safe nested pool) — but ONLY off Windows.
+    # billiard.Pool is required *inside a Celery prefork worker* (whose daemonic
+    # children reject a stdlib pool), which only ever runs in the Linux
+    # container. On Windows its spawn bootstrap can abort the interpreter
+    # outright — an uncatchable native crash, not an Exception the fallback
+    # below could see — under pytest. Local Windows dev never runs a Celery
+    # worker, so there we skip straight to ProcessPoolExecutor. (Before Celery
+    # was a dependency billiard was simply absent, so this branch never ran and
+    # the crash stayed hidden.)
+    _BilliardPool = None
+    if os.name != "nt":
+        try:
+            from billiard import Pool as _BilliardPool  # ships with celery
+        except ImportError:
+            _BilliardPool = None
     if _BilliardPool is not None:
         try:
             with _BilliardPool(processes=workers) as pool:

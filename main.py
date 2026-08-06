@@ -14,7 +14,7 @@ import tempfile
 import shutil
 import hashlib
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -35,6 +35,13 @@ from backend.app.services.pr_review_engine import review_pull_request
 from backend.app.services.settings_manager import load_settings, save_settings, reset_settings
 from backend.database.review_repository import record_feedback, get_precision_estimate
 
+# Real job queue (Phase 6 / Chunk 5). run_scan_task.delay() enqueues a scan onto
+# the Celery broker for a separate worker; with no CELERY_BROKER_URL configured
+# it runs eagerly in-process (see celery_app.py), so this import is safe with or
+# without a broker present.
+from backend.app.services.celery_app import celery_app
+from backend.app.services.tasks import run_scan_task
+
 
 # ----------------------------------------------------------
 # FastAPI App
@@ -42,16 +49,21 @@ from backend.database.review_repository import record_feedback, get_precision_es
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Zombie-scan recovery (Phase 6 / Chunk 5): scan work runs in-process,
-    # so any scan left non-terminal by a previous process was killed with
-    # it and cannot resume. Reconcile those rows once at startup so the UI
-    # never polls a dead scan forever.
-    try:
-        recovered = recover_interrupted_scans()
-        if recovered:
-            print(f"[startup] recovered {recovered} interrupted scan(s) from a previous run")
-    except Exception as e:  # never block startup on recovery
-        print(f"[startup] scan recovery skipped: {e!r}")
+    # Zombie-scan recovery (Phase 6 / Chunk 5). In EAGER mode there is no
+    # separate worker — the API process runs scans itself — so any scan left
+    # non-terminal by a previous process died with it and the API reconciles it
+    # here, exactly as before the queue existed. In BROKER mode the worker is a
+    # separate process that owns scan execution, so recovery moves to worker
+    # startup (celery_app._recover_on_worker_ready); running it here too would
+    # wrongly mark a scan a live worker is still processing as 'error' whenever
+    # the API restarts. So this path is gated to eager mode only.
+    if celery_app.conf.task_always_eager:
+        try:
+            recovered = recover_interrupted_scans()
+            if recovered:
+                print(f"[startup] recovered {recovered} interrupted scan(s) from a previous run")
+        except Exception as e:  # never block startup on recovery
+            print(f"[startup] scan recovery skipped: {e!r}")
     yield
 
 
@@ -236,15 +248,18 @@ def root():
 # Start Scan
 
 @app.post("/scan")
-def start_scan(request: RepoRequest, background_tasks: BackgroundTasks):
+def start_scan(request: RepoRequest):
 
     scan_id = create_scan(request.repo_path)
 
-    background_tasks.add_task(
-        run_scan_pipeline,
+    # Enqueue onto the Celery broker for a separate worker. With no broker
+    # configured this runs eagerly in-process (see celery_app.py), preserving
+    # the previous single-process behaviour. The task defers to
+    # run_scan_pipeline, so a monkeypatch of main.run_scan_pipeline is honoured.
+    run_scan_task.delay(
         scan_id,
         request.repo_path,
-        request.explanation_depth
+        request.explanation_depth,
     )
 
     return {"scan_id": scan_id}
