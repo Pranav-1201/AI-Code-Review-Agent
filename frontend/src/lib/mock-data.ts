@@ -1,5 +1,12 @@
 import { ScanReport, ScanHistoryItem, TestResult } from "./types";
 
+/**
+ * Static demo report used by the offline demo mode (ScanContext.loadDemo).
+ * It is a fully-formed ScanReport so it drives every page without a backend
+ * running. Values are illustrative but internally consistent, and deliberately
+ * exercise the trust-boundary and explanation-source badges (Chunk 6 / commit A)
+ * so the demo reflects the current UI.
+ */
 export const mockScanReport: ScanReport = {
   id: "scan-001",
   repoUrl: "https://github.com/example/python-webapp",
@@ -18,6 +25,14 @@ export const mockScanReport: ScanReport = {
       { name: "CSS", percentage: 5, color: "hsl(262, 80%, 60%)" },
     ],
     healthScore: 73,
+    avg_documentation_coverage: 56,
+    avg_cyclomatic_complexity: 11.7,
+    production_files: 6,
+    test_files: 0,
+    maintainability_warnings: [
+      { file: "src/auth.py", type: "complexity", message: "High cyclomatic complexity (22) — consider decomposition", severity: "High" },
+      { file: "src/main.py", type: "cohesion", message: "process_data mixes validation and transformation concerns", severity: "Medium" },
+    ],
   },
   files: [
     {
@@ -38,10 +53,11 @@ export const mockScanReport: ScanReport = {
         { message: "Missing type hints on public function", severity: "Low", category: "style", line: 8 },
       ],
       security: [
-        { type: "SQL Injection", severity: "Critical", description: "Raw SQL query with string interpolation", file: "src/main.py", line: 67, recommendation: "Use parameterized queries" },
+        { type: "SQL Injection", severity: "Critical", description: "Raw SQL query built with string interpolation from a request parameter", file: "src/main.py", line: 67, recommendation: "Use parameterized queries", trust_boundary: "untrusted_input" },
       ],
       complexity: "O(n²)",
       explanation: "The main entry point has high cyclomatic complexity due to nested conditional logic and loops. The process_data function handles too many responsibilities, making it hard to test and maintain.",
+      explanationSource: "llm",
       suggestions: [
         "Extract inner loop into a separate function",
         "Use list comprehension instead of nested loops",
@@ -93,17 +109,18 @@ def validate_item(item: dict) -> ValidatedItem:
       fileType: "production",
       documentationCoverage: 20,
       issues: [
-        { message: "Hardcoded secret key detected", severity: "Critical", category: "security", line: 12 },
+        { message: "Hardcoded secret key detected", severity: "Critical", category: "security", line: 12, trust_boundary: "internal" },
         { message: "Password stored in plaintext", severity: "Critical", category: "security", line: 34 },
         { message: "Missing rate limiting on login endpoint", severity: "High", category: "security", line: 45 },
         { message: "Broad exception handler catches all errors", severity: "Medium", category: "logic", line: 78 },
       ],
       security: [
-        { type: "Hardcoded Credentials", severity: "Critical", description: "SECRET_KEY is hardcoded in source", file: "src/auth.py", line: 12, recommendation: "Use environment variables" },
+        { type: "Hardcoded Credentials", severity: "Critical", description: "SECRET_KEY is hardcoded in source", file: "src/auth.py", line: 12, recommendation: "Use environment variables", trust_boundary: "internal" },
         { type: "Plaintext Password", severity: "Critical", description: "Passwords stored without hashing", file: "src/auth.py", line: 34, recommendation: "Use bcrypt or argon2" },
       ],
       complexity: "O(n)",
       explanation: "Critical security vulnerabilities found. The authentication module stores secrets and passwords insecurely, creating significant attack vectors.",
+      explanationSource: "llm",
       suggestions: [
         "Move SECRET_KEY to environment variables",
         "Hash passwords with bcrypt before storage",
@@ -143,6 +160,7 @@ def store_password(password):
       security: [],
       complexity: "O(1)",
       explanation: "Database module is well-structured but could benefit from connection pooling and retry logic for production reliability.",
+      explanationSource: "deterministic",
       suggestions: ["Configure connection pooling", "Add retry decorator for transient failures"],
       improved_code: `from sqlalchemy import create_engine
 from sqlalchemy.pool import QueuePool
@@ -167,15 +185,16 @@ engine = create_engine(DB_URL)`,
       fileType: "production",
       documentationCoverage: 45,
       issues: [
-        { message: "Missing input validation on user endpoint", severity: "High", category: "security", line: 25 },
+        { message: "Missing input validation on user endpoint", severity: "High", category: "security", line: 25, trust_boundary: "untrusted_input", why_it_matters: "The endpoint forwards request data straight to the database layer, so a malformed or malicious payload reaches persistence unchecked.", how_to_fix: "Validate the request body with a Pydantic model before processing." },
         { message: "Inconsistent error response format", severity: "Medium", category: "style", line: 40 },
         { message: "Dead code: unused import `json`", severity: "Low", category: "maintainability", line: 3 },
       ],
       security: [
-        { type: "Input Validation", severity: "High", description: "User input not validated before processing", file: "src/api_routes.py", line: 25, recommendation: "Add Pydantic model validation" },
+        { type: "Input Validation", severity: "High", description: "User input not validated before processing", file: "src/api_routes.py", line: 25, recommendation: "Add Pydantic model validation", trust_boundary: "untrusted_input" },
       ],
       complexity: "O(n)",
       explanation: "API routes lack consistent validation and error handling patterns.",
+      explanationSource: "deterministic",
       suggestions: ["Add Pydantic request models", "Standardize error responses", "Remove unused imports"],
       improved_code: `from pydantic import BaseModel
 
@@ -207,6 +226,7 @@ def create_user(request):
       security: [],
       complexity: "O(1)",
       explanation: "Well-written utility module with good documentation coverage. Minor dead code detected.",
+      explanationSource: "deterministic",
       suggestions: ["Remove unused `format_legacy_date` function"],
       improved_code: `# Remove lines 72-80 (format_legacy_date)`,
       original_code: `def format_legacy_date(d):
@@ -230,6 +250,7 @@ def create_user(request):
       security: [],
       complexity: "O(1)",
       explanation: "Excellent model definitions with comprehensive docstrings and type annotations.",
+      explanationSource: "deterministic",
       suggestions: [],
       improved_code: "",
       original_code: "",
@@ -244,6 +265,23 @@ def create_user(request):
     { name: "pydantic", version: "1.10.13", latestVersion: "2.6.1", isOutdated: true, riskLevel: "Low", vulnerabilities: [] },
     { name: "cryptography", version: "3.4.8", latestVersion: "42.0.4", isOutdated: true, riskLevel: "Critical", vulnerabilities: ["CVE-2023-49083", "CVE-2024-0727"] },
     { name: "jinja2", version: "3.1.2", latestVersion: "3.1.3", isOutdated: true, riskLevel: "Medium", vulnerabilities: ["CVE-2024-22195"] },
+  ],
+  insights: {
+    top_critical_issues: [
+      { message: "SQL injection reachable from untrusted request input", affected_files: ["src/main.py"] },
+      { message: "Hardcoded credentials in the authentication module", affected_files: ["src/auth.py"] },
+      { message: "User endpoint accepts unvalidated input", affected_files: ["src/api_routes.py"] },
+    ],
+    most_complex_files: [
+      { file_path: "src/auth.py" },
+      { file_path: "src/main.py" },
+    ],
+    most_central_file: "src/database.py",
+    most_reused_module: "src/utils/utils.py",
+  },
+  duplicates: [
+    { file1: "src/main.py", file2: "src/utils/helpers.py", similarity: 78, type: "block" },
+    { file1: "src/api_routes.py", file2: "src/admin_routes.py", similarity: 65, type: "block" },
   ],
 };
 

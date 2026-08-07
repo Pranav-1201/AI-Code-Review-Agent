@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState } from "react";
 import { ScanReport, ScanHistoryItem } from "@/lib/types";
 import { startAndPollScan } from "@/lib/api";
 import { mapApiResponse } from "@/lib/response-mapper";
+import { mockScanReport, mockScanHistory } from "@/lib/mock-data";
 import { toast } from "sonner";
 
 interface ScanStatus {
@@ -20,6 +21,7 @@ interface ScanContextType {
   isScanning: boolean;
   setIsScanning: (v: boolean) => void;
   triggerScan: (repoUrl: string) => Promise<void>;
+  loadDemo: () => void;
   scanError: string | null;
   scanStatus: ScanStatus | null;
 }
@@ -109,6 +111,18 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Offline demo mode: populate the UI from a static sample report so every
+  // page is explorable with no backend running. Deliberately bypasses the
+  // scan pipeline — no network, no polling.
+  const loadDemo = () => {
+    setScanError(null);
+    setScanStatus(null);
+    setIsScanning(false);
+    setCurrentReport(mockScanReport);
+    setScanHistory(mockScanHistory);
+    toast.success("Loaded demo report (offline sample — no backend needed)");
+  };
+
   return (
     <ScanContext.Provider
       value={{
@@ -118,6 +132,7 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
         isScanning,
         setIsScanning,
         triggerScan,
+        loadDemo,
         scanError,
         scanStatus,
       }}

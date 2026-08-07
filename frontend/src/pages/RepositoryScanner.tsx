@@ -3,13 +3,13 @@ import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, GitBranch, Loader2, Terminal, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Search, GitBranch, Loader2, Terminal, AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useNavigate } from "react-router-dom";
 
 export default function RepositoryScanner() {
   const [repoUrl, setRepoUrl] = useState("");
-  const { triggerScan, isScanning, scanError, scanStatus } = useScan();
+  const { triggerScan, loadDemo, isScanning, scanError, scanStatus } = useScan();
   const [elapsedTime, setElapsedTime] = useState(0);
   const navigate = useNavigate();
   const timerRef = useRef<NodeJS.Timeout>();
@@ -39,6 +39,11 @@ export default function RepositoryScanner() {
     } catch {
       // Error handled by context
     }
+  };
+
+  const handleDemo = () => {
+    loadDemo();
+    navigate("/results");
   };
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -87,6 +92,21 @@ export default function RepositoryScanner() {
               {isScanning ? "Scanning..." : "Scan"}
             </Button>
           </div>
+
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <span className="h-px flex-1 bg-border/50" />
+            no backend running?
+            <span className="h-px flex-1 bg-border/50" />
+          </div>
+
+          <Button
+            variant="outline"
+            onClick={handleDemo}
+            disabled={isScanning}
+            className="w-full gap-2"
+          >
+            <Sparkles className="w-4 h-4" /> View a demo report
+          </Button>
 
           {isScanning && (
             <div className="space-y-4 pt-2">
