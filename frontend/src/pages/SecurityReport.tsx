@@ -1,6 +1,7 @@
 import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
 import { Shield, AlertTriangle } from "lucide-react";
 
 export default function SecurityReport() {
@@ -78,7 +79,10 @@ export default function SecurityReport() {
                       </div>
                     </div>
                   </div>
-                  <SeverityBadge severity={vuln.severity} />
+                  <div className="flex items-center gap-2 shrink-0">
+                    <TrustBoundaryBadge trustBoundary={vuln.trust_boundary} />
+                    <SeverityBadge severity={vuln.severity} />
+                  </div>
                 </div>
               </CardContent>
             </Card>

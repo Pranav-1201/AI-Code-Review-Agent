@@ -1,6 +1,13 @@
+/**
+ * Finding severity. "Info" is the calmest tier — e.g. a code-exec sink that
+ * taint analysis proved is reachable only from local operator input, not from
+ * remote/untrusted input. Kept distinct so the UI does not collapse it to Low.
+ */
+export type Severity = "Info" | "Low" | "Medium" | "High" | "Critical";
+
 export interface FileIssue {
   message: string;
-  severity: "Low" | "Medium" | "High" | "Critical";
+  severity: Severity;
   category: "security" | "performance" | "style" | "logic" | "maintainability";
   line?: number;
   why_it_matters?: string;
@@ -12,7 +19,7 @@ export interface FileIssue {
 
 export interface SecurityVulnerability {
   type: string;
-  severity: "Low" | "Medium" | "High" | "Critical";
+  severity: Severity;
   description: string;
   file: string;
   line?: number;
@@ -75,7 +82,7 @@ export interface Dependency {
 
   isOutdated: boolean;
 
-  riskLevel: "Low" | "Medium" | "High" | "Critical";
+  riskLevel: Severity;
 
   vulnerabilities: string[];
 }

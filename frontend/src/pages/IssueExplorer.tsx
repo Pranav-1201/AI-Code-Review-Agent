@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, Search } from "lucide-react";
 
@@ -60,6 +61,7 @@ export default function IssueExplorer() {
             <SelectItem value="High">High</SelectItem>
             <SelectItem value="Medium">Medium</SelectItem>
             <SelectItem value="Low">Low</SelectItem>
+            <SelectItem value="Info">Info</SelectItem>
           </SelectContent>
         </Select>
         <Select value={categoryFilter} onValueChange={setCategoryFilter}>
@@ -87,10 +89,11 @@ export default function IssueExplorer() {
                 <SeverityBadge severity={issue.severity} />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm">{issue.message}</p>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
                     <Badge variant="outline" className="text-[10px] font-mono">{issue.fileName}</Badge>
                     <Badge variant="outline" className="text-[10px]">{issue.category}</Badge>
                     {issue.line && <Badge variant="outline" className="text-[10px] font-mono">L{issue.line}</Badge>}
+                    <TrustBoundaryBadge trustBoundary={issue.trust_boundary} />
                   </div>
                 </div>
               </div>

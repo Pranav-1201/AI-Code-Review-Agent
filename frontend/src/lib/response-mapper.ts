@@ -1,4 +1,4 @@
-import { ScanReport, FileAnalysis, FileIssue, SecurityVulnerability, Dependency } from "./types";
+import { ScanReport, FileAnalysis, FileIssue, SecurityVulnerability, Dependency, Severity } from "./types";
 
 /**
  * Maps the backend API response to our frontend ScanReport type.
@@ -23,12 +23,18 @@ export function mapApiResponse(data: any, repoUrl: string): ScanReport {
     ?? prodFiles.reduce((sum, f) => sum + f.security.length, 0);
   const totalLines = mappedFiles.reduce((sum, f) => sum + f.linesOfCode, 0);
 
-  // Use backend production averages when available
-  const avgScore = summary.average_quality_score
-    ?? summary.avg_score
-    ?? (prodFiles.length > 0
-      ? prodFiles.reduce((sum, f) => sum + f.score, 0) / prodFiles.length
-      : 0);
+  // Use backend production averages when available. Defect H: `??` alone would
+  // accept a backend 0 as valid (0 is not nullish), so a degenerate 0 from the
+  // backend would mask real production scores. Only trust a POSITIVE backend
+  // value; otherwise recompute from production files (which itself yields 0 only
+  // when there genuinely are none).
+  const backendAvg = summary.average_quality_score ?? summary.avg_score;
+  const avgScore =
+    typeof backendAvg === "number" && backendAvg > 0
+      ? backendAvg
+      : prodFiles.length > 0
+        ? prodFiles.reduce((sum, f) => sum + f.score, 0) / prodFiles.length
+        : 0;
 
   // Extract languages from files
   const langMap = new Map<string, number>();
@@ -234,11 +240,14 @@ function mapFile(f: any): FileAnalysis {
   };
 }
 
-function mapSeverity(s: string): "Low" | "Medium" | "High" | "Critical" {
+function mapSeverity(s: string): Severity {
   const normalized = (s || "").toLowerCase();
   if (normalized.includes("critical")) return "Critical";
   if (normalized.includes("high")) return "High";
   if (normalized.includes("medium") || normalized.includes("moderate")) return "Medium";
+  // Preserve the backend's calmest tier (e.g. operator-input code-exec) instead
+  // of collapsing it to Low, so the UI can show realistic exploitability.
+  if (normalized.includes("info")) return "Info";
   return "Low";
 }
 

@@ -1,12 +1,15 @@
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Severity } from "@/lib/types";
 
 interface SeverityBadgeProps {
-  severity: "Low" | "Medium" | "High" | "Critical";
+  severity: Severity;
   className?: string;
 }
 
-const severityConfig = {
+const severityConfig: Record<Severity, string> = {
+  // Calmest tier: not reachable from untrusted input (e.g. operator-only code-exec).
+  Info: "bg-muted text-muted-foreground border-border",
   Low: "bg-info/15 text-info border-info/30",
   Medium: "bg-warning/15 text-warning border-warning/30",
   High: "bg-destructive/15 text-destructive border-destructive/30",

@@ -2,6 +2,8 @@ import { useState, useMemo } from "react";
 import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/SeverityBadge";
+import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
+import { ExplanationSourceBadge } from "@/components/ExplanationSourceBadge";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -249,7 +251,7 @@ export default function FileAnalysis() {
             </Card>
 
             <Card className="bg-card border-border/50">
-              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Beaker className="w-5 h-5 text-primary" /> Hybrid Analysis</CardTitle></CardHeader>
+              <CardHeader><CardTitle className="text-lg flex items-center gap-2"><Beaker className="w-5 h-5 text-primary" /> Hybrid Analysis<ExplanationSourceBadge source={file.explanationSource} className="ml-1" /></CardTitle></CardHeader>
               <CardContent>
                 <div className="prose prose-sm prose-invert max-w-none prose-h3:text-primary prose-h3:font-semibold prose-h3:mt-3 prose-p:leading-relaxed">
                   <ReactMarkdown rehypePlugins={[rehypeSanitize]}>
@@ -274,9 +276,10 @@ export default function FileAnalysis() {
                         {issue.how_to_fix && (
                           <p className="text-xs text-primary/80 mt-1"><span className="font-medium text-primary">Fix:</span> {issue.how_to_fix}</p>
                         )}
-                        <div className="flex gap-2 mt-2">
+                        <div className="flex gap-2 mt-2 flex-wrap">
                           {issue.line && <Badge variant="outline" className="text-[10px] font-mono">Line {issue.line}</Badge>}
                           <Badge variant="outline" className="text-[10px]">{issue.category}</Badge>
+                          <TrustBoundaryBadge trustBoundary={issue.trust_boundary} />
                           {issue.confidence && <Badge variant="outline" className="text-[10px] border-primary/20 text-primary/80">{(issue.confidence * 100).toFixed(0)}% Match</Badge>}
                         </div>
                       </div>
