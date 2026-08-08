@@ -97,3 +97,17 @@ export async function startAndPollScan(
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
 }
+
+// List past completed scans (persisted history — survives a page reload).
+// Returns the raw backend rows: { id, repo, timestamp, health_score,
+// files_analyzed, issues_found }. Callers map these to ScanHistoryItem.
+export async function listScans(): Promise<any[]> {
+  const response = await fetch(`${API_BASE}/scans`);
+
+  if (!response.ok) {
+    throw new Error(`Failed to list scans: ${await extractErrorMessage(response)}`);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data) ? data : (data.scans || []);
+}

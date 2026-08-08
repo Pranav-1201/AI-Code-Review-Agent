@@ -8,7 +8,8 @@ import os
 import json
 import sqlite3
 import uuid
-from typing import Dict, Optional
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
 
 
 # ----------------------------------------------------------
@@ -64,9 +65,19 @@ def _get_connection() -> sqlite3.Connection:
                 files_processed INTEGER          DEFAULT 0,
                 total_files     INTEGER          DEFAULT 0,
                 repo            TEXT,
-                result          TEXT
+                result          TEXT,
+                created_at      TEXT
             )
         """)
+
+        # Migration: databases created before scan-history (Fix K) lack
+        # created_at. Add it in place; a duplicate-column error just means a
+        # fresh DB already has it. Additive and idempotent across restarts.
+        try:
+            _conn.execute("ALTER TABLE scan_states ADD COLUMN created_at TEXT")
+        except sqlite3.OperationalError:
+            pass
+
         _conn.commit()
 
     return _conn
@@ -85,16 +96,18 @@ def create_scan(repo_url: str) -> str:
     """
 
     scan_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
     db = _get_connection()
 
     db.execute(
         """
         INSERT INTO scan_states
             (scan_id, status, progress, stage, stage_detail,
-             files_processed, total_files, repo, result)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             files_processed, total_files, repo, result, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (scan_id, "starting", 0, "initializing", "Preparing scan...", 0, 0, repo_url, None)
+        (scan_id, "starting", 0, "initializing", "Preparing scan...",
+         0, 0, repo_url, None, created_at)
     )
     db.commit()
 
@@ -215,6 +228,54 @@ def get_scan(scan_id: str) -> Optional[Dict]:
         out["error"] = result["error"]
 
     return out
+
+
+def list_scans(limit: int = 50) -> List[Dict]:
+    """Return recent COMPLETED scans as compact history rows (Fix K).
+
+    Powers the frontend Scan History page so history survives a page reload
+    instead of living only in browser memory. Only status='complete' scans are
+    listed — they carry a full result payload to summarise; in-flight and
+    errored scans are omitted. health_score/files_analyzed come from the stored
+    result's repository_summary and issues_found is summed across file_reports;
+    a malformed or legacy row degrades to zeros rather than failing the list.
+    Ordered newest-first by created_at (NULLs from pre-migration rows sort last).
+    """
+    db = _get_connection()
+
+    rows = db.execute(
+        """
+        SELECT scan_id, repo, created_at, result
+        FROM scan_states
+        WHERE status = 'complete'
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    history: List[Dict] = []
+    for row in rows:
+        summary: Dict = {}
+        issues_found = 0
+        try:
+            result = json.loads(row["result"]) if row["result"] else {}
+            summary = result.get("repository_summary") or result.get("summary") or {}
+            for report in (result.get("file_reports") or result.get("reports") or []):
+                issues_found += len(report.get("issues") or [])
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            summary = {}
+
+        history.append({
+            "id":             row["scan_id"],
+            "repo":           row["repo"],
+            "timestamp":      row["created_at"],
+            "health_score":   summary.get("health_score", 0),
+            "files_analyzed": summary.get("files_analyzed", summary.get("files", 0)),
+            "issues_found":   issues_found,
+        })
+
+    return history
 
 
 # ----------------------------------------------------------

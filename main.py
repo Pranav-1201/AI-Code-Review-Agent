@@ -23,6 +23,7 @@ from backend.app.services.scan_manager import (
     update_scan,
     complete_scan,
     get_scan,
+    list_scans,
     recover_interrupted_scans,
 )
 
@@ -276,6 +277,14 @@ def scan_status(scan_id: str):
         return {"error": "Scan not found"}
 
     return scan
+
+
+# Scan History (Fix K) — persisted list of past completed scans so the
+# frontend history survives a page reload instead of living only in memory.
+
+@app.get("/scans")
+def scan_history(limit: int = 50):
+    return {"scans": list_scans(limit)}
 
 
 # ----------------------------------------------------------

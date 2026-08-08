@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
 import { ScanReport, ScanHistoryItem } from "@/lib/types";
-import { startAndPollScan } from "@/lib/api";
+import { startAndPollScan, listScans } from "@/lib/api";
 import { mapApiResponse } from "@/lib/response-mapper";
 import { mockScanReport, mockScanHistory } from "@/lib/mock-data";
 import { toast } from "sonner";
@@ -22,6 +22,7 @@ interface ScanContextType {
   setIsScanning: (v: boolean) => void;
   triggerScan: (repoUrl: string) => Promise<void>;
   loadDemo: () => void;
+  refreshHistory: () => Promise<void>;
   scanError: string | null;
   scanStatus: ScanStatus | null;
 }
@@ -35,6 +36,35 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
+
+  // Pull persisted scan history from the backend (Fix K) so it survives a page
+  // reload instead of living only in this in-memory context. Backend rows are
+  // mapped to ScanHistoryItem. If the backend is unreachable (offline / demo),
+  // the existing in-memory history is left untouched.
+  const refreshHistory = async () => {
+    try {
+      const rows = await listScans();
+      setScanHistory(
+        rows.map((r: any): ScanHistoryItem => ({
+          id: r.id,
+          repoName: (r.repo || "").split("/").filter(Boolean).pop() || "repository",
+          repoUrl: r.repo || "",
+          timestamp: r.timestamp || new Date().toISOString(),
+          healthScore: r.health_score ?? 0,
+          filesAnalyzed: r.files_analyzed ?? 0,
+          issuesFound: r.issues_found ?? 0,
+        }))
+      );
+    } catch {
+      // Backend unreachable — keep whatever history we already have.
+    }
+  };
+
+  // Load persisted history once on mount so /history is populated on first load.
+  useEffect(() => {
+    refreshHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const triggerScan = async (repoUrl: string) => {
 
@@ -72,22 +102,9 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
       // Store report
       setCurrentReport(report);
 
-      // Update history
-      setScanHistory((prev) => [
-        {
-          id: report.id,
-          repoName: report.repoName,
-          repoUrl,
-          timestamp: report.timestamp,
-          healthScore: report.summary.healthScore,
-          filesAnalyzed: report.summary.files,
-          issuesFound: report.files.reduce(
-            (sum, f) => sum + (f.issues ? f.issues.length : 0),
-            0
-          ),
-        },
-        ...prev,
-      ]);
+      // Refresh history from the backend so the just-completed scan appears and
+      // the list stays authoritative + persistent across reloads (Fix K).
+      await refreshHistory();
 
       toast.success("Repository scan completed successfully");
 
@@ -133,6 +150,7 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
         setIsScanning,
         triggerScan,
         loadDemo,
+        refreshHistory,
         scanError,
         scanStatus,
       }}
