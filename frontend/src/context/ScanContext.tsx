@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { ScanReport, ScanHistoryItem } from "@/lib/types";
-import { startAndPollScan, listScans } from "@/lib/api";
+import { startAndStreamScan, listScans } from "@/lib/api";
 import { mapApiResponse } from "@/lib/response-mapper";
 import { mockScanReport, mockScanHistory } from "@/lib/mock-data";
 import { toast } from "sonner";
@@ -74,7 +74,7 @@ export function ScanProvider({ children }: { children: React.ReactNode }) {
 
     try {
 
-      const rawData = await startAndPollScan(repoUrl, (status) => {
+      const rawData = await startAndStreamScan(repoUrl, (status) => {
         setScanStatus(status);
       });
 

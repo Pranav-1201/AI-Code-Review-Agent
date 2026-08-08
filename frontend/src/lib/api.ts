@@ -71,14 +71,13 @@ export async function getScanStatus(scanId: string): Promise<any> {
   return response.json();
 }
 
-// Start Scan AND Wait Until Complete (with total deadline)
-export async function startAndPollScan(
-  repoPath: string,
-  onProgress?: (status: any) => void
+// Poll a scan to completion against a total deadline. Shared by the SSE
+// fallback and the legacy startAndPollScan wrapper.
+async function pollScanResult(
+  scanId: string,
+  onProgress?: (status: any) => void,
+  deadline: number = Date.now() + SCAN_TIMEOUT_MS
 ) {
-  const scanId = await startScan(repoPath);
-  const deadline = Date.now() + SCAN_TIMEOUT_MS;
-
   while (true) {
     if (Date.now() > deadline) {
       throw new Error(`Scan timed out after ${SCAN_TIMEOUT_MS / 60_000} minutes`);
@@ -96,6 +95,95 @@ export async function startAndPollScan(
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
+}
+
+// Start Scan AND Wait Until Complete via polling. Kept for backward
+// compatibility and used as the SSE fallback path below.
+export async function startAndPollScan(
+  repoPath: string,
+  onProgress?: (status: any) => void
+) {
+  const scanId = await startScan(repoPath);
+  return pollScanResult(scanId, onProgress);
+}
+
+// Subscribe to a scan over Server-Sent Events (Item E). One long-lived
+// connection replaces 2s polling. On ANY failure — no EventSource in the
+// runtime, a proxy that strips the stream, or a backend without the endpoint
+// (404) — we transparently fall back to polling the same scan_id, so behaviour
+// is never worse than before. Each SSE frame is the same dict shape that
+// getScanStatus returns, so downstream handling is identical.
+function streamScanResult(
+  scanId: string,
+  onProgress?: (status: any) => void
+): Promise<any> {
+  const deadline = Date.now() + SCAN_TIMEOUT_MS;
+
+  // No EventSource (very old runtime / SSR) → poll.
+  if (typeof EventSource === "undefined") {
+    return pollScanResult(scanId, onProgress, deadline);
+  }
+
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(`${API_BASE}/scan/${scanId}/stream`);
+    let settled = false;
+
+    const deadlineTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      es.close();
+      reject(new Error(`Scan timed out after ${SCAN_TIMEOUT_MS / 60_000} minutes`));
+    }, SCAN_TIMEOUT_MS);
+
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      es.close();
+      fn();
+    };
+
+    es.onmessage = (evt: MessageEvent) => {
+      let status: any;
+      try {
+        status = JSON.parse(evt.data);
+      } catch {
+        return; // ignore an unparsable frame
+      }
+
+      if (onProgress) onProgress(status);
+
+      if (status.status === "complete") {
+        settle(() => resolve(status.result));
+      } else if (status.status === "error") {
+        settle(() =>
+          reject(new Error(`Scan failed on backend: ${status.error ?? "unknown reason"}`))
+        );
+      }
+    };
+
+    es.onerror = () => {
+      // Connection error before a terminal frame (endpoint missing, proxy
+      // dropped the stream, transient network). EventSource would auto-retry,
+      // but we close it and fall back to polling from the same scan_id —
+      // idempotent, it just reads state. A benign post-close error that fires
+      // after a terminal frame is ignored because `settled` is already true.
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      es.close();
+      pollScanResult(scanId, onProgress, deadline).then(resolve, reject);
+    };
+  });
+}
+
+// Start Scan AND stream progress to completion (SSE, with polling fallback).
+export async function startAndStreamScan(
+  repoPath: string,
+  onProgress?: (status: any) => void
+) {
+  const scanId = await startScan(repoPath);
+  return streamScanResult(scanId, onProgress);
 }
 
 // List past completed scans (persisted history — survives a page reload).
