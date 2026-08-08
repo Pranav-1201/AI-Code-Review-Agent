@@ -131,6 +131,9 @@ export function mapApiResponse(data: any, repoUrl: string): ScanReport {
     files: mappedFiles,
     dependencies,
     duplicates: backendDuplicates,
+    // Module import graph from the backend (build_dependency_graph). Forwarded
+    // so the Visualizations page can render it; absent on older responses.
+    dependency_graph: data.dependency_graph || data.dependencyGraph || undefined,
   };
 }
 

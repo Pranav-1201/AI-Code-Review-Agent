@@ -1,6 +1,7 @@
 import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { PieChart, BarChart3, Activity } from "lucide-react";
+import { PieChart, BarChart3, Activity, Network } from "lucide-react";
+import { DependencyGraphView } from "@/components/DependencyGraphView";
 
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -127,6 +128,19 @@ export default function Visualizations() {
         <h1 className="text-3xl font-bold tracking-tight">Visualization Dashboard</h1>
         <p className="text-muted-foreground mt-1">Charts and graphs for your codebase analysis</p>
       </div>
+
+      {/* Interactive module dependency graph (hover a node to trace its imports) */}
+      <Card className="bg-card border-border/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Network className="w-5 h-5 text-primary" />
+            Module Dependency Graph
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DependencyGraphView graph={currentReport.dependency_graph} />
+        </CardContent>
+      </Card>
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Complexity */}

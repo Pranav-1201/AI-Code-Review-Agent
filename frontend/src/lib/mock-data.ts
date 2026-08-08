@@ -283,6 +283,26 @@ def create_user(request):
     { file1: "src/main.py", file2: "src/utils/helpers.py", similarity: 78, type: "block" },
     { file1: "src/api_routes.py", file2: "src/admin_routes.py", similarity: 65, type: "block" },
   ],
+  dependency_graph: {
+    nodes: [
+      { id: "src/main.py" },
+      { id: "src/auth.py" },
+      { id: "src/database.py" },
+      { id: "src/api_routes.py" },
+      { id: "src/utils/utils.py" },
+      { id: "src/models.py" },
+    ],
+    links: [
+      { source: "src/main.py", target: "src/api_routes.py" },
+      { source: "src/main.py", target: "src/database.py" },
+      { source: "src/api_routes.py", target: "src/auth.py" },
+      { source: "src/api_routes.py", target: "src/models.py" },
+      { source: "src/api_routes.py", target: "src/database.py" },
+      { source: "src/auth.py", target: "src/database.py" },
+      { source: "src/auth.py", target: "src/utils/utils.py" },
+      { source: "src/models.py", target: "src/utils/utils.py" },
+    ],
+  },
 };
 
 export const mockScanHistory: ScanHistoryItem[] = [
