@@ -13,8 +13,11 @@ import subprocess
 import tempfile
 import shutil
 import hashlib
+import asyncio
+import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -277,6 +280,104 @@ def scan_status(scan_id: str):
         return {"error": "Scan not found"}
 
     return scan
+
+
+# Live Scan Progress via Server-Sent Events (Chunk 6 / Item E)
+#
+# Streams progress over a single long-lived connection instead of the frontend
+# polling GET /scan/{id} every 2s. This endpoint is ADDITIVE — the polling
+# endpoint above is unchanged and remains the fallback for clients without
+# EventSource or behind a proxy that strips streaming responses.
+#
+# The scan store is SQLite (written by update_scan, possibly from a separate
+# Celery worker), so there is no in-process event bus to subscribe to. The
+# generator reads the store server-side on a tight interval and emits an SSE
+# frame only when the observable state changes — far cheaper than a client HTTP
+# round-trip per tick, with instant terminal delivery. Each frame's payload is
+# the same dict shape GET /scan/{id} returns, so the client handles both paths
+# identically.
+
+_SSE_POLL_INTERVAL = 0.5       # seconds between server-side store reads
+_SSE_HEARTBEAT_EVERY = 15.0    # seconds; comment ping keeps intermediaries open
+_SSE_MAX_DURATION = 6 * 60     # hard cap so a hung scan can't hold a socket open
+
+
+def _sse_frame(payload: dict) -> str:
+    # One compact JSON line. json.dumps escapes embedded newlines, so the SSE
+    # framing (data: <line>\n\n) is never broken by result content.
+    return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
+def _progress_signature(scan: dict) -> tuple:
+    # The observable fields a client renders; used to emit only on real change.
+    return (
+        scan.get("status"),
+        scan.get("progress"),
+        scan.get("stage"),
+        scan.get("stage_detail"),
+        scan.get("files_processed"),
+        scan.get("total_files"),
+    )
+
+
+async def _scan_event_stream(scan_id: str, request: Request):
+    loop = asyncio.get_event_loop()
+    started = loop.time()
+    last_beat = started
+    last_sig = None
+
+    while True:
+        # Stop promptly if the browser closed the tab / navigated away.
+        if await request.is_disconnected():
+            return
+
+        # Offload the blocking SQLite read to a thread (same shared connection
+        # the sync polling route already uses from Starlette's threadpool), so
+        # the event loop is never blocked.
+        scan = await asyncio.to_thread(get_scan, scan_id)
+
+        if scan is None:
+            yield _sse_frame({"status": "error", "error": "Scan not found"})
+            return
+
+        sig = _progress_signature(scan)
+        if sig != last_sig:
+            yield _sse_frame(scan)
+            last_sig = sig
+            last_beat = loop.time()
+
+        # Terminal state was just emitted above — close the stream.
+        if scan.get("status") in ("complete", "error"):
+            return
+
+        now = loop.time()
+        if now - started > _SSE_MAX_DURATION:
+            yield _sse_frame({
+                "status": "error",
+                "error": "Live progress stream exceeded its time limit",
+            })
+            return
+
+        # Heartbeat comment during long silent stages so proxies keep the
+        # connection open. EventSource ignores comment lines (leading ':').
+        if now - last_beat > _SSE_HEARTBEAT_EVERY:
+            yield ": keep-alive\n\n"
+            last_beat = now
+
+        await asyncio.sleep(_SSE_POLL_INTERVAL)
+
+
+@app.get("/scan/{scan_id}/stream")
+async def scan_status_stream(scan_id: str, request: Request):
+    return StreamingResponse(
+        _scan_event_stream(scan_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",   # disable proxy (nginx) response buffering
+        },
+    )
 
 
 # Scan History (Fix K) — persisted list of past completed scans so the
