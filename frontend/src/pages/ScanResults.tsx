@@ -10,6 +10,7 @@ import {
   CheckCircle2, ChevronDown,
 } from "lucide-react";
 import { getDisplayName } from "@/lib/response-mapper";
+import { EmptyState } from "@/components/EmptyState";
 import type { FileAnalysis, Severity } from "@/lib/types";
 
 // Severity ordering used to pick the single headline issue for a file.
@@ -44,11 +45,7 @@ export default function ScanResults() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <AlertTriangle className="w-12 h-12 mb-4 opacity-30" />
-        <p className="text-lg">No scan results yet</p>
-        <p className="text-sm">Run a repository scan first</p>
-      </div>
+      <EmptyState icon={AlertTriangle} title="No scan results yet" description="Run a repository scan first" />
     );
   }
 

@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Download, FileJson, FileText } from "lucide-react";
@@ -53,10 +54,7 @@ export default function ExportReport() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <Download className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to export a report</p>
-      </div>
+      <EmptyState icon={Download} title="Run a scan to export a report" />
     );
   }
 

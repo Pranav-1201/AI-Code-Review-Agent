@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ScoreRing } from "@/components/ScoreRing";
@@ -11,10 +12,7 @@ export default function CodeQuality() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <BarChart3 className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see code quality insights</p>
-      </div>
+      <EmptyState icon={BarChart3} title="Run a scan to see code quality insights" />
     );
   }
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,10 +17,7 @@ export default function IssueExplorer() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <AlertTriangle className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to explore issues</p>
-      </div>
+      <EmptyState icon={AlertTriangle} title="Run a scan to explore issues" />
     );
   }
 

@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreRing } from "@/components/ScoreRing";
 import { Heart, Shield, BarChart3, FileCode, BookOpen } from "lucide-react";
@@ -9,10 +10,7 @@ export default function HealthScore() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <Heart className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see health score</p>
-      </div>
+      <EmptyState icon={Heart} title="Run a scan to see health score" />
     );
   }
 

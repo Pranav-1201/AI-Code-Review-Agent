@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreRing } from "@/components/ScoreRing";
 import { Badge } from "@/components/ui/badge";
 import { GitBranch, FileCode, Code2, AlertTriangle, ChevronRight, ChevronDown, Folder, FolderOpen, CheckCircle2, ShieldCheck, Layers } from "lucide-react";
+import { EmptyState } from "@/components/EmptyState";
 
 // ----------------------------------------------------------
 // Tree Builder
@@ -142,10 +143,7 @@ export default function RepositoryOverview() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <GitBranch className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see the repository overview</p>
-      </div>
+      <EmptyState icon={GitBranch} title="Run a scan to see the repository overview" />
     );
   }
 

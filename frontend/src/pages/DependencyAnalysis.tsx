@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { Badge } from "@/components/ui/badge";
@@ -9,10 +10,7 @@ export default function DependencyAnalysis() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <GitBranch className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see dependency analysis</p>
-      </div>
+      <EmptyState icon={GitBranch} title="Run a scan to see dependency analysis" />
     );
   }
 

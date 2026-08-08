@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Brain, Lightbulb, FileCode } from "lucide-react";
 
@@ -7,10 +8,7 @@ export default function AISuggestions() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <Brain className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see AI suggestions</p>
-      </div>
+      <EmptyState icon={Brain} title="Run a scan to see AI suggestions" />
     );
   }
 

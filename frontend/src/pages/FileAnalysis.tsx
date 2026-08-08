@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
@@ -92,10 +93,7 @@ export default function FileAnalysis() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <FileCode className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see file analysis</p>
-      </div>
+      <EmptyState icon={FileCode} title="Run a scan to see file analysis" />
     );
   }
 

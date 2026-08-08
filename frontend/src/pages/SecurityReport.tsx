@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
@@ -9,10 +10,7 @@ export default function SecurityReport() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <Shield className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see security report</p>
-      </div>
+      <EmptyState icon={Shield} title="Run a scan to see security report" />
     );
   }
 

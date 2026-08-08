@@ -1,4 +1,5 @@
 import { useScan } from "@/context/ScanContext";
+import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Copy, FileCode } from "lucide-react";
@@ -8,10 +9,7 @@ export default function DuplicateDetection() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <Copy className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to detect duplicates</p>
-      </div>
+      <EmptyState icon={Copy} title="Run a scan to detect duplicates" />
     );
   }
 

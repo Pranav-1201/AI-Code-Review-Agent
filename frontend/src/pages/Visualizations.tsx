@@ -2,6 +2,7 @@ import { useScan } from "@/context/ScanContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PieChart, BarChart3, Activity, Network } from "lucide-react";
 import { DependencyGraphView } from "@/components/DependencyGraphView";
+import { EmptyState } from "@/components/EmptyState";
 
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip,
@@ -51,10 +52,7 @@ export default function Visualizations() {
 
   if (!currentReport) {
     return (
-      <div className="flex flex-col items-center justify-center h-[60vh] text-muted-foreground">
-        <PieChart className="w-12 h-12 mb-4 opacity-30" />
-        <p>Run a scan to see visualizations</p>
-      </div>
+      <EmptyState icon={PieChart} title="Run a scan to see visualizations" />
     );
   }
 
