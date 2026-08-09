@@ -92,11 +92,22 @@ metadata) and internal hosts out of reach even if the allowlist is widened.
 
 ### Dependency pinning
 
-`requirements.lock` holds the exact versions of the environment the test suite
-passed on; install from it in CI and the image (`pip install -r requirements.lock`)
-so a transitive release cannot silently change what ships. `requirements.txt`
-remains the loose human-edited declaration. Regeneration command and the reason
-`pywin32` is filtered out are in the lock file's header.
+`requirements.lock` is a **pip-compile resolution** of `requirements.txt` — 76
+pinned packages including transitives, with the `--extra-index-url` for the CPU
+torch wheel baked in so the file is self-contained. CI and the Docker image both
+install from it (`pip install -r requirements.lock`) so a transitive release
+cannot silently change what ships between two builds of the same commit.
+`requirements.txt` remains the loose human-edited declaration of intent.
+
+It is deliberately **not** a `pip freeze`. Freezing this project's dev
+virtualenv captured 131 packages including `chromadb`, `langchain`, `langgraph`,
+`kubernetes` and `onnxruntime` — none declared, none imported — which would have
+been baked into the production image. Regeneration command is in the lock header.
+
+Two known gaps, both tracked for Phase E (image slimming): `pandas` and
+`python-multipart` are declared in `requirements.txt` but imported nowhere, and
+`torch` (~2 GB even as the CPU wheel) is pulled in for `llm_service.py` alone
+despite the LLM path being gated off by default.
 
 ## Evidence already gathered (in-repo, no Docker)
 
@@ -110,6 +121,44 @@ remains the loose human-edited declaration. Regeneration command and the reason
   (The script needs `pywin32` on Windows for the filesystem transport; it is a
   dev-only dep for the evidence run and is deliberately **not** in requirements.txt —
   production uses the Redis broker.)
+
+## CI/CD (`.github/workflows/`)
+
+**`ci.yml`** runs on every push to `main` or a `phase-*` branch and on every PR.
+Two parallel jobs, running the same four commands that were previously only ever
+run by hand on Windows:
+
+| Job | Steps |
+|-----|-------|
+| `backend` | `pip install -r requirements.lock` → `pytest -q` → `run_benchmark.py --gate` |
+| `frontend` | `npm ci` → `npx tsc --noEmit` → `npm run build` |
+
+No environment variables are set, on purpose: every optional integration is off
+by default, `API_KEY` unset exercises the open-API path, and `CELERY_BROKER_URL`
+unset makes Celery run eagerly in-process — so **CI needs no Redis service**.
+
+There is no `npm test` step yet. `package.json` wires vitest but the frontend has
+zero test files, and vitest exits non-zero when it finds none — a red CI that
+says nothing. The step lands with the tests (roadmap D/F5).
+
+**`release.yml`** publishes the container image to GHCR. It is a separate
+workflow gated on `workflow_run` of CI concluding `success`, because a published
+image that never passed the tests is worse than no image — the tag implies it
+did. It checks out `workflow_run.head_sha`, not whatever `main` points at when
+it fires, so it cannot ship a different commit than the one CI validated.
+
+### Rollback
+
+Every image is tagged twice: the immutable **commit SHA** and `latest`. Rolling
+back is re-deploying an explicit sha tag —
+
+```
+docker pull ghcr.io/<owner>/<repo>:<sha>
+```
+
+— rather than hoping a rebuild reproduces the previous state. Pair it with the
+SQLite snapshot for data. The image name is lowercased in the workflow because
+GHCR rejects uppercase paths and this repository's owner has capitals.
 
 ## Known caveats / deferred hardening
 

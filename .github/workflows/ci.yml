@@ -1,0 +1,108 @@
+# ==========================================================
+# CI — the gate that has to be green before anything deploys (Phase B).
+# ==========================================================
+#
+# The July audit scored deployment readiness 3/10, and "no CI at all" was the
+# single biggest reason: every quality claim rested on someone remembering to
+# run the suite locally on Windows. This runs the same four commands on Linux,
+# on every push and PR.
+#
+# The four checks mirror exactly what is run by hand before a commit:
+#   pytest                          backend suite
+#   run_benchmark.py --gate         detector precision/recall regression gate
+#   tsc --noEmit                    frontend typecheck
+#   vite build                      frontend production build
+#
+# Backend and frontend are separate jobs so they run in parallel and a
+# frontend-only break is legible at a glance.
+
+name: CI
+
+on:
+  push:
+    branches: ["main", "phase-*/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+# A new push to the same branch makes the in-flight run obsolete. Cancel it
+# rather than paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (pytest + detector gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the Dockerfile base image (python:3.11-slim) and the
+          # interpreter the suite is developed against.
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: Install pinned dependencies
+        # requirements.lock, not requirements.txt: the loose file would let a
+        # transitive release turn a green commit red with no code change. The
+        # lock carries its own --extra-index-url for the CPU torch wheel.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Run test suite
+        # No env is set on purpose. Every optional integration is OFF by
+        # default (ENABLE_ANTHROPIC, ENABLE_CODEBERT), API_KEY is unset so the
+        # auth tests exercise the open-API path, and CELERY_BROKER_URL is unset
+        # so Celery runs eagerly in-process — no Redis service needed.
+        run: python -m pytest -q
+
+      - name: Detector regression gate
+        # Exits non-zero if any finding type regresses below its recorded
+        # precision/recall floor. The real-repo arm of this script is
+        # report-only and never affects the exit code.
+        run: python backend/benchmark/run_benchmark.py --gate
+
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        # `ci` not `install`: installs exactly the lockfile and fails if
+        # package.json and package-lock.json have drifted apart.
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Production build
+        run: npm run build
+
+      # NOTE: no `npm test` step. package.json wires vitest, but the frontend
+      # currently has zero test files and vitest exits non-zero when it finds
+      # none — a red CI that says nothing. Adding real tests is roadmap item
+      # D/F5; the step goes in with them.

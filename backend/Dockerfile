@@ -19,10 +19,14 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Install dependencies first so the (large, slow) ML layer is cached across
-# code-only rebuilds. NOTE: requirements.txt pulls torch/transformers/faiss via
-# the CPU index at its top, so the first build is multi-GB and slow — expected.
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# code-only rebuilds.
+#
+# Installs from requirements.lock, NOT requirements.txt: the loose file would
+# let a transitive release change what ships between two builds of the same
+# commit. The lock carries its own --extra-index-url for the CPU torch wheel,
+# so the first build is still multi-GB and slow — expected.
+COPY requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.lock
 
 # Application code.
 COPY . .
