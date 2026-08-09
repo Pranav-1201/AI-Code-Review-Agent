@@ -29,6 +29,8 @@
 import argparse
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -178,10 +180,22 @@ def score_real(findings, labels):
 
 
 def _pr(c):
+    """Precision/recall, or None for either one that is not defined.
+
+    This used to fall back to 1.0 on a zero denominator, which meant a finding
+    type nobody measured advertised a perfect score. That is how the real-repo
+    section came to print "precision 1.00 recall 1.00 (TP 0, FP 0, FN 0)" after
+    both pinned clones failed. Undefined is not the same as perfect, so it is
+    None and every caller has to decide what to do about it.
+    """
     tp, fp, fn = c["tp"], c["fp"], c["fn"]
-    prec = tp / (tp + fp) if (tp + fp) else 1.0
-    rec = tp / (tp + fn) if (tp + fn) else 1.0
+    prec = tp / (tp + fp) if (tp + fp) else None
+    rec = tp / (tp + fn) if (tp + fn) else None
     return prec, rec
+
+
+def _fmt(v):
+    return " n/a" if v is None else f"{v:.2f}"
 
 
 def _merge(into, other):
@@ -198,18 +212,63 @@ def _print_table(title, agg):
     for t in sorted(agg):
         c = agg[t]
         prec, rec = _pr(c)
-        print(f"{t:24} {prec:6.2f} {rec:7.2f} {c['tp']:4d} {c['fp']:4d} {c['fn']:4d}")
+        print(f"{t:24} {_fmt(prec):>6} {_fmt(rec):>7} "
+              f"{c['tp']:4d} {c['fp']:4d} {c['fn']:4d}")
 
 
 # ----------------------------------------------------------
 # Real-repo cloning (pinned)
 # ----------------------------------------------------------
 
+def _force_rmtree(path):
+    """rmtree that copes with git's read-only pack files.
+
+    git marks objects/pack/*.idx read-only; on Windows unlinking those raises
+    PermissionError [WinError 5]. Passing ignore_errors=True "fixes" that by
+    leaving the directory in place, which then makes `git clone` fail with exit
+    128 on a non-empty destination — a worse symptom than the original.
+    Clearing the read-only bit and retrying is the actual fix, and a genuine
+    failure is allowed to propagate so the caller can report it.
+    """
+    def _retry_after_chmod(func, target, _exc):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    # shutil renamed the hook onerror -> onexc in 3.12 (onerror deprecated).
+    # The handler signature is compatible with both.
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_retry_after_chmod)
+    else:
+        shutil.rmtree(path, onerror=_retry_after_chmod)
+
+
+def _is_valid_clone(dest):
+    """True only if `dest` is a git repository git will actually talk to.
+
+    Testing `(dest / ".git").is_dir()` is not enough: a clone interrupted part
+    way leaves a .git directory with no objects in it, which passes that check
+    and then fails on every subsequent `rev-parse`. Because the old code never
+    re-cloned once .git existed, one interrupted clone poisoned the cache
+    permanently — which is exactly the state both pinned repos were found in.
+    """
+    if not (dest / ".git").is_dir():
+        return False
+    probe = subprocess.run(["git", "-C", str(dest), "rev-parse", "--git-dir"],
+                           capture_output=True, text=True)
+    return probe.returncode == 0
+
+
 def _ensure_clone(entry):
     CLONE_CACHE.mkdir(parents=True, exist_ok=True)
     dest = CLONE_CACHE / entry["name"]
     sha = entry["commit"]
-    if not (dest / ".git").is_dir():
+    if dest.exists() and not _is_valid_clone(dest):
+        # Self-healing: a broken cache entry is deleted rather than tripped
+        # over forever. Only ever removes a directory under CLONE_CACHE.
+        print(f"[warn] {entry['name']}: cached clone is not a valid repository "
+              f"— removing and re-cloning")
+        _force_rmtree(dest)
+    if not _is_valid_clone(dest):
         subprocess.run(["git", "clone", "--quiet", "--branch", entry["tag"],
                         "--depth", "1", entry["url"], str(dest)], check=True, timeout=300)
     head = subprocess.run(["git", "-C", str(dest), "rev-parse", "HEAD"],
@@ -253,13 +312,21 @@ def run_fixtures(dump=False):
 
 
 def run_real(dump=False):
+    """Score the pinned real repos. Returns (aggregate, skipped_names).
+
+    The skip list is returned rather than only printed because the caller has
+    to be able to tell "measured nothing" apart from "measured perfectly" —
+    the aggregate alone cannot express the difference.
+    """
     entries = load_json(CORPUS / "real_repos.json")
     agg = defaultdict(_blank)
+    skipped = []
     for entry in entries:
         try:
             dest, head = _ensure_clone(entry)
         except Exception as e:
             print(f"[warn] could not clone {entry['name']}: {e!r} — skipping")
+            skipped.append(entry["name"])
             continue
         findings = extract_findings(dest)
         if dump:
@@ -268,7 +335,7 @@ def run_real(dump=False):
                 print("   ", f)
             continue
         _merge(agg, score_real(findings, entry.get("labels", [])))
-    return agg
+    return agg, skipped
 
 
 def main():
@@ -301,10 +368,15 @@ def main():
         for t, c in sorted(fx.items()):
             prec, rec = _pr(c)
             th = thresholds.get(t, {"precision": 0.0, "recall": 0.0})
-            ok = prec >= th["precision"] - 1e-9 and rec >= th["recall"] - 1e-9
+            # An undefined score counts as 0.0 against the floor. A type that
+            # stopped producing any data at all has regressed — treating it as
+            # perfect is what let an empty corpus sail through the gate.
+            p = 0.0 if prec is None else prec
+            r = 0.0 if rec is None else rec
+            ok = p >= th["precision"] - 1e-9 and r >= th["recall"] - 1e-9
             flag = "OK " if ok else "FAIL"
-            print(f"  [{flag}] {t:24} prec {prec:.2f}>={th['precision']:.2f}  "
-                  f"recall {rec:.2f}>={th['recall']:.2f}")
+            print(f"  [{flag}] {t:24} prec {_fmt(prec)}>={th['precision']:.2f}  "
+                  f"recall {_fmt(rec)}>={th['recall']:.2f}")
             if not ok:
                 failures.append(t)
         if failures:
@@ -314,20 +386,37 @@ def main():
             print("\nGATE PASSED: no per-type precision/recall regression.")
 
     if not args.no_real:
-        real = run_real()
+        real, skipped = run_real()
         # Prominent, clearly-separated section: this is the portfolio-facing number.
         print("\n" + "#" * 74)
         print("# REAL-REPO REALITY CHECK (report-only, NOT gating)")
         print("#   flask 3.0.3 = clean anchor · bottle 0.13.2 = organic-mess anchor")
         print("#" * 74)
-        _print_table("REAL REPOS (pinned, spot-labelled) — precision/recall", real)
+
+        if skipped:
+            print(f"\n  !! {len(skipped)} repo(s) COULD NOT BE MEASURED: "
+                  f"{', '.join(skipped)}")
+            print("     Any numbers below cover only the repos that did clone.")
+
         overall = _blank()
         for c in real.values():
             for k in overall:
                 overall[k] += c[k]
-        prec, rec = _pr(overall)
-        print(f"\n  >>> REAL-REPO OVERALL: precision {prec:.2f}  recall {rec:.2f}  "
-              f"(TP {overall['tp']}, FP {overall['fp']}, FN {overall['fn']})")
+
+        if not real:
+            # Nothing was scored. Say so instead of printing a score, which is
+            # the whole bug: an empty run used to report a perfect 1.00/1.00.
+            print("\n  >>> REAL-REPO OVERALL: NOT MEASURED — no repository was "
+                  "scored in this run.")
+            if skipped:
+                print("      Re-run with network access; the clone cache "
+                      "self-heals from a broken checkout.")
+        else:
+            _print_table("REAL REPOS (pinned, spot-labelled) — precision/recall", real)
+            prec, rec = _pr(overall)
+            print(f"\n  >>> REAL-REPO OVERALL: precision {_fmt(prec)}  "
+                  f"recall {_fmt(rec)}  "
+                  f"(TP {overall['tp']}, FP {overall['fp']}, FN {overall['fn']})")
 
     return exit_code
 
