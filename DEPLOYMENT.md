@@ -64,6 +64,39 @@ torch/transformers/faiss (CPU wheels). Subsequent code-only rebuilds are fast
 | `CELERY_BROKER_URL` | ✅ | ✅ | Broker. Unset ⇒ eager mode. Compose: `redis://redis:6379/0`. |
 | `CELERY_RESULT_BACKEND` | ✅ | ✅ | Optional; scan results persist in SQLite, not here. Compose: `redis://redis:6379/1`. |
 | `SCAN_DB_PATH` | ✅ | ✅ | Scan store path. **Must be the same shared volume path in both** (`/data/scan_states.db`). |
+| `API_KEY` | ✅ | — | Shared secret required in `X-API-Key`. **Unset ⇒ the API is open.** Worker serves no HTTP, so it has none. |
+| `ALLOWED_ORIGINS` | ✅ | — | Comma-separated CORS origins. Default: localhost dev ports. Never `*`. |
+| `ALLOWED_GIT_HOSTS` | ✅ | — | Comma-separated cloneable hosts. Setting it **replaces** the defaults (github/gitlab/bitbucket). |
+| `RATE_LIMIT_PER_MINUTE` | ✅ | — | Per client, per route. Default 60. |
+
+Full annotated list, including the frontend and LLM variables: **`.env.example`**.
+
+### Security posture before exposing this to the internet
+
+`POST /scan` runs `git clone` on a caller-supplied URL. That is expensive and
+abusable, so before the API is reachable publicly:
+
+1. **Set `API_KEY`** to a long random value. `GET /health` reports
+   `"auth": "enabled"` — check it, because an unset key fails open, not closed.
+2. **Set `ALLOWED_ORIGINS`** to the real frontend origin.
+3. **Rebuild the frontend** with `VITE_API_BASE` and `VITE_API_KEY` set — Vite
+   inlines these at build time, so changing them needs a rebuild, not a restart.
+4. **Keep the reverse proxy in front.** `X-Forwarded-For` is trusted for the
+   first hop when identifying clients for rate limiting; that header is
+   spoofable if the app is exposed directly.
+
+Repository URLs are validated before any clone: https-only, no embedded
+credentials, host must be allowlisted, and literal private/loopback/link-local/
+reserved IPs are rejected — which is what keeps `169.254.169.254` (cloud
+metadata) and internal hosts out of reach even if the allowlist is widened.
+
+### Dependency pinning
+
+`requirements.lock` holds the exact versions of the environment the test suite
+passed on; install from it in CI and the image (`pip install -r requirements.lock`)
+so a transitive release cannot silently change what ships. `requirements.txt`
+remains the loose human-edited declaration. Regeneration command and the reason
+`pywin32` is filtered out are in the lock file's header.
 
 ## Evidence already gathered (in-repo, no Docker)
 
@@ -87,6 +120,16 @@ torch/transformers/faiss (CPU wheels). Subsequent code-only rebuilds are fast
 - **SQLite on a shared volume** is fine on a single host (WAL is enabled), but is
   not a multi-host answer. Postgres is the path if the API and worker ever run on
   different hosts.
+- **Rate limiting is in-process.** The counter lives in the API container's
+  memory, which is exactly accurate for the single-API-container deployment this
+  compose file describes. Scale the **api** service to N replicas and the
+  effective limit silently becomes N × `RATE_LIMIT_PER_MINUTE`, because each
+  replica counts only its own traffic. Moving to a shared Redis counter is the
+  prerequisite for scaling the API — the broker is already there.
+- **The API key is a single shared secret**, not per-user auth, and the frontend
+  copy ships inside a public static bundle. It raises the cost of drive-by abuse
+  of `/scan`; it does not identify or isolate callers. A login + short-lived
+  token flow is the real answer if this ever serves more than its owner.
 - **Clone-cache disk growth** (one full clone per repo_url, no eviction) is an
   open production-readiness item tracked separately — the clone cache is worker-local
   and ephemeral per container here, so it self-limits until the worker is given a

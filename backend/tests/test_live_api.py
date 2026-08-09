@@ -96,14 +96,15 @@ def test_scan_threads_explanation_depth(client):
     main.run_scan_pipeline = fake_pipeline
     try:
         r = c.post("/scan",
-                   json={"repo_path": "some/repo", "explanation_depth": "junior"})
+                   json={"repo_path": "https://github.com/psf/requests",
+                         "explanation_depth": "junior"})
         assert r.status_code == 200
         assert "scan_id" in r.json()
     finally:
         main.run_scan_pipeline = original
 
     assert captured.get("depth") == "junior", captured
-    assert captured.get("repo_url") == "some/repo"
+    assert captured.get("repo_url") == "https://github.com/psf/requests"
 
 
 def test_scan_explanation_depth_defaults_to_senior(client):
@@ -116,7 +117,8 @@ def test_scan_explanation_depth_defaults_to_senior(client):
     original = main.run_scan_pipeline
     main.run_scan_pipeline = fake_pipeline
     try:
-        r = c.post("/scan", json={"repo_path": "some/repo"})  # omit depth
+        r = c.post("/scan",
+                   json={"repo_path": "https://github.com/psf/requests"})  # omit depth
         assert r.status_code == 200
     finally:
         main.run_scan_pipeline = original

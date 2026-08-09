@@ -1,9 +1,45 @@
-const API_BASE = "http://localhost:8000";
+// Backend origin. Hardcoding localhost meant a deployed build could only ever
+// talk to the developer's own machine; VITE_API_BASE is read at BUILD time
+// (Vite inlines it), so the same source ships to dev and prod.
+export const API_BASE = (import.meta.env.VITE_API_BASE ?? "http://localhost:8000")
+  .replace(/\/+$/, "");
+
+// Sent as X-API-Key when the backend has API_KEY configured.
+//
+// CAVEAT, deliberately accepted: anything inlined into a static bundle is
+// readable by anyone who loads the page. This key raises the cost of drive-by
+// abuse of the expensive /scan route (which clones repositories); it is NOT a
+// per-user secret. Real multi-user auth needs a login + short-lived token flow
+// — roadmap item G. Leave VITE_API_KEY unset for local dev, where the backend
+// also leaves API_KEY unset and the API is open.
+const API_KEY = import.meta.env.VITE_API_KEY ?? "";
+
 const SCAN_TIMEOUT_MS = 5 * 60 * 1000; // total scan deadline
 const POLL_REQUEST_TIMEOUT_MS = 15_000;  // per-request timeout (15s)
 
+// Every request goes through this so a newly added call cannot forget the key.
+function apiHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra ?? {}) };
+  if (API_KEY) headers["X-API-Key"] = API_KEY;
+  return headers;
+}
+
+// EventSource cannot set headers, so the stream URL carries the key in the
+// query string — the one place the backend accepts it (api_guard.is_stream_path).
+function streamUrl(scanId: string): string {
+  const base = `${API_BASE}/scan/${encodeURIComponent(scanId)}/stream`;
+  return API_KEY ? `${base}?api_key=${encodeURIComponent(API_KEY)}` : base;
+}
+
 // Helper: extract a readable error from a failed response
 async function extractErrorMessage(response: Response): Promise<string> {
+  if (response.status === 401) {
+    return "Unauthorized — the backend requires an API key (set VITE_API_KEY).";
+  }
+  if (response.status === 429) {
+    const retry = response.headers.get("Retry-After");
+    return `Rate limited — too many requests${retry ? `, retry in ${retry}s` : ""}.`;
+  }
   try {
     const body = await response.json();
     return body?.detail || body?.message || body?.error || `HTTP ${response.status}`;
@@ -19,7 +55,7 @@ export async function startScan(repoUrl: string): Promise<string> {
   try {
     response = await fetch(`${API_BASE}/scan`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: apiHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ repo_path: repoUrl }),
     });
   } catch (networkErr) {
@@ -51,7 +87,8 @@ export async function getScanStatus(scanId: string): Promise<any> {
   let response: Response;
 
   try {
-    response = await fetch(`${API_BASE}/scan/${scanId}`, {
+    response = await fetch(`${API_BASE}/scan/${encodeURIComponent(scanId)}`, {
+      headers: apiHeaders(),
       signal: controller.signal,
     });
   } catch (err: any) {
@@ -125,7 +162,7 @@ function streamScanResult(
   }
 
   return new Promise((resolve, reject) => {
-    const es = new EventSource(`${API_BASE}/scan/${scanId}/stream`);
+    const es = new EventSource(streamUrl(scanId));
     let settled = false;
 
     const deadlineTimer = setTimeout(() => {
@@ -190,7 +227,7 @@ export async function startAndStreamScan(
 // Returns the raw backend rows: { id, repo, timestamp, health_score,
 // files_analyzed, issues_found }. Callers map these to ScanHistoryItem.
 export async function listScans(): Promise<any[]> {
-  const response = await fetch(`${API_BASE}/scans`);
+  const response = await fetch(`${API_BASE}/scans`, { headers: apiHeaders() });
 
   if (!response.ok) {
     throw new Error(`Failed to list scans: ${await extractErrorMessage(response)}`);
@@ -198,4 +235,39 @@ export async function listScans(): Promise<any[]> {
 
   const data = await response.json();
   return Array.isArray(data) ? data : (data.scans || []);
+}
+
+// Settings. These lived as raw fetch("http://localhost:8000/...") calls inside
+// Settings.tsx, which meant they were invisible to the API_BASE / API key
+// wiring and 401'd the moment auth was switched on. Routed through here so the
+// trust boundary has exactly one crossing point on the client side too.
+export async function getSettings(): Promise<any> {
+  const response = await fetch(`${API_BASE}/settings`, { headers: apiHeaders() });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch settings: ${await extractErrorMessage(response)}`);
+  }
+  return response.json();
+}
+
+export async function saveSettings(settings: any): Promise<any> {
+  const response = await fetch(`${API_BASE}/settings`, {
+    method: "POST",
+    headers: apiHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to save settings: ${await extractErrorMessage(response)}`);
+  }
+  return response.json();
+}
+
+export async function resetSettings(): Promise<any> {
+  const response = await fetch(`${API_BASE}/settings/reset`, {
+    method: "POST",
+    headers: apiHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to reset settings: ${await extractErrorMessage(response)}`);
+  }
+  return response.json();
 }

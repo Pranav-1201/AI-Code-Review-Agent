@@ -16,10 +16,12 @@ import hashlib
 import asyncio
 import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.app import api_guard
 
 from backend.app.services.scan_manager import (
     create_scan,
@@ -35,7 +37,6 @@ from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.call_graph import build_call_graph
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services import incremental
-from backend.app.services.pr_review_engine import review_pull_request
 from backend.app.services.settings_manager import load_settings, save_settings, reset_settings
 from backend.database.review_repository import record_feedback, get_precision_estimate
 
@@ -78,12 +79,60 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ----------------------------------------------------------
+# Middleware (Phase A — security hardening)
+# ----------------------------------------------------------
+#
+# ORDER MATTERS. Starlette runs the LAST-added middleware outermost, so CORS is
+# registered after auth on purpose: a 401 still comes back with CORS headers,
+# which is what lets the browser surface "unauthorized" instead of an opaque
+# network error.
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Reject unauthenticated calls when API_KEY is configured.
+
+    Applied as middleware rather than a per-route dependency so a newly added
+    route is protected by default — the failure mode of the dependency approach
+    is a route that silently ships without one.
+
+    CORS preflight (OPTIONS) is exempt: the browser sends it without custom
+    headers by design, so requiring X-API-Key on it would break every
+    cross-origin call before the real request was ever made.
+
+    The SSE progress route additionally accepts ?api_key= because EventSource
+    cannot send headers — see api_guard.is_stream_path for the tradeoff.
+    """
+    path = request.url.path
+    supplied = request.headers.get("X-API-Key")
+    if not supplied and api_guard.is_stream_path(path):
+        supplied = request.query_params.get("api_key")
+
+    if (request.method != "OPTIONS"
+            and not api_guard.is_public_path(path)
+            and not api_guard.api_key_ok(supplied)):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing or invalid API key."},
+        )
+    return await call_next(request)
+
+
+# Unlike the auth check above, this reads ALLOWED_ORIGINS exactly ONCE, at
+# import: CORSMiddleware wants a fixed origin list at construction time. Changing
+# the variable therefore needs a process restart, and monkeypatching it inside a
+# test has no effect on the live middleware (test api_guard.allowed_origins
+# directly instead).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=api_guard.allowed_origins(),
+    # No cookie/session auth exists — the API key travels in a header — so
+    # credentials are off. The previous "*" + allow_credentials=True pairing is
+    # rejected by browsers anyway.
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key"],
 )
 
 
@@ -249,12 +298,53 @@ def root():
     return {"message": "AI Code Review Agent Running"}
 
 
+@app.get("/health")
+def health():
+    """Component-level liveness for load balancers, compose and uptime monitors.
+
+    Reports what is actually true rather than a bare 200: `queue` distinguishes
+    a real broker from the in-process eager fallback, and `auth` makes an
+    accidentally-unauthenticated deployment visible instead of silent.
+    """
+    database = "ok"
+    try:
+        from backend.database.connection import get_connection
+        conn = get_connection()
+        conn.execute("SELECT 1").fetchone()
+    except Exception as e:
+        database = f"error: {e.__class__.__name__}"
+
+    return {
+        "status": "ok" if database == "ok" else "degraded",
+        "version": app.version,
+        "database": database,
+        "queue": "eager" if celery_app.conf.task_always_eager else "broker",
+        "auth": "enabled" if api_guard.auth_enabled() else "disabled",
+    }
+
+
 # Start Scan
 
 @app.post("/scan")
-def start_scan(request: RepoRequest):
+def start_scan(payload: RepoRequest, request: Request):
 
-    scan_id = create_scan(request.repo_path)
+    # Rate limit BEFORE validation so a flood of malformed URLs is shed just as
+    # cheaply as a flood of valid ones.
+    retry_after = api_guard.check_rate_limit("scan", api_guard.client_identity(request))
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many scan requests. Try again shortly.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    # A scan clones whatever it is given, so the URL is the trust boundary.
+    try:
+        repo_url = api_guard.validate_repo_url(payload.repo_path)
+    except api_guard.RepoUrlError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    scan_id = create_scan(repo_url)
 
     # Enqueue onto the Celery broker for a separate worker. With no broker
     # configured this runs eagerly in-process (see celery_app.py), preserving
@@ -262,8 +352,8 @@ def start_scan(request: RepoRequest):
     # run_scan_pipeline, so a monkeypatch of main.run_scan_pipeline is honoured.
     run_scan_task.delay(
         scan_id,
-        request.repo_path,
-        request.explanation_depth,
+        repo_url,
+        payload.explanation_depth,
     )
 
     return {"scan_id": scan_id}
@@ -416,7 +506,16 @@ def reset_all_settings():
 # ----------------------------------------------------------
 
 @app.post("/feedback")
-def submit_feedback(feedback: FeedbackRequest):
+def submit_feedback(feedback: FeedbackRequest, request: Request):
+    retry_after = api_guard.check_rate_limit(
+        "feedback", api_guard.client_identity(request))
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many feedback submissions. Try again shortly.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     try:
         feedback_id = record_feedback(
             feedback.review_id, feedback.finding_key, feedback.vote
@@ -433,22 +532,23 @@ def feedback_precision():
 
 
 # ----------------------------------------------------------
-# GitHub Webhook
+# GitHub Webhook — REMOVED in Phase A
 # ----------------------------------------------------------
-
-@app.post("/github-webhook")
-async def github_webhook(payload: dict):
-
-    if payload.get("action") != "opened":
-        return {"status": "ignored"}
-
-    pr = payload["pull_request"]
-    repo = payload["repository"]["full_name"]
-    pr_number = pr["number"]
-
-    review_pull_request(repo, pr_number)
-
-    return {"status": "review_started"}
+#
+# `POST /github-webhook` used to accept any unsigned payload and hand it to
+# pr_review_engine. It was removed rather than hardened because it was pure
+# attack surface with zero function on both counts:
+#
+#   * no HMAC verification of X-Hub-Signature-256, so anyone could invoke it;
+#   * raw payload["pull_request"] indexing, so a malformed body was a 500;
+#   * the engine behind it is a known silent no-op (audit Defect E — it feeds
+#     unified-diff text to ast.parse, which always raises, yielding zero
+#     findings without reporting an error).
+#
+# Roadmap item G1 rebuilds PR review properly (GitHub App auth, full files at
+# the head SHA, findings mapped to changed lines) and reintroduces the webhook
+# WITH signature verification at that point. Until then there is nothing to
+# protect, and an unauthenticated route into dead code is a liability.
 
 
 # ----------------------------------------------------------

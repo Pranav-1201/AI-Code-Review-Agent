@@ -7,7 +7,16 @@ venv/
 # ==========================================================
 # Environment Variables
 # ==========================================================
+# .env.example IS tracked — it is the documented template.
 .env
+.env.local
+frontend/.env
+frontend/.env.local
+
+# ==========================================================
+# Agent tooling (local session state, not project source)
+# ==========================================================
+.claude/
 
 # ==========================================================
 # Python Cache

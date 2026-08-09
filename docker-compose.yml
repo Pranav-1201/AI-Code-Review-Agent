@@ -27,6 +27,14 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       SCAN_DB_PATH: /data/scan_states.db
+      # Phase A security controls. All read from the host env (or a .env file
+      # beside this compose file) so no secret is committed; each falls back to
+      # the app default when unset — which for API_KEY means an OPEN API, fine
+      # for a local `compose up`, not for anything internet-facing.
+      API_KEY: ${API_KEY:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      ALLOWED_GIT_HOSTS: ${ALLOWED_GIT_HOSTS:-}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-}
     volumes:
       - scan-data:/data
     depends_on:
@@ -42,6 +50,9 @@ services:
     # billiard (bundled with Celery) is what makes that legal. Single worker
     # service by design; see DEPLOYMENT.md before scaling to replicas.
     command: celery -A backend.app.services.celery_app:celery_app worker --loglevel=info --concurrency=2
+    # No API_KEY / ALLOWED_ORIGINS / RATE_LIMIT_PER_MINUTE here on purpose: the
+    # worker serves no HTTP surface, so those controls have nothing to guard.
+    # URL validation happens at the API boundary before a job is ever enqueued.
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1

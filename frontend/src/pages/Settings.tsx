@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
+import { getSettings, saveSettings, resetSettings } from "@/lib/api";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<any>(null);
@@ -21,10 +22,7 @@ export default function SettingsPage() {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      const res = await fetch("http://localhost:8000/settings");
-      if (!res.ok) throw new Error("Failed to fetch settings");
-      const data = await res.json();
-      setSettings(data);
+      setSettings(await getSettings());
     } catch (err) {
       toast.error("Could not load settings from backend");
       console.error(err);
@@ -36,12 +34,7 @@ export default function SettingsPage() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const res = await fetch("http://localhost:8000/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      if (!res.ok) throw new Error("Failed to save settings");
+      await saveSettings(settings);
       toast.success("Settings saved successfully");
     } catch (err) {
       toast.error("Failed to save settings");
@@ -55,11 +48,7 @@ export default function SettingsPage() {
     if (!confirm("Are you sure you want to reset all settings to defaults?")) return;
     try {
       setLoading(true);
-      const res = await fetch("http://localhost:8000/settings/reset", {
-        method: "POST",
-      });
-      if (!res.ok) throw new Error("Failed to reset settings");
-      const data = await res.json();
+      const data = await resetSettings();
       setSettings(data.settings);
       toast.success("Settings restored to defaults");
     } catch (err) {
