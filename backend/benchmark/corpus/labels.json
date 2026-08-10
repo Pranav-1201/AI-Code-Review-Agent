@@ -26,8 +26,8 @@
   "f3_security_deser": {
     "expected": [
       {"type": "unsafe_deserialization", "file": "app.py", "line": 8},
-      {"type": "unsafe_deserialization", "file": "app.py", "line": 12, "note": "pickle.load - analyzer MISSES this (FN, known gap)"},
-      {"type": "unsafe_deserialization", "file": "app.py", "line": 16, "note": "yaml.load - analyzer MISSES this (FN, known gap)"}
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 12, "note": "pickle.load - detected since Phase C (was a known FN)"},
+      {"type": "unsafe_deserialization", "file": "app.py", "line": 16, "note": "yaml.load without a safe Loader - detected since Phase C (was a known FN)"}
     ],
     "decoys": [
       {"type": "unsafe_deserialization", "file": "app.py", "line": 20, "why": "yaml.safe_load - safe"},

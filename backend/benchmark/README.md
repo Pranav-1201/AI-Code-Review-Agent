@@ -47,8 +47,14 @@ The fixture baselines in `thresholds.json` are the analyzer's **actual** measure
 numbers, so sub-1.0 values encode real, documented behaviour rather than being
 padded to look perfect:
 
-- **`unsafe_deserialization` recall 0.33** — the security pass detects
-  `pickle.loads` but **misses `pickle.load` and `yaml.load`** (fixture F3).
+- ~~**`unsafe_deserialization` recall 0.33**~~ — **FIXED in Phase C, now 1.00.**
+  The detector matched only the plural `loads`, so `pickle.load` and `yaml.load`
+  walked past it (fixture F3); the yaml arm was additionally unreachable, since
+  PyYAML has no `yaml.loads`. Both sinks are now caught, `yaml.load` with an
+  explicitly safe `Loader=` is not flagged, and the floor was raised 0.33 → 1.00.
+  Note what the old floor was doing: set *at* the defect, it made the gate ratify
+  the bug rather than catch it. A floor must be raised as soon as a defect is
+  fixed, or it silently licenses the regression coming back.
 - **`command_injection` precision 0.67** — a safe `subprocess.run([...], shell=False)`
   is still emitted (Low severity) as a Command Injection finding (fixture F2).
 - **`dead_function` precision 0.67** — a function reachable only via the

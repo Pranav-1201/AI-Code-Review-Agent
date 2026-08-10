@@ -39,6 +39,37 @@ SHA_SEVERITY_MAP: dict[str, tuple[str, str]] = {
     ),
 }
 
+# Loader classes that make yaml.load() safe. yaml.load(x, Loader=SafeLoader) is
+# the documented safe spelling and is common in real code, so flagging it would
+# buy recall at the cost of precision on exactly the repos the benchmark scores.
+_SAFE_YAML_LOADERS = frozenset({"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"})
+
+
+def _has_safe_yaml_loader(node: ast.Call) -> bool:
+    """True if a yaml.load() call passes an explicitly safe Loader.
+
+    Accepts both `Loader=SafeLoader` and `Loader=yaml.SafeLoader`, and the
+    positional second argument, which is what PyYAML's own signature allows.
+    An unrecognised loader is treated as UNSAFE — the safe list is closed, so a
+    custom Loader subclass is flagged rather than assumed benign.
+    """
+    def _is_safe(arg) -> bool:
+        if isinstance(arg, ast.Attribute):        # yaml.SafeLoader
+            return arg.attr in _SAFE_YAML_LOADERS
+        if isinstance(arg, ast.Name):             # SafeLoader
+            return arg.id in _SAFE_YAML_LOADERS
+        return False
+
+    for kw in node.keywords:
+        if kw.arg == "Loader":
+            return _is_safe(kw.value)
+
+    # yaml.load(stream, Loader) — Loader as the second positional argument.
+    if len(node.args) >= 2:
+        return _is_safe(node.args[1])
+
+    return False
+
 
 class SecurityAnalyzer(ast.NodeVisitor):
     """
@@ -366,14 +397,25 @@ class SecurityAnalyzer(ast.NodeVisitor):
                 _handled_as_subprocess = True                 # PHASE 1 FIX
 
             # unsafe deserialization
-            if attr == "loads":
+            #
+            # Matches BOTH `load` and `loads`. Keying on the plural alone put
+            # this detector's recall at 0.33: it saw pickle.loads(blob) but
+            # walked straight past pickle.load(fp) and yaml.load(text) — and
+            # since PyYAML exposes no `yaml.loads` at all, the yaml arm was
+            # unreachable on any real code.
+            if attr in ("load", "loads"):
 
                 if isinstance(node.func.value, ast.Name):
+                    module = node.func.value.id
 
-                    if node.func.value.id == "pickle":
+                    # cPickle/_pickle are the same module under other names.
+                    # dill/marshal/shelve are also RCE sinks but are left out
+                    # deliberately: nothing in the corpus labels them, so their
+                    # precision would be unmeasured. Add them with fixtures.
+                    if module in ("pickle", "cPickle", "_pickle"):
                         severity, desc, tb, conf = self._apply_taint(
                             node, "Critical",
-                            "Use of pickle.loads() detected which may allow unsafe deserialization and remote code execution.")
+                            f"Use of {module}.{attr}() detected which may allow unsafe deserialization and remote code execution.")
                         self._add_issue(
                             severity=severity,
                             description=desc,
@@ -384,10 +426,10 @@ class SecurityAnalyzer(ast.NodeVisitor):
                             confidence_override=conf,
                         )
 
-                    elif node.func.value.id == "yaml":
+                    elif module == "yaml" and not _has_safe_yaml_loader(node):
                         severity, desc, tb, conf = self._apply_taint(
                             node, "High",
-                            "Use of yaml.loads() detected which may allow unsafe deserialization.")
+                            f"Use of yaml.{attr}() without a safe Loader detected, which may allow unsafe deserialization.")
                         self._add_issue(
                             severity=severity,
                             description=desc,
