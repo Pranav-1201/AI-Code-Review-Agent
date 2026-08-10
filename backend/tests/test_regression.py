@@ -39,19 +39,35 @@ class TestSecurityRegression(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0]["type"], "Hardcoded Credential")
 
+    # Phase C note: these two still assert that the analyzer REASONS about
+    # framework context and says WHY a pattern is intentional — the original
+    # point of Fix 7. What changed is where that reasoning lands. A cleared
+    # finding is no longer emitted into the user's security findings list (it
+    # was counted, correctly, as a false positive by the benchmark); it is
+    # returned only under include_benign=True. See
+    # test_benign_pattern_suppression.py.
+
     def test_eval_in_framework_context_has_reasoning(self):
         code = "eval('1 + 1')\n"
         issues = detect_security_issues(code, is_test_file=False, file_path="cli.py")
-        self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0]["severity"], "Low")
-        self.assertIn("[Intentional Pattern]", issues[0]["description"])
+        self.assertEqual(issues, [], "a cleared pattern must not be a finding")
+
+        cleared = detect_security_issues(code, is_test_file=False,
+                                         file_path="cli.py", include_benign=True)
+        self.assertEqual(len(cleared), 1)
+        self.assertEqual(cleared[0]["severity"], "Low")
+        self.assertIn("[Intentional Pattern]", cleared[0]["description"])
         # Fix 7: must contain WHY it's intentional
-        self.assertIn("CLI", issues[0]["description"])
+        self.assertIn("CLI", cleared[0]["description"])
 
     def test_exec_in_config_has_reasoning(self):
         code = "exec(compile(f.read(), 'config', 'exec'))\n"
         issues = detect_security_issues(code, is_test_file=False, file_path="config.py")
-        exec_issues = [i for i in issues if "exec()" in i["description"]]
+        self.assertEqual(issues, [], "a cleared pattern must not be a finding")
+
+        cleared = detect_security_issues(code, is_test_file=False,
+                                         file_path="config.py", include_benign=True)
+        exec_issues = [i for i in cleared if "exec()" in i["description"]]
         self.assertTrue(len(exec_issues) >= 1)
         self.assertIn("config file loading", exec_issues[0]["description"])
 

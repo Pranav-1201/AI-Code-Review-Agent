@@ -83,6 +83,9 @@ class SecurityAnalyzer(ast.NodeVisitor):
                  taint_map: Dict = None):
 
         self.issues: List[Dict] = []
+        # Findings the analyzer positively cleared as benign. Retained so the
+        # reasoning is inspectable, but deliberately not part of `issues`.
+        self.suppressed: List[Dict] = []
         self.is_test = is_test
         self.file_path = file_path.replace("\\", "/").lower()
 
@@ -95,12 +98,23 @@ class SecurityAnalyzer(ast.NodeVisitor):
         self._source_lines: list[str] = source.splitlines() if source else []
         self._parent_map: dict = {}
 
-        # Framework-aware file patterns where eval/exec/compile
-        # are expected and controlled (not user-input driven)
+        # Framework-aware file patterns where eval/exec/compile are expected
+        # and controlled (not user-input driven).
+        #
+        # NARROWED in Phase C. This used to also match "app.py", "__init__.py",
+        # "factory", "loader", "runner" and "commands" — among the most common
+        # names in any Python project — so an eval() in a plain app.py was
+        # reframed as an intentional pattern. That was survivable only while
+        # such findings were still emitted at low severity; the moment benign
+        # patterns stopped being reported it became a silent false negative,
+        # and the benchmark caught it at once (dangerous_function fixture
+        # recall 1.00 -> 0.00, its true positives living in app.py).
+        #
+        # What is left is the narrow, genuinely documented case: a CLI shell
+        # and a config loader executing the developer's OWN file. Widening this
+        # list trades recall for nothing — taint already handles real input.
         self._is_framework_context = any(
-            pat in self.file_path
-            for pat in ("cli.py", "config.py", "__init__.py", "app.py",
-                        "factory", "loader", "runner", "commands")
+            pat in self.file_path for pat in ("cli.py", "config.py")
         )
 
         # credential-related variable names
@@ -123,7 +137,34 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
     def _add_issue(self, severity: str, description: str, recommendation: str, line: int = 0,
                    issue_type: str = "Vulnerability", trust_boundary: str = "n/a",
-                   confidence_override: float = None):
+                   confidence_override: float = None, benign: bool = False):
+
+        # ----------------------------------------------------
+        # Benign-pattern suppression (Phase C / A2)
+        # ----------------------------------------------------
+        # A findings list is a request for the reader's attention. An entry the
+        # analyzer has already cleared — "computationally secure for message
+        # signing", "[Intentional Pattern] ... from a trusted path" — spends
+        # that attention and then returns nothing, so it is a false positive
+        # regardless of how low its severity is. Cleared findings are kept on
+        # `self.suppressed` for debugging rather than deleted.
+        #
+        # SAFETY: this cannot mask a tainted sink. The "[Intentional Pattern]"
+        # framing comes from a filename heuristic, but _apply_taint REPLACES
+        # the description wholesale when the sink is reachable from untrusted
+        # input (TRUST_UNTRUSTED branch), so the marker is already gone by the
+        # time a genuinely dangerous call reaches here. Taint outranks the
+        # filename proxy, which is the ordering test_benign_pattern_suppression
+        # exists to pin.
+        if benign or "[Intentional Pattern]" in description:
+            self.suppressed.append({
+                "type": issue_type,
+                "severity": severity,
+                "description": description,
+                "line": line,
+                "reason": "analyzer determined this pattern is benign",
+            })
+            return
 
         # Determine why_it_matters dynamically
         why_it_matters = "This represents a generic security risk or code smell that could weaken application stability."
@@ -604,7 +645,11 @@ class SecurityAnalyzer(ast.NodeVisitor):
                     description=message,
                     recommendation="Use hashlib.sha256() or hashlib.sha3_256() for secure hashing. MD5 and SHA1 are vulnerable to collision attacks.",
                     line=line,
-                    issue_type="Weak Cryptography"
+                    issue_type="Weak Cryptography",
+                    # SHA-1 under HMAC is a correct construction, not a weak
+                    # hash. Reporting it means the findings list contains an
+                    # entry whose own text says "computationally secure".
+                    benign=(context == 'hmac_digest'),
                 )
 
         # tempfile.mktemp() race condition
@@ -651,7 +696,8 @@ class SecurityAnalyzer(ast.NodeVisitor):
 # Public API
 # ----------------------------------------------------------
 
-def detect_security_issues(code: str, is_test_file: bool = False, file_path: str = "") -> List[Dict]:
+def detect_security_issues(code: str, is_test_file: bool = False, file_path: str = "",
+                           include_benign: bool = False) -> List[Dict]:
     """
     Analyze code and return detected security issues
     as structured dictionaries.
@@ -666,6 +712,12 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
     file_path : str
         Path to file being analyzed. Used for framework-aware
         severity adjustment (e.g., eval() in cli.py → Medium).
+    include_benign : bool
+        If True, also return the findings the analyzer positively CLEARED
+        (SHA-1 under HMAC, an intentional framework pattern), each tagged
+        `benign=True`. Off by default: a security findings list that contains
+        entries whose own text says "this is secure" spends the reader's
+        attention and returns nothing. Turn it on to inspect the reasoning.
 
     Each issue contains:
         type, severity, description, recommendation, line
@@ -711,6 +763,10 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
 
         analyzer.visit(tree)
 
+        if include_benign:
+            return analyzer.issues + [
+                dict(item, benign=True) for item in analyzer.suppressed
+            ]
         return analyzer.issues
 
     except Exception:

@@ -139,10 +139,21 @@ class TestTaintPipelineIntegration(unittest.TestCase):
     # --- existing invariants that taint must NOT disturb ---
 
     def test_constant_eval_in_cli_still_low_intentional(self):
-        i = self._eval_issue("eval('1 + 1')\n", file_path="cli.py")
-        self.assertEqual(i["severity"], "Low")
-        self.assertIn("[Intentional Pattern]", i["description"])
-        self.assertIn("CLI", i["description"])
+        # Phase C: still Low + intentional, but a cleared pattern is no longer
+        # emitted as a finding — it is only visible under include_benign=True.
+        # The invariant this guards is unchanged: a CONSTANT eval in a CLI must
+        # not be escalated. test_untrusted_overrides_framework_proxy above is
+        # the counterpart proving taint still overrides that framing.
+        issues = detect_security_issues("eval('1 + 1')\n", file_path="cli.py")
+        self.assertEqual([i for i in issues if i["type"] == "Dangerous Function"], [])
+
+        cleared = detect_security_issues("eval('1 + 1')\n", file_path="cli.py",
+                                         include_benign=True)
+        dangerous = [i for i in cleared if i["type"] == "Dangerous Function"]
+        self.assertEqual(len(dangerous), 1, cleared)
+        self.assertEqual(dangerous[0]["severity"], "Low")
+        self.assertIn("[Intentional Pattern]", dangerous[0]["description"])
+        self.assertIn("CLI", dangerous[0]["description"])
 
     def test_safe_subprocess_list_still_low(self):
         issues = detect_security_issues("import subprocess\nsubprocess.run(['ls','-l'])\n",

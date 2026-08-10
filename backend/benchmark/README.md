@@ -62,9 +62,33 @@ padded to look perfect:
 
 On the real repos the same shape shows at scale: **recall 1.00** (every
 hand-labelled real issue — bottle's `pickle.loads` on cookie data, the genuinely
-complex functions in both repos — is caught) but **precision ~0.46**, because the
-security pass flags legitimate `compile`/`eval`/`sha1` framework primitives in
-flask and bottle. That precision gap is the corpus's most useful signal.
+complex functions in both repos — is caught) with **precision 0.60** (TP 6, FP 4),
+improved from 0.46 in Phase C. That precision gap is the corpus's most useful
+signal.
+
+The Phase C gain came from a distinction worth stating plainly: three of the
+seven false positives were cases the analyzer had **already decided were safe**
+and reported anyway — `sessions.py:285` was emitted with the description
+"SHA-1 in HMAC context — computationally secure for message signing". A findings
+list that contains an entry saying "this is secure" is a false positive by
+construction, so cleared findings are no longer emitted (see
+`detect_security_issues(..., include_benign=True)` to inspect them).
+
+Doing that immediately exposed a second, older defect the gate caught within one
+run: the "framework context" heuristic that produces the `[Intentional Pattern]`
+framing matched `app.py`, `__init__.py`, `factory`, `loader`, `runner` and
+`commands` — some of the most common names in Python. While cleared findings
+were still emitted at low severity this only cost precision; the moment they
+stopped being emitted it became a silent **false negative**, and
+`dangerous_function` fixture recall fell 1.00 → 0.00. The list is now narrowed to
+`cli.py` and `config.py`. This is the corpus paying for itself: a
+precision-motivated change that would have quietly blinded the analyzer to
+`eval()` in any file named `app.py` was caught before it shipped.
+
+The remaining 4 false positives are genuinely ambiguous rather than clearly
+wrong — bottle's `SimpleTemplate` compiling and executing its own template
+source, its py2/3 compat shim, and `sha1` used as an ETag validator. A reviewer
+would reasonably want to see those, so they are left in.
 
 ## Adding to the corpus
 1. Add a fixture repo under `corpus/fixtures/<name>/` with planted issues + decoys.
