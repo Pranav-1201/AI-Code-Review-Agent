@@ -57,8 +57,14 @@ padded to look perfect:
   fixed, or it silently licenses the regression coming back.
 - **`command_injection` precision 0.67** — a safe `subprocess.run([...], shell=False)`
   is still emitted (Low severity) as a Command Injection finding (fixture F2).
-- **`dead_function` precision 0.67** — a function reachable only via the
-  `if __name__ == "__main__"` entrypoint is flagged dead (fixture F6).
+- ~~**`dead_function` precision 0.67**~~ — **FIXED in Phase C, now 1.00.** A
+  function reachable only via the `if __name__ == "__main__"` entrypoint was
+  flagged dead (fixture F6). The call graph resolved calls only inside function
+  bodies, so *all* import-time code was invisible to it — the `__main__` block,
+  module-level registration, class-body assignments. Import-time code is now
+  attributed to a synthetic `<module>` caller, and the floor was raised
+  0.66 → 1.00. Worth noting how broad the underlying gap was: it would have
+  reported the entrypoint of essentially every CLI ever written as dead code.
 
 On the real repos the same shape shows at scale: **recall 1.00** (every
 hand-labelled real issue — bottle's `pickle.loads` on cookie data, the genuinely

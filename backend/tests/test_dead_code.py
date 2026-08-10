@@ -279,3 +279,71 @@ def test_interprocedural_visitor_methods_not_dead():
     }
     dead = detector.detect_repository_dead_functions(sources)
     assert "visit_Call" not in dead["v.py"]
+
+
+# ----------------------------------------------------------
+# Module-level reachability (Phase C / roadmap A3)
+# ----------------------------------------------------------
+#
+# The call graph resolved calls only inside function bodies, so everything
+# executed at import time — the `if __name__ == "__main__":` block, module-level
+# registration, class-body assignments — was invisible to it. A function called
+# only from there had no incoming edge and was reported dead. That was the
+# single false positive holding dead_function precision at 0.67 in fixture F6.
+
+
+def test_function_called_only_from_main_guard_is_not_dead():
+    """The __main__ block is real reachability, not decoration.
+
+    Would fail if: call resolution goes back to walking only function bodies,
+    which makes every CLI entrypoint in the codebase look dead.
+    """
+    detector = DeadCodeDetector()
+    sources = {
+        "main.py": (
+            "def entry():\n    return 1\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    entry()\n"
+        )
+    }
+    dead = detector.detect_repository_dead_functions(sources)
+    assert "entry" not in dead["main.py"], dead
+
+
+def test_function_referenced_only_at_module_level_is_not_dead():
+    """A module-level reference as a VALUE (registry, callback) keeps a
+    function alive, same as one inside a function body."""
+    detector = DeadCodeDetector()
+    sources = {
+        "reg.py": (
+            "def handler():\n    return 1\n"
+            "\n"
+            "HANDLERS = [handler]\n"
+        )
+    }
+    dead = detector.detect_repository_dead_functions(sources)
+    assert "handler" not in dead["reg.py"], dead
+
+
+def test_module_level_reachability_does_not_resurrect_everything():
+    """Widening reachability must not simply stop reporting dead code.
+
+    Would fail if: the module-level pass marks all functions alive (e.g. by
+    unioning every name in the module), which would trade the false positive
+    for total blindness.
+    """
+    detector = DeadCodeDetector()
+    sources = {
+        "m.py": (
+            "def entry():\n    return 1\n"
+            "\n"
+            "def orphan():\n    return 2\n"
+            "\n"
+            "if __name__ == '__main__':\n"
+            "    entry()\n"
+        )
+    }
+    dead = detector.detect_repository_dead_functions(sources)
+    assert "orphan" in dead["m.py"], dead
+    assert "entry" not in dead["m.py"], dead

@@ -433,6 +433,30 @@ def _decorator_is_entrypoint(decorators: List[str]) -> bool:
     return False
 
 
+def _import_time_nodes(tree: ast.AST):
+    """Yield nodes that execute at IMPORT time, pruning function bodies.
+
+    Module-level statements and class bodies both run on import, so both are
+    walked. Function bodies are skipped because pass 2 already attributes those
+    to their own caller — descending into them here would credit a module with
+    calls it does not actually make until something invokes the function, which
+    is precisely the over-approximation that would stop dead code being found
+    at all.
+
+    A function's decorator list and default arguments DO evaluate at import
+    time, but they are left to pass 2's name_references handling rather than
+    duplicated here.
+    """
+    stack = [tree]
+    while stack:
+        current = stack.pop()
+        for child in ast.iter_child_nodes(current):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            yield child
+            stack.append(child)
+
+
 def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
     """
     Build a function-level call graph across {file_path: source}.
@@ -448,6 +472,8 @@ def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
     class_methods: Dict[str, Dict[str, str]] = defaultdict(dict)
     # simple name -> set of qualnames (cross-module fallback)
     name_index: Dict[str, _Set[str]] = defaultdict(set)
+    # (tree, module) for the import-time pass
+    module_trees: List[tuple] = []
 
     # -------- Pass 1: definitions --------
     for path, source in sources.items():
@@ -490,10 +516,42 @@ def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
                     visit(child, class_ctx, dynamic_ctx)
 
         visit(tree, None, False)
+        module_trees.append((tree, module))
 
     # -------- Pass 2: resolve calls --------
     edges: Dict[str, _Set[str]] = {q: set() for q in nodes}
     unresolved = 0
+
+    # -------- Pass 1b: module-level (import-time) code --------
+    #
+    # Pass 2 walks func_bodies only, so anything executed at IMPORT time was
+    # invisible to the graph: the `if __name__ == "__main__":` block, module-
+    # level registration, class-body assignments. A function called only from
+    # there had no incoming edge and was reported dead — the false positive
+    # that held dead_function precision at 0.67 (fixture F6), and which would
+    # flag the entrypoint of essentially every CLI ever written.
+    #
+    # Import-time code is attributed to a synthetic "<module>" caller. That key
+    # is intentionally absent from `nodes`: find_dead_functions only unions
+    # edges.values(), and find_call_cycles iterates nodes, so the synthetic
+    # caller adds reachability without becoming a graph node itself.
+    for tree, module in module_trees:
+        synthetic = f"{module}::<module>"
+        edges.setdefault(synthetic, set())
+        for n in _import_time_nodes(tree):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                name_references.add(n.id)
+            if not isinstance(n, ast.Call):
+                continue
+            fn = n.func
+            if isinstance(fn, ast.Name):
+                nm = fn.id
+                if nm in module_funcs.get(module, {}):
+                    edges[synthetic].add(module_funcs[module][nm])
+                elif nm in name_index:
+                    edges[synthetic] |= name_index[nm]
+            elif isinstance(fn, ast.Attribute) and fn.attr in name_index:
+                edges[synthetic] |= name_index[fn.attr]
 
     for body, caller_qual, module, class_ctx in func_bodies:
         class_qual = f"{module}::{class_ctx}" if class_ctx else None
