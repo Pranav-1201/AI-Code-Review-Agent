@@ -84,7 +84,18 @@ export interface Dependency {
 
   riskLevel: Severity;
 
-  vulnerabilities: string[];
+  vulnerabilities: Vulnerability[];
+}
+
+/**
+ * One OSV.dev advisory. The backend has always sent objects of this shape;
+ * this type previously claimed `string[]`, which the `any`-typed response
+ * mapper hid from the compiler.
+ */
+export interface Vulnerability {
+  id: string;
+  summary: string;
+  severity: string;
 }
 
 /* ---------------------------------- */

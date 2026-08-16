@@ -1,4 +1,4 @@
-import { ScanReport, FileAnalysis, FileIssue, SecurityVulnerability, Dependency, Severity } from "./types";
+import { ScanReport, FileAnalysis, FileIssue, SecurityVulnerability, Dependency, Severity, Vulnerability } from "./types";
 
 /**
  * Maps the backend API response to our frontend ScanReport type.
@@ -86,7 +86,7 @@ export function mapApiResponse(data: any, repoUrl: string): ScanReport {
     latestVersion: d.latest_version || d.latestVersion || d.version || "unknown",
     isOutdated: d.is_outdated ?? d.isOutdated ?? false,
     riskLevel: mapSeverity(d.risk_level || d.riskLevel || "Low"),
-    vulnerabilities: d.vulnerabilities || [],
+    vulnerabilities: normalizeVulnerabilities(d.vulnerabilities),
   }));
 
   const backendDuplicates = data.duplicates || [];
@@ -241,6 +241,23 @@ function mapFile(f: any): FileAnalysis {
     fileType,
     fileRole: f.file_role || f.fileRole || undefined,
   };
+}
+
+/**
+ * Coerce a dependency's advisory list into `Vulnerability` objects.
+ *
+ * The backend sends `{id, summary, severity}`, but scans persisted before OSV
+ * enrichment existed stored bare CVE id strings, and the history page replays
+ * those verbatim. A string reaching the renderer is thrown by React as an
+ * invalid child, so normalize at the boundary rather than guarding downstream.
+ */
+function normalizeVulnerabilities(raw: any): Vulnerability[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((v: any) =>
+    typeof v === "string"
+      ? { id: v, summary: "", severity: "Unknown" }
+      : { id: v?.id || "", summary: v?.summary || "", severity: v?.severity || "Unknown" }
+  );
 }
 
 function mapSeverity(s: string): Severity {

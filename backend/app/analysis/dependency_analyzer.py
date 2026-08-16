@@ -168,6 +168,82 @@ def _risk_from_vulns(vulns: list, current: str = "Low") -> str:
 
 
 # ----------------------------------------------------------
+# npm version resolution
+# ----------------------------------------------------------
+# OSV answers "is THIS version vulnerable", but package.json records a RANGE,
+# and `^` is npm's default. Asking about the floor of `^4.17.20` would report
+# CVE-2021-23337 against a repo whose lockfile installs the patched 4.17.21 —
+# a false positive on nearly every project. So we only ever query a version we
+# actually know is installed: the lockfile first, then an exact pin. An
+# unresolvable range is left unqueried rather than guessed at.
+
+# "1.2.3", "v1.2.3", "1.2.3-beta.1" — one concrete version and nothing else.
+_NPM_EXACT_RE = re.compile(r'^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-+]+)?)$')
+
+
+def _exact_npm_version(spec) -> Optional[str]:
+    """Return the single version a package.json spec pins, else None.
+
+    None means "this is a range, an alias, or a non-registry source" — i.e.
+    the installed version is unknown from package.json alone.
+    """
+    if not spec:
+        return None
+
+    text = str(spec).strip()
+    if text.startswith("="):
+        text = text[1:].strip()
+
+    match = _NPM_EXACT_RE.match(text)
+    return match.group(1) if match else None
+
+
+def _npm_locked_versions(repo_path: str) -> dict:
+    """Map package name -> exact installed version from package-lock.json.
+
+    Only DIRECT installs are returned: a `node_modules/x/node_modules/y` entry
+    is a second copy of y pinned for x, so letting it win would report a CVE
+    against a version the app does not itself depend on. A missing or corrupt
+    lockfile yields {} — callers fall back to exact pins.
+    """
+    try:
+        with open(os.path.join(repo_path, "package-lock.json"),
+                  "r", encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    versions: dict = {}
+
+    # lockfileVersion 2/3: flat "packages" map keyed by install path.
+    packages = data.get("packages")
+    if isinstance(packages, dict):
+        for path, meta in packages.items():
+            if not isinstance(path, str) or not path.startswith("node_modules/"):
+                continue
+            name = path[len("node_modules/"):]
+            if "node_modules/" in name:      # nested copy, not a direct install
+                continue
+            version = meta.get("version") if isinstance(meta, dict) else None
+            if name and version:
+                versions[name] = str(version)
+
+    # lockfileVersion 1: "dependencies" map keyed by name. v2 carries both, and
+    # the "packages" map is authoritative there, so v1 only fills the gaps.
+    legacy = data.get("dependencies")
+    if isinstance(legacy, dict):
+        for name, meta in legacy.items():
+            version = meta.get("version") if isinstance(meta, dict) else None
+            if name and version:
+                versions.setdefault(name, str(version))
+
+    return versions
+
+
+# ----------------------------------------------------------
 # Main Analyzer
 # ----------------------------------------------------------
 
@@ -175,6 +251,12 @@ def analyze_dependencies(repo_path):
 
     dependencies = []
     seen = set()  # Deduplicate by (name, type)
+
+    # Raw package.json specs, keyed by lowercase name. `_add_dep` stores a
+    # display version with the range operator stripped, which makes "^1.2.3"
+    # indistinguishable from the exact pin "1.2.3" — a distinction the OSV
+    # lookup depends on. Keep the unmangled spec here for that decision.
+    node_specs: dict = {}
 
     requirements = os.path.join(repo_path, "requirements.txt")
     package_json = os.path.join(repo_path, "package.json")
@@ -239,14 +321,16 @@ def analyze_dependencies(repo_path):
                 # Regular dependencies
                 deps = data.get("dependencies", {})
                 for name, version in deps.items():
-                    clean_version = re.sub(r'^[\^~>=<]+', '', version)
+                    clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
                     _add_dep(name, clean_version, "node")
+                    node_specs.setdefault(name.strip().lower(), str(version))
 
                 # Dev dependencies
                 dev_deps = data.get("devDependencies", {})
                 for name, version in dev_deps.items():
-                    clean_version = re.sub(r'^[\^~>=<]+', '', version)
+                    clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
                     _add_dep(name, clean_version, "node-dev")
+                    node_specs.setdefault(name.strip().lower(), str(version))
 
         except Exception:
             pass
@@ -395,43 +479,63 @@ def analyze_dependencies(repo_path):
             pass
 
     # --------------------------------------------------
-    # PyPI Version Enrichment
+    # Version + vulnerability enrichment
     # --------------------------------------------------
-    # For every Python dependency with a known pinned version,
-    # fetch the current latest version from PyPI and determine
-    # whether the pinned version is outdated.
+    # Python: fetch the latest version from PyPI to flag outdated pins, then
+    # ask OSV about the pinned version.
     #
-    # - Node packages are skipped here (npm audit is Phase 4)
-    # - Packages with version "unknown" / "latest" / "*" are
-    #   skipped because there is nothing meaningful to compare
-    # - Network failures are silently ignored — the dependency
-    #   is still reported, just without is_outdated data
+    # Node: OSV only (no registry "latest" lookup yet). The version asked about
+    # is the one actually installed — see _npm_locked_versions/_exact_npm_version
+    # for why a bare range is skipped instead of guessed.
+    #
+    # Packages with version "unknown" / "latest" / "*" have nothing meaningful
+    # to compare. Network failures are silent: the dependency is still reported,
+    # just without enrichment.
     # --------------------------------------------------
+
+    npm_locked = _npm_locked_versions(repo_path)
 
     for dep in dependencies:
 
-        # Only enrich Python packages for now
-        if dep["type"] not in ("python",):
+        if dep["type"] == "python":
+
+            # Skip unpinned or placeholder versions
+            if dep["version"] in ("unknown", "latest", "*", ""):
+                continue
+
+            latest = _fetch_latest_pypi_version(dep["name"])
+
+            if latest:
+                dep["latest_version"] = latest
+                dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
+
+                # Upgrade risk level for outdated packages so the
+                # frontend can surface them with appropriate prominence
+                if dep["is_outdated"]:
+                    dep["risk_level"] = "Medium"
+
+            # OSV.dev CVE lookup — known vulnerabilities for the PINNED version
+            # take precedence over the outdated-only heuristic above.
+            vulns = _query_osv(dep["name"], dep["version"], ecosystem="PyPI")
+
+        elif dep["type"] in ("node", "node-dev"):
+
+            installed = (npm_locked.get(dep["name"])
+                         or _exact_npm_version(node_specs.get(dep["name"].lower())))
+            if not installed:
+                continue
+
+            # Report the version the lookup was actually performed against, so
+            # a CVE the reader is shown can be checked against the version the
+            # reader is shown. Otherwise `^4.17.20` displays as 4.17.20 beside
+            # a CVE looked up for the installed 4.17.21.
+            dep["version"] = installed
+
+            vulns = _query_osv(dep["name"], installed, ecosystem="npm")
+
+        else:
             continue
 
-        # Skip unpinned or placeholder versions
-        if dep["version"] in ("unknown", "latest", "*", ""):
-            continue
-
-        latest = _fetch_latest_pypi_version(dep["name"])
-
-        if latest:
-            dep["latest_version"] = latest
-            dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
-
-            # Upgrade risk level for outdated packages so the
-            # frontend can surface them with appropriate prominence
-            if dep["is_outdated"]:
-                dep["risk_level"] = "Medium"
-
-        # OSV.dev CVE lookup — known vulnerabilities for the PINNED version
-        # take precedence over the outdated-only heuristic above.
-        vulns = _query_osv(dep["name"], dep["version"], ecosystem="PyPI")
         if vulns:
             dep["vulnerabilities"] = vulns
             dep["risk_level"] = _risk_from_vulns(vulns, current=dep["risk_level"])

@@ -78,7 +78,15 @@ export default function DependencyAnalysis() {
               {dep.vulnerabilities.length > 0 && (
                 <div className="mt-3 space-y-1">
                   {dep.vulnerabilities.map((v) => (
-                    <div key={v} className="text-xs font-mono text-destructive/80 bg-destructive/5 p-2 rounded">{v}</div>
+                    <div key={v.id} className="text-xs text-destructive/80 bg-destructive/5 p-2 rounded">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono">{v.id}</span>
+                        {v.severity && v.severity !== "Unknown" && (
+                          <span className="text-[10px] uppercase tracking-wide opacity-70">{v.severity}</span>
+                        )}
+                      </div>
+                      {v.summary && <p className="mt-1 opacity-80">{v.summary}</p>}
+                    </div>
                   ))}
                 </div>
               )}

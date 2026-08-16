@@ -259,12 +259,12 @@ def create_user(request):
     },
   ],
   dependencies: [
-    { name: "flask", version: "2.0.1", latestVersion: "3.0.2", isOutdated: true, riskLevel: "High", vulnerabilities: ["CVE-2023-30861"] },
+    { name: "flask", version: "2.0.1", latestVersion: "3.0.2", isOutdated: true, riskLevel: "High", vulnerabilities: [{ id: "CVE-2023-30861", summary: "Cookie disclosed by caching proxy", severity: "High" }] },
     { name: "sqlalchemy", version: "1.4.46", latestVersion: "2.0.25", isOutdated: true, riskLevel: "Medium", vulnerabilities: [] },
     { name: "requests", version: "2.31.0", latestVersion: "2.31.0", isOutdated: false, riskLevel: "Low", vulnerabilities: [] },
     { name: "pydantic", version: "1.10.13", latestVersion: "2.6.1", isOutdated: true, riskLevel: "Low", vulnerabilities: [] },
-    { name: "cryptography", version: "3.4.8", latestVersion: "42.0.4", isOutdated: true, riskLevel: "Critical", vulnerabilities: ["CVE-2023-49083", "CVE-2024-0727"] },
-    { name: "jinja2", version: "3.1.2", latestVersion: "3.1.3", isOutdated: true, riskLevel: "Medium", vulnerabilities: ["CVE-2024-22195"] },
+    { name: "cryptography", version: "3.4.8", latestVersion: "42.0.4", isOutdated: true, riskLevel: "Critical", vulnerabilities: [{ id: "CVE-2023-49083", summary: "NULL dereference when loading PKCS7 certificates", severity: "Critical" }, { id: "CVE-2024-0727", summary: "PKCS12 file can trigger a NULL dereference", severity: "Medium" }] },
+    { name: "jinja2", version: "3.1.2", latestVersion: "3.1.3", isOutdated: true, riskLevel: "Medium", vulnerabilities: [{ id: "CVE-2024-22195", summary: "xmlattr filter accepts keys containing spaces", severity: "Medium" }] },
   ],
   insights: {
     top_critical_issues: [

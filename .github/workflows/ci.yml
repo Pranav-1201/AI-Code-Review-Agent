@@ -10,7 +10,7 @@
 # The four checks mirror exactly what is run by hand before a commit:
 #   pytest                          backend suite
 #   run_benchmark.py --gate         detector precision/recall regression gate
-#   tsc --noEmit                    frontend typecheck
+#   tsc -b                          frontend typecheck
 #   vite build                      frontend production build
 #
 # Backend and frontend are separate jobs so they run in parallel and a
@@ -97,7 +97,12 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        # `tsc -b`, not `tsc --noEmit`: the root tsconfig.json is solution-style
+        # ("files": [] plus project references), so a plain invocation compiles
+        # zero files and exits 0 no matter what is broken. `vite build` does not
+        # typecheck either, so this step was the only type gate and it was
+        # passing vacuously. -b walks the referenced projects for real.
+        run: npx tsc -b
 
       - name: Production build
         run: npm run build
