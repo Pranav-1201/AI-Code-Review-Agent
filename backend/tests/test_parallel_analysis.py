@@ -11,6 +11,7 @@ in multiple processes (guarding against a silent fallback to sequential).
 """
 
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 import pytest
@@ -104,15 +105,27 @@ def test_resolve_worker_count_gate(monkeypatch):
 # spawned children (Windows spawn re-imports this module by name).
 
 def _pid_probe(_):
+    # The sleep is load-bearing, not padding. ProcessPoolExecutor spawns workers
+    # LAZILY, so with instantaneous tasks the first worker can drain the whole
+    # queue before a second one is ever created — the pool is behaving correctly
+    # and the PID set still comes back with one entry. That made this test pass
+    # on Windows (spawn, slow worker startup) and fail on the Linux CI runner
+    # (fork, fast), which is exactly backwards from useful. Holding each task
+    # open long enough to overlap forces the pool to actually use both workers.
+    time.sleep(0.15)
     return os.getpid()
 
 
 @pytest.mark.skipif((os.cpu_count() or 1) < 2, reason="needs >=2 cores")
 def test_pool_runs_in_multiple_processes():
+    # submit() up front rather than map(): every task is queued before any can
+    # finish, so the pool has a reason to grow to max_workers.
     with ProcessPoolExecutor(max_workers=2) as ex:
-        pids = list(ex.map(_pid_probe, range(8)))
-    assert len(set(pids)) > 1, f"expected multiple worker PIDs, got {set(pids)}"
+        futures = [ex.submit(_pid_probe, i) for i in range(4)]
+        pids = [f.result() for f in futures]
+
     assert os.getpid() not in pids, "work ran in the parent, not a child process"
+    assert len(set(pids)) > 1, f"expected multiple worker PIDs, got {set(pids)}"
 
 
 if __name__ == "__main__":
