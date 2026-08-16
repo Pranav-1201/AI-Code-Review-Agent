@@ -1,7 +1,7 @@
 {
-  "_comment": "Per-finding-type regression floor for the FIXTURE gate. Baselines are the analyzer's ACTUAL measured precision/recall on the curated fixtures (see labels.json). Values below 1.0 encode KNOWN, documented analyzer behaviour: command_injection precision 0.66 = over-flagging safe subprocess.run(list). A floor set AT a known defect makes the gate ratify the bug instead of catching it, so raise it the moment the defect is fixed: unsafe_deserialization recall moved 0.33 -> 1.0 in Phase C once pickle.load and yaml.load were detected. The gate fails if any type drops BELOW these floors.",
+  "_comment": "Per-finding-type regression floor for the FIXTURE gate. Baselines are the analyzer's ACTUAL measured precision/recall on the curated fixtures (see labels.json). A floor set AT a known defect makes the gate ratify the bug instead of catching it, so raise it the moment the defect is fixed. Phase C did this twice: unsafe_deserialization recall 0.33 -> 1.0 once pickle.load and yaml.load were detected, and command_injection precision 0.66 -> 1.0 once subprocess.run(list) stopped being reported. Every floor is now 1.0, which is the point: any regression at all fails the gate, and a NEW sub-1.0 floor must be argued for rather than inherited. The gate fails if any type drops BELOW these floors.",
   "dangerous_function": {"precision": 1.0, "recall": 1.0},
-  "command_injection": {"precision": 0.66, "recall": 1.0},
+  "command_injection": {"precision": 1.0, "recall": 1.0},
   "sql_injection": {"precision": 1.0, "recall": 1.0},
   "unsafe_deserialization": {"precision": 1.0, "recall": 1.0},
   "hardcoded_credential": {"precision": 1.0, "recall": 1.0},

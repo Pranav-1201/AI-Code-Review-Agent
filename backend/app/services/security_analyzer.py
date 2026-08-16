@@ -44,6 +44,11 @@ SHA_SEVERITY_MAP: dict[str, tuple[str, str]] = {
 # buy recall at the cost of precision on exactly the repos the benchmark scores.
 _SAFE_YAML_LOADERS = frozenset({"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"})
 
+# The one subprocess verdict that clears a call instead of flagging it. Shared
+# between _classify_subprocess_call (which emits it) and visit_Call (which
+# suppresses it as benign), so the two cannot drift apart silently.
+SAFE_SUBPROCESS_INVOCATION = 'constant list args with shell=False — safe invocation pattern'
+
 
 def _has_safe_yaml_loader(node: ast.Call) -> bool:
     """True if a yaml.load() call passes an explicitly safe Loader.
@@ -285,6 +290,12 @@ class SecurityAnalyzer(ast.NodeVisitor):
     # Dangerous function detection
     # ------------------------------------------------------
 
+    # The one subprocess classification that asserts safety rather than risk.
+    # Named because two places must agree on it: the classifier that produces it
+    # and the call site that suppresses it as benign (Phase C / A2 mechanism).
+    # Taint outranks it — _apply_taint replaces the description wholesale for
+    # untrusted-input sinks, so the marker is gone before suppression is decided.
+
     def _classify_subprocess_call(self, node: ast.Call) -> tuple[str, str]:
         shell_true = any(
             kw.arg == 'shell'
@@ -299,11 +310,19 @@ class SecurityAnalyzer(ast.NodeVisitor):
         arg0 = node.args[0]
 
         if isinstance(arg0, ast.List):
-            if shell_true:
-                return 'Medium', 'subprocess list arg with shell=True — shell flag is redundant and risky'
-            return 'Low', 'constant list args with shell=False — safe invocation pattern'
+            # "list form" is NOT the same as "constant list". ['sh', '-c', user]
+            # is a list, carries no shell=True, and is still a live command
+            # injection. Claiming it is safe was worse than over-reporting: the
+            # reader was handed a vector with the word "safe" attached. Only a
+            # list whose every element is a literal is genuinely inert; anything
+            # else falls through to the dynamic-argument branch below, which is
+            # where it always belonged.
+            if all(isinstance(element, ast.Constant) for element in arg0.elts):
+                if shell_true:
+                    return 'Medium', 'subprocess list arg with shell=True — shell flag is redundant and risky'
+                return 'Low', SAFE_SUBPROCESS_INVOCATION
 
-        if isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
+        elif isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
             if shell_true:
                 return 'High', 'string command with shell=True — command injection risk if input is unsanitised'
             if ' ' in arg0.value:
@@ -434,6 +453,10 @@ class SecurityAnalyzer(ast.NodeVisitor):
                     issue_type="Command Injection",
                     trust_boundary=tb,
                     confidence_override=conf,
+                    # Checked AFTER taint on purpose: _apply_taint replaces the
+                    # description for untrusted-input sinks, so a call that
+                    # still carries the marker here is one taint also cleared.
+                    benign=SAFE_SUBPROCESS_INVOCATION in message,
                 )
                 _handled_as_subprocess = True                 # PHASE 1 FIX
 

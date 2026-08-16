@@ -72,10 +72,19 @@ class TestSecurityRegression(unittest.TestCase):
         self.assertIn("config file loading", exec_issues[0]["description"])
 
     def test_subprocess_with_constants(self):
+        # Phase C: an all-constant list is now SUPPRESSED rather than emitted at
+        # Low. The invariant this guards — a safe list call must not be escalated
+        # — is unchanged and now asserted through include_benign, matching
+        # test_exec_in_config_has_reasoning above.
         code = "import subprocess\nsubprocess.run(['ls', '-l'])\n"
         issues = detect_security_issues(code, is_test_file=False, file_path="app.py")
-        self.assertEqual(len(issues), 1)
-        self.assertEqual(issues[0]["severity"], "Low")
+        self.assertEqual(issues, [], "a cleared pattern must not be a finding")
+
+        cleared = detect_security_issues(code, is_test_file=False,
+                                         file_path="app.py", include_benign=True)
+        cmd = [i for i in cleared if i["type"] == "Command Injection"]
+        self.assertEqual(len(cmd), 1)
+        self.assertEqual(cmd[0]["severity"], "Low")
 
 
 class TestComplexityRegression(unittest.TestCase):

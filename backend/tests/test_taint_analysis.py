@@ -156,9 +156,15 @@ class TestTaintPipelineIntegration(unittest.TestCase):
         self.assertIn("CLI", dangerous[0]["description"])
 
     def test_safe_subprocess_list_still_low(self):
-        issues = detect_security_issues("import subprocess\nsubprocess.run(['ls','-l'])\n",
-                                        file_path="app.py")
-        cmd = [i for i in issues if i["type"] == "Command Injection"]
+        # Phase C: the all-constant list is suppressed rather than emitted, so
+        # the "not escalated by taint" invariant is now read off the benign list
+        # — same move as the eval-in-CLI test directly above.
+        code = "import subprocess\nsubprocess.run(['ls','-l'])\n"
+        issues = detect_security_issues(code, file_path="app.py")
+        self.assertEqual([i for i in issues if i["type"] == "Command Injection"], [])
+
+        cleared = detect_security_issues(code, file_path="app.py", include_benign=True)
+        cmd = [i for i in cleared if i["type"] == "Command Injection"]
         self.assertEqual(len(cmd), 1)
         self.assertEqual(cmd[0]["severity"], "Low")
 

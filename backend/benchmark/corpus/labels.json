@@ -19,7 +19,7 @@
       {"type": "sql_injection", "file": "app.py", "line": 24}
     ],
     "decoys": [
-      {"type": "command_injection", "file": "app.py", "line": 15, "why": "subprocess.run(list), shell=False - safe; analyzer over-flags it (FP)"},
+      {"type": "command_injection", "file": "app.py", "line": 15, "why": "subprocess.run(list) of constants, shell=False - safe; correctly suppressed since Phase C"},
       {"type": "sql_injection", "file": "app.py", "line": 28, "why": "parameterized query with %s placeholder - safe"}
     ]
   },
