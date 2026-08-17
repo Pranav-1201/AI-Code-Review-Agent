@@ -51,9 +51,18 @@ const groups = [
 ];
 
 export function AppSidebar() {
-  const { state } = useSidebar();
+  const { state, isMobile, setOpenMobile } = useSidebar();
   const collapsed = state === "collapsed";
-  
+
+  // Below 768px the sidebar is a Sheet, and nothing closed it on navigation —
+  // so tapping a link left the drawer sitting on top of the page it had just
+  // navigated to, to be dismissed by hand every time. It also marks the rest of
+  // the page aria-hidden while open, which hides the whole app from assistive
+  // technology after every tap.
+  const handleNavigate = () => {
+    if (isMobile) setOpenMobile(false);
+  };
+
 
   return (
     <Sidebar collapsible="icon">
@@ -85,6 +94,7 @@ export function AppSidebar() {
                       <NavLink
                         to={item.url}
                         end={item.url === "/"}
+                        onClick={handleNavigate}
                         className="hover:bg-sidebar-accent/50 transition-colors"
                         activeClassName="bg-primary/10 text-primary font-medium border-l-2 border-primary"
                       >
