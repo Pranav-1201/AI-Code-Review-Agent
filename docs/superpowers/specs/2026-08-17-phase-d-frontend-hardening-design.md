@@ -94,13 +94,29 @@ dependencies, none remediated: `vitest` 3.2.4 (Critical, GHSA-5xrq-8626-4rwp),
 and `react-router-dom` 6.30.3 / `postcss` 8.5.6 / `vite` 5.4.21 (High).
 
 Phase D makes `vitest` load-bearing, so shipping a new test suite on a
-Critical-CVE runner would be backwards. The three build/dev-time packages
-(`vitest`, `vite`, `postcss`) are bumped here in their own commit.
+Critical-CVE runner would be backwards. The build/dev-time packages are bumped
+here in their own commit.
 
 `react-router-dom` is deliberately **excluded**: it is a runtime dependency that
 `App.tsx` imports directly, and this phase is already rewriting `App.tsx`'s
 routing. Changing the router and the router's library in the same phase would
 make a regression ambiguous. It carries forward to phase E.
+
+**Amended 2026-08-17, after checking the registry.** This decision was taken on
+the assumption that all three build-time bumps were in-range patches. Two are:
+`vitest` 3.2.4 → **3.2.7** and `postcss` 8.5.6 → **8.5.26**. `vite` is not —
+`npm audit` reports its only fix as **8.2.1**, three majors up from 5.4.21, and
+flags it `isSemVerMajor`.
+
+`vite` is therefore **also deferred to phase E**. Two reasons: a three-major
+build-tool migration is not a patch and deserves its own verification, and it
+would move the chunk-output baseline that this phase's code-splitting evidence
+is measured against. The High advisory stands, recorded and unremediated, and
+it is a dev/build-time exposure rather than one in the shipped static bundle.
+
+For the same reason the bumps must be **targeted, one package at a time**.
+A blanket `npm audit fix` resolves `react-router-dom` too, against this
+section's own decision.
 
 ## Design
 
