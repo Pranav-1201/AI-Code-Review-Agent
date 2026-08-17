@@ -34,7 +34,16 @@ const queryClient = new QueryClient();
 
 function RouteFallback() {
   return (
-    <div className="flex items-center justify-center py-24" role="status" aria-live="polite">
+    // data-testid is a test hook: role="status" alone is not specific enough to
+    // wait on, because EmptyState carries it too, which makes a page that
+    // legitimately renders empty indistinguishable from a chunk that never
+    // loaded.
+    <div
+      className="flex items-center justify-center py-24"
+      role="status"
+      aria-live="polite"
+      data-testid="route-fallback"
+    >
       <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" aria-hidden="true" />
       <span className="sr-only">Loading page</span>
     </div>
