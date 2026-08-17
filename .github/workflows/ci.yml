@@ -7,11 +7,13 @@
 # run the suite locally on Windows. This runs the same four commands on Linux,
 # on every push and PR.
 #
-# The four checks mirror exactly what is run by hand before a commit:
+# The checks mirror exactly what is run by hand before a commit:
 #   pytest                          backend suite
 #   run_benchmark.py --gate         detector precision/recall regression gate
 #   tsc -b                          frontend typecheck
 #   vite build                      frontend production build
+#   vitest run                      frontend unit tests
+#   playwright test                 end-to-end smoke + 375/768 viewport gate
 #
 # Backend and frontend are separate jobs so they run in parallel and a
 # frontend-only break is legible at a glance.
@@ -107,7 +109,25 @@ jobs:
       - name: Production build
         run: npm run build
 
-      # NOTE: no `npm test` step. package.json wires vitest, but the frontend
-      # currently has zero test files and vitest exits non-zero when it finds
-      # none — a red CI that says nothing. Adding real tests is roadmap item
-      # D/F5; the step goes in with them.
+      - name: Unit tests
+        run: npm test
+
+      - name: Install Playwright browser
+        # Only chromium. The suite targets one engine across three viewports,
+        # so downloading firefox and webkit would cost time and prove nothing.
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end and mobile viewport tests
+        # playwright.config.ts starts its own `vite preview` against the
+        # production build, so there is no separate serve step here. Every
+        # backend call is intercepted in the specs, so this needs no Python
+        # and no Redis.
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

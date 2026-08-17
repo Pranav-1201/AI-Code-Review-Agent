@@ -9,7 +9,12 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? "github" : "list",
+  // In CI, "github" annotates the failing lines in the PR diff, and "html"
+  // writes the report that the workflow uploads on failure. Without the second
+  // one there would be nothing to upload.
+  reporter: process.env.CI
+    ? [["github"], ["html", { open: "never" }]]
+    : [["list"]],
 
   use: {
     baseURL: BASE_URL,
