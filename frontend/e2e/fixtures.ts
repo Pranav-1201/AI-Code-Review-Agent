@@ -50,6 +50,10 @@ export async function navigateTo(page: Page, path: string) {
       .getByRole("banner")
       .getByRole("button", { name: /toggle sidebar/i })
       .click();
+
+    // Wait for the drawer to finish opening. Clicking a link while the sheet is
+    // still sliding in fails the actionability check as "element is not stable".
+    await expect(page.getByRole("dialog")).toBeVisible();
   }
 
   await link.click();

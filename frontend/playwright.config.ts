@@ -17,7 +17,13 @@ export default defineConfig({
   },
 
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    {
+      name: "desktop",
+      use: { ...devices["Desktop Chrome"] },
+      // The viewport spec asserts narrow-width layout. At desktop width it
+      // would assert nothing interesting and would add a third of the runtime.
+      testIgnore: /mobile\.spec\.ts/,
+    },
     {
       name: "tablet-768",
       use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 } },
