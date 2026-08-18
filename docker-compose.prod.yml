@@ -1,0 +1,107 @@
+# ==========================================================
+# Phase F — production overlay. Used WITH the base file, never instead of it:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# An overlay rather than a second full stack description, so the base file
+# stays the single definition of services, wiring, and volumes and this file
+# expresses only what production changes. Two complete files would drift.
+#
+# REQUIRES Docker Compose v2.24 or newer: `!reset` is what lets an overlay
+# REMOVE a key (the API's published port) rather than only add to or override
+# one. Older versions fail to parse this file rather than silently ignoring
+# the tag, which is the failure mode you want.
+# ==========================================================
+
+services:
+  api:
+    # Pull the published image instead of building. This is what turns
+    # release.yml's sha tagging into an actual rollback: set IMAGE_TAG to a
+    # known-good sha and `up -d` again. Building on the host instead would
+    # make the sha tags decorative.
+    build: !reset null
+    image: ${IMAGE_REPO:-ghcr.io/pranav-1201/ai-code-review-agent}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # NO published ports, deliberately. The base file publishes 8000:8000 for
+    # local development. Keeping that here would put the API — which defaults
+    # to unauthenticated — directly on the public internet beside the proxy,
+    # bypassing Caddy's TLS and its X-Forwarded-For normalisation, which is
+    # what stops a caller forging its own rate-limit bucket. The API is
+    # reachable only on the compose network.
+    ports: !reset []
+    healthcheck:
+      # Python rather than curl: the base image is python:3.11-slim, which
+      # ships neither curl nor wget. Installing one just for a healthcheck
+      # would grow the image Phase E spent a whole task shrinking.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  worker:
+    build: !reset null
+    image: ${IMAGE_REPO:-ghcr.io/pranav-1201/ai-code-review-agent}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+
+  redis:
+    restart: unless-stopped
+
+  web:
+    image: ${WEB_IMAGE_REPO:-ghcr.io/pranav-1201/ai-code-review-agent-web}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    # SITE_ADDRESS unset -> Caddy binds :80 and serves plain HTTP, so the
+    # stack boots anywhere. Set it to a hostname and Caddy obtains a
+    # certificate automatically. Port 80 must stay open even when only 443
+    # serves traffic: the HTTP-01 challenge uses it.
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # caddy-data holds issued certificates and MUST persist. Without it
+      # Caddy re-issues on every restart and will hit Let's Encrypt rate
+      # limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+  backup:
+    image: alpine:3.20
+    restart: unless-stopped
+    # sqlite installed at start rather than in a custom image: it is one small
+    # package and the loop is long-running, so this runs once per container
+    # lifetime. A whole Dockerfile for `apk add sqlite` would be more to
+    # maintain than it saves.
+    command: sh -c "apk add --no-cache sqlite >/dev/null && exec sh /scripts/backup-sqlite.sh"
+    environment:
+      DB_PATH: /data/scan_states.db
+      # Fixed, not an operator knob — this is the path INSIDE the container.
+      # The host side is BACKUP_HOST_DIR, below.
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+    volumes:
+      # Read-only: the backup service must never be able to write the store it
+      # is protecting.
+      - scan-data:/data:ro
+      - ./scripts:/scripts:ro
+      # A host bind, not a named volume, on purpose: a backup that lives only
+      # inside Docker dies with the Docker state you are most likely to be
+      # recovering from.
+      #
+      # BACKUP_HOST_DIR, not BACKUP_DIR: the two are different paths and
+      # giving them one name is how someone sets the host directory and
+      # silently changes where the script writes inside the container instead.
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+
+volumes:
+  caddy-data:
+  caddy-config:
