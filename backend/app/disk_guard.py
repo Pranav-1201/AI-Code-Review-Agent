@@ -130,11 +130,22 @@ def dir_size_bytes(path):
 def _cache_entries(clone_cache, prior_cache):
     """Map cache key -> (last_scan_time, total_bytes) across both caches.
 
-    Recency comes from the PRIOR file's mtime, not the clone directory's. The
-    prior is written exactly once per completed scan (incremental.save_prior),
-    so its mtime is an accurate record of when the repo was last scanned. A
-    clone directory's mtime moves for reasons unrelated to scanning: a fetch
-    that found nothing, an editor or indexer, an antivirus pass.
+    Recency comes from the PRIOR file's mtime where one exists. The prior is
+    written exactly once per completed scan (incremental.save_prior), so its
+    mtime is an accurate record of when the repo was last scanned. A clone
+    directory's mtime moves for reasons unrelated to scanning: a fetch that
+    found nothing, an editor or indexer, an antivirus pass.
+
+    A clone with NO prior falls back to the clone directory's own mtime rather
+    than 0.0. This matters under concurrency and the earlier 0.0 was a real
+    bug: docker-compose runs the worker at --concurrency=2, so a clone being
+    written right now by a sibling worker has no prior yet. Scoring it 0.0
+    sorted it FIRST -- the most evictable entry in the cache -- when it is in
+    fact the most recently touched, and an over-cap sweep could then delete a
+    directory another worker's `git clone` was actively writing into. Using the
+    directory mtime makes an in-progress clone look recent (it was just
+    created) so it sorts last, while a stale orphan left by a crashed scan
+    still carries an old mtime and stays evictable.
     """
     entries = {}
 
@@ -142,7 +153,11 @@ def _cache_entries(clone_cache, prior_cache):
         for name in os.listdir(clone_cache):
             path = os.path.join(clone_cache, name)
             if os.path.isdir(path):
-                entries[name] = [0.0, dir_size_bytes(path)]
+                try:
+                    fallback_mtime = os.path.getmtime(path)
+                except OSError:
+                    fallback_mtime = 0.0
+                entries[name] = [fallback_mtime, dir_size_bytes(path)]
 
     if os.path.isdir(prior_cache):
         for name in os.listdir(prior_cache):
@@ -156,11 +171,11 @@ def _cache_entries(clone_cache, prior_cache):
             except OSError:
                 continue
             record = entries.setdefault(key, [0.0, 0])
+            # A completed scan's prior always wins over the clone-directory
+            # fallback above: it is the authoritative record of the last scan.
             record[0] = mtime
             record[1] += size
 
-    # A clone with no prior (a scan that died before save_prior) keeps mtime
-    # 0.0, which sorts it first — correct: it is the least useful entry held.
     return {key: tuple(value) for key, value in entries.items()}
 
 
@@ -290,6 +305,20 @@ def clone_with_limit(url, dest, max_mb=None, timeout=300, poll_seconds=2.0,
 
     try:
         proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Popen.wait(timeout=) raises WITHOUT killing the child -- unlike the
+        # subprocess.run(timeout=) call this replaced, which kills before
+        # re-raising. Left alone, the clone survives the exception AND the
+        # `finally` below stops the watchdog, so it would go on growing `dest`
+        # completely unmonitored: precisely the failure this guard exists to
+        # prevent. Kill it, then clear the partial tree.
+        proc.kill()
+        proc.wait()
+        done.set()
+        watcher.join(timeout=5)
+        if os.path.exists(dest):
+            force_rmtree(dest)
+        raise
     finally:
         done.set()
         watcher.join(timeout=5)
@@ -300,6 +329,12 @@ def clone_with_limit(url, dest, max_mb=None, timeout=300, poll_seconds=2.0,
         raise RepoTooLargeError(breach["size"] / (1024 * 1024), limit_mb)
 
     if proc.returncode != 0:
+        # Clear the partial tree here too, so every failure path out of this
+        # function leaves no directory behind. A half-written clone left in
+        # place is worse than absent: `git clone` refuses a non-empty
+        # destination, so the next scan of this repo would fail on it.
+        if os.path.exists(dest):
+            force_rmtree(dest)
         raise subprocess.CalledProcessError(proc.returncode, argv)
 
     # The clone can finish inside one poll interval, so the cap is enforced

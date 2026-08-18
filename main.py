@@ -244,11 +244,21 @@ def _run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str):
 
     # Bound the disk before adding to it. `keep` is this scan's own key so a
     # sweep can never delete the cached clone this run is about to reuse.
-    disk_guard.evict_caches(
-        CLONE_CACHE,
-        incremental.CACHE_DIR,
-        keep=os.path.basename(repo_dir),
-    )
+    #
+    # Best-effort on purpose. This call sits OUTSIDE the main try block below,
+    # so an exception here would escape before complete_scan() ever runs and
+    # strand the scan in a non-terminal state with no error surfaced to the
+    # user -- unlike every other failure path in this function. Eviction is
+    # housekeeping, not part of the scan's contract: if a directory is locked
+    # for longer than force_rmtree's retry budget, log it and scan anyway.
+    try:
+        disk_guard.evict_caches(
+            CLONE_CACHE,
+            incremental.CACHE_DIR,
+            keep=os.path.basename(repo_dir),
+        )
+    except Exception as e:
+        logger.warning("cache eviction failed, continuing with the scan: %s", e)
 
     since_sha = None
     prior_files = None
