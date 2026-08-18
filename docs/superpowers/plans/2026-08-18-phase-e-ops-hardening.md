@@ -326,6 +326,14 @@ def _seed(clone_cache, prior_cache, key, clone_bytes, mtime):
     return repo, prior
 
 
+# Deliberately 1,000,000 and not 1 MiB. Each seeded entry also carries a
+# 27-byte prior JSON, so three entries of exactly 1 MiB overshoot a 2 MiB cap
+# by less than the per-entry overhead — leaving no arrangement in which exactly
+# one repo can be evicted. A round-decimal payload keeps the caps meaningful:
+# ~903 KB of trigger margin and ~97 KB of headroom under the survivors.
+CHUNK_BYTES = 1_000_000
+
+
 @pytest.fixture()
 def caches(tmp_path):
     clone_cache = tmp_path / "clones"
@@ -349,10 +357,9 @@ def test_under_cap_evicts_nothing(caches):
 
 def test_evicts_least_recently_scanned_first(caches):
     clone_cache, prior_cache = caches
-    one_mb = 1024 * 1024
-    _seed(clone_cache, prior_cache, "old", one_mb, mtime=1000)
-    _seed(clone_cache, prior_cache, "mid", one_mb, mtime=2000)
-    _seed(clone_cache, prior_cache, "new", one_mb, mtime=3000)
+    _seed(clone_cache, prior_cache, "old", CHUNK_BYTES, mtime=1000)
+    _seed(clone_cache, prior_cache, "mid", CHUNK_BYTES, mtime=2000)
+    _seed(clone_cache, prior_cache, "new", CHUNK_BYTES, mtime=3000)
 
     # Cap of 2 MB against ~3 MB held: exactly one repo must go, the oldest.
     evicted = disk_guard.evict_caches(
@@ -367,9 +374,8 @@ def test_evicts_least_recently_scanned_first(caches):
 
 def test_eviction_removes_clone_and_prior_together(caches):
     clone_cache, prior_cache = caches
-    one_mb = 1024 * 1024
-    _seed(clone_cache, prior_cache, "old", one_mb, mtime=1000)
-    _seed(clone_cache, prior_cache, "new", one_mb, mtime=3000)
+    _seed(clone_cache, prior_cache, "old", CHUNK_BYTES, mtime=1000)
+    _seed(clone_cache, prior_cache, "new", CHUNK_BYTES, mtime=3000)
 
     disk_guard.evict_caches(str(clone_cache), str(prior_cache), max_mb=1)
 
@@ -381,9 +387,8 @@ def test_eviction_removes_clone_and_prior_together(caches):
 
 def test_keep_protects_the_repo_about_to_be_scanned(caches):
     clone_cache, prior_cache = caches
-    one_mb = 1024 * 1024
-    _seed(clone_cache, prior_cache, "old", one_mb, mtime=1000)
-    _seed(clone_cache, prior_cache, "new", one_mb, mtime=3000)
+    _seed(clone_cache, prior_cache, "old", CHUNK_BYTES, mtime=1000)
+    _seed(clone_cache, prior_cache, "new", CHUNK_BYTES, mtime=3000)
 
     evicted = disk_guard.evict_caches(
         str(clone_cache), str(prior_cache), max_mb=1, keep="old"
