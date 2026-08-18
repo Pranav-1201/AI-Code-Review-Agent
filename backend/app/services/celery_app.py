@@ -72,6 +72,9 @@ def _recover_on_worker_ready(**_kwargs):
     workers would need heartbeat-scoped recovery instead of reconcile-all — see
     DEPLOYMENT.md.
     """
+    from backend.app import observability
+    observability.configure_logging()
+
     # Imported lazily so importing this module never drags in the scan store.
     from backend.app.services.scan_manager import recover_interrupted_scans
 

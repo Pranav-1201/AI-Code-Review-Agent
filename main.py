@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app import api_guard
 from backend.app import disk_guard
+from backend.app import observability
 
 from backend.app.services.scan_manager import (
     create_scan,
@@ -46,6 +47,11 @@ from backend.database.review_repository import record_feedback, get_precision_es
 # without a broker present.
 from backend.app.services.celery_app import celery_app
 from backend.app.services.tasks import run_scan_task
+
+# Structured logging is configured before anything else so startup records
+# are formatted too.
+observability.configure_logging()
+logger = observability.get_logger("etproject.api")
 
 
 # ----------------------------------------------------------
@@ -227,6 +233,12 @@ CLONE_CACHE = os.path.join(tempfile.gettempdir(), "etproject_clones")
 
 def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "senior"):
 
+    with observability.scan_context(scan_id):
+        _run_scan_pipeline(scan_id, repo_url, explanation_depth)
+
+
+def _run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str):
+
     os.makedirs(CLONE_CACHE, exist_ok=True)
     repo_dir = os.path.join(CLONE_CACHE, hashlib.md5(repo_url.encode("utf-8")).hexdigest())
 
@@ -293,6 +305,7 @@ def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "sen
 
     except Exception as e:
 
+        logger.exception("scan failed: %s", e)
         complete_scan(scan_id, {"error": str(e)})
 
 

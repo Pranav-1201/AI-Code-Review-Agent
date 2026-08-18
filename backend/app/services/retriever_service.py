@@ -10,6 +10,10 @@ from typing import List
 
 from sentence_transformers import SentenceTransformer
 
+from backend.app.observability import get_logger
+
+logger = get_logger("etproject.retriever")
+
 
 INDEX_PATH = Path("rag/faiss_index/index.faiss")
 METADATA_PATH = Path("rag/faiss_index/metadata.pkl")
@@ -40,7 +44,7 @@ def get_embedding_model():
         try:
             _embedding_model = SentenceTransformer(MODEL_NAME)
         except Exception as e:
-            print(f"[Retriever Warning] Failed to load embedding model: {e}")
+            logger.warning("failed to load embedding model: %s", e)
             _embedding_model = None
 
     return _embedding_model
@@ -71,13 +75,10 @@ class CodeRetriever:
                     self.metadata = pickle.load(f)
 
             except Exception as e:
-                print(f"[Retriever Warning] Failed to load FAISS index: {e}")
+                logger.warning("failed to load FAISS index: %s", e)
 
         else:
-            print(
-                "[Retriever Warning] FAISS index not found. "
-                "Using fallback retrieval."
-            )
+            logger.info("FAISS index not found; using fallback retrieval")
 
         # --------------------------------------------------
         # Load embedding model (from global cache)
@@ -123,5 +124,5 @@ class CodeRetriever:
             return results
 
         except Exception as e:
-            print(f"[Retriever Error] Retrieval failed: {e}")
+            logger.error("retrieval failed: %s", e)
             return []
