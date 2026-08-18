@@ -1424,6 +1424,27 @@ Install it into the venv so the tests can patch `sentry_sdk.init`:
 
 Run: `.\venv\Scripts\python.exe -m pip install sentry-sdk`
 
+**Regenerate `requirements.lock` in this task too** — do not defer it to Task 6.
+The five tests below patch `sentry_sdk.init`, which requires `sentry_sdk` to be
+importable. `init_sentry()` imports lazily inside the DSN branch, so the
+application would survive a stale lock, but a CI run on this commit installs
+`requirements.lock`, finds no `sentry-sdk`, and all five error. Every commit
+stays independently green:
+
+```
+.\venv\Scripts\python.exe -m pip install pip-tools
+.\venv\Scripts\python.exe -m piptools compile --output-file=requirements.lock requirements.txt
+```
+
+Confirm it landed:
+
+```
+grep -i "^sentry-sdk" requirements.lock
+```
+
+Expected: one matching line. Task 6 regenerates this lock again after removing
+the ML block; that second run is expected, not redundant work to skip.
+
 - [ ] **Step 4: Write the implementation**
 
 Append to `backend/app/observability.py`:
@@ -1538,7 +1559,7 @@ Expected: 316 passed, 0 failed.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add backend/app/observability.py backend/tests/test_observability.py main.py backend/app/services/celery_app.py requirements.txt .env.example
+git add backend/app/observability.py backend/tests/test_observability.py main.py backend/app/services/celery_app.py requirements.txt requirements.lock .env.example
 git commit -F - <<'EOF'
 Report errors to Sentry when a DSN is configured
 
