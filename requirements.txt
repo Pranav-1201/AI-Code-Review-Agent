@@ -73,3 +73,10 @@ pytest
 packaging
 # Error reporting. Inert unless SENTRY_DSN is set — see backend/app/observability.py.
 sentry-sdk
+
+# Test client transport for starlette's TestClient (backend/tests use it via
+# fastapi.testclient). Declared explicitly since Phase E: it used to arrive
+# transitively through the ML stack, so removing torch silently removed it
+# too and every TestClient-based test errored at collection on a clean
+# install. It passed locally only because dev venvs still had it.
+httpx
