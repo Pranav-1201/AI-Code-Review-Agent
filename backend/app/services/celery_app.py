@@ -74,6 +74,7 @@ def _recover_on_worker_ready(**_kwargs):
     """
     from backend.app import observability
     observability.configure_logging()
+    observability.init_sentry()
 
     # Imported lazily so importing this module never drags in the scan store.
     from backend.app.services.scan_manager import recover_interrupted_scans

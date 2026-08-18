@@ -110,3 +110,59 @@ def configure_logging(force=False):
 
 def get_logger(name):
     return logging.getLogger(name)
+
+
+# ----------------------------------------------------------
+# Sentry
+# ----------------------------------------------------------
+#
+# ENV (read at CALL time):
+#   SENTRY_DSN                  Unset or empty => Sentry is entirely disabled.
+#   SENTRY_ENVIRONMENT          Tag on reported events. Default "development".
+#   SENTRY_TRACES_SAMPLE_RATE   Default 0.0 — tracing costs money and nobody
+#                               asked for it.
+#
+# Disabled-by-default makes "no data leaves the machine" the default posture,
+# and makes the feature verifiable locally: the disabled path is the one the
+# suite and every developer machine actually exercise.
+
+DEFAULT_SENTRY_ENVIRONMENT = "development"
+
+
+def _traces_sample_rate():
+    raw = os.getenv("SENTRY_TRACES_SAMPLE_RATE", "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return float(raw)
+    except ValueError:
+        return 0.0
+
+
+def init_sentry():
+    """Initialize Sentry if SENTRY_DSN is set. Returns whether it was.
+
+    Call AFTER configure_logging: Sentry's logging integration attaches to
+    existing handlers, so initializing first would silently miss them.
+    """
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return False
+
+    try:
+        import sentry_sdk
+    except ImportError:
+        get_logger("etproject.observability").warning(
+            "SENTRY_DSN is set but sentry-sdk is not installed; "
+            "error reporting is off"
+        )
+        return False
+
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=os.getenv(
+            "SENTRY_ENVIRONMENT", DEFAULT_SENTRY_ENVIRONMENT
+        ).strip() or DEFAULT_SENTRY_ENVIRONMENT,
+        traces_sample_rate=_traces_sample_rate(),
+    )
+    return True

@@ -112,3 +112,65 @@ def test_exception_info_is_included(monkeypatch, capsys):
 
     payload = json.loads(capsys.readouterr().err.strip().splitlines()[-1])
     assert "RuntimeError: clone failed" in payload["exc_info"]
+
+
+# ----------------------------------------------------------
+# Sentry (Phase E, Task 5)
+# ----------------------------------------------------------
+#
+# Every test here mocks sentry_sdk.init. Nothing in this suite may reach the
+# network, and there is no DSN on a developer machine -- which is the point:
+# the disabled path is the default posture and the one that gets exercised.
+
+
+def test_sentry_is_disabled_without_a_dsn(monkeypatch):
+    monkeypatch.delenv("SENTRY_DSN", raising=False)
+    calls = []
+    monkeypatch.setattr("sentry_sdk.init", lambda **kw: calls.append(kw))
+
+    assert observability.init_sentry() is False
+    assert calls == []
+
+
+def test_sentry_is_disabled_by_an_empty_dsn(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN", "   ")
+    calls = []
+    monkeypatch.setattr("sentry_sdk.init", lambda **kw: calls.append(kw))
+
+    assert observability.init_sentry() is False
+    assert calls == []
+
+
+def test_sentry_initializes_when_a_dsn_is_set(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN", "https://key@example.invalid/1")
+    monkeypatch.setenv("SENTRY_ENVIRONMENT", "production")
+    calls = []
+    monkeypatch.setattr("sentry_sdk.init", lambda **kw: calls.append(kw))
+
+    assert observability.init_sentry() is True
+    assert len(calls) == 1
+    assert calls[0]["dsn"] == "https://key@example.invalid/1"
+    assert calls[0]["environment"] == "production"
+    assert calls[0]["traces_sample_rate"] == 0.0
+
+
+def test_sentry_environment_defaults_to_development(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN", "https://key@example.invalid/1")
+    monkeypatch.delenv("SENTRY_ENVIRONMENT", raising=False)
+    calls = []
+    monkeypatch.setattr("sentry_sdk.init", lambda **kw: calls.append(kw))
+
+    observability.init_sentry()
+
+    assert calls[0]["environment"] == "development"
+
+
+def test_sentry_traces_sample_rate_is_read_from_env(monkeypatch):
+    monkeypatch.setenv("SENTRY_DSN", "https://key@example.invalid/1")
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "0.25")
+    calls = []
+    monkeypatch.setattr("sentry_sdk.init", lambda **kw: calls.append(kw))
+
+    observability.init_sentry()
+
+    assert calls[0]["traces_sample_rate"] == 0.25

@@ -51,6 +51,9 @@ from backend.app.services.tasks import run_scan_task
 # Structured logging is configured before anything else so startup records
 # are formatted too.
 observability.configure_logging()
+# After configure_logging, never before: Sentry's logging integration
+# attaches to handlers that already exist.
+observability.init_sentry()
 logger = observability.get_logger("etproject.api")
 
 
