@@ -29,8 +29,6 @@
 import argparse
 import json
 import os
-import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -40,6 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from backend.app.disk_guard import force_rmtree
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.analysis.taint_analyzer import propagate_interprocedural_taint
@@ -220,28 +219,6 @@ def _print_table(title, agg):
 # Real-repo cloning (pinned)
 # ----------------------------------------------------------
 
-def _force_rmtree(path):
-    """rmtree that copes with git's read-only pack files.
-
-    git marks objects/pack/*.idx read-only; on Windows unlinking those raises
-    PermissionError [WinError 5]. Passing ignore_errors=True "fixes" that by
-    leaving the directory in place, which then makes `git clone` fail with exit
-    128 on a non-empty destination — a worse symptom than the original.
-    Clearing the read-only bit and retrying is the actual fix, and a genuine
-    failure is allowed to propagate so the caller can report it.
-    """
-    def _retry_after_chmod(func, target, _exc):
-        os.chmod(target, stat.S_IWRITE)
-        func(target)
-
-    # shutil renamed the hook onerror -> onexc in 3.12 (onerror deprecated).
-    # The handler signature is compatible with both.
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_retry_after_chmod)
-    else:
-        shutil.rmtree(path, onerror=_retry_after_chmod)
-
-
 def _is_valid_clone(dest):
     """True only if `dest` is a git repository git will actually talk to.
 
@@ -267,7 +244,7 @@ def _ensure_clone(entry):
         # over forever. Only ever removes a directory under CLONE_CACHE.
         print(f"[warn] {entry['name']}: cached clone is not a valid repository "
               f"— removing and re-cloning")
-        _force_rmtree(dest)
+        force_rmtree(dest)
     if not _is_valid_clone(dest):
         subprocess.run(["git", "clone", "--quiet", "--branch", entry["tag"],
                         "--depth", "1", entry["url"], str(dest)], check=True, timeout=300)

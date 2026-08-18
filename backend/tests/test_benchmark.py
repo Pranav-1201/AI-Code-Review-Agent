@@ -127,7 +127,7 @@ def test_read_only_files_do_not_block_cache_removal(tmp_path):
     pack.write_bytes(b"x")
     os.chmod(pack, stat.S_IREAD)
 
-    rb._force_rmtree(doomed)
+    rb.force_rmtree(doomed)
     assert not doomed.exists(), "read-only content survived the purge"
 
 
