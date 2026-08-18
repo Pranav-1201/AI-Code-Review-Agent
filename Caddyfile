@@ -1,0 +1,55 @@
+# ==========================================================
+# Phase F — the public edge. Serves the built React bundle and proxies the
+# API, so the whole application is ONE origin.
+#
+# Single origin is the point: a same-origin request has no CORS preflight to
+# fail, so ALLOWED_ORIGINS can stay unset in production instead of being a
+# second place a hostname has to be kept in sync.
+# ==========================================================
+
+# SITE_ADDRESS unset -> ":80", i.e. plain HTTP on any machine, which is what
+# makes a first `docker compose up` on a laptop work at all. Set it to a real
+# hostname and Caddy performs ACME issuance automatically, with no other
+# change anywhere. This one variable is the entire TLS story.
+{$SITE_ADDRESS::80} {
+
+	# handle_path (not handle) STRIPS the /api prefix before proxying, so
+	# /api/scan/{id}/stream reaches the backend as /scan/{id}/stream.
+	#
+	# That is load-bearing beyond routing: api_guard.is_stream_path matches on
+	# the request path to allow the ?api_key= carve-out that EventSource needs
+	# (it cannot set headers). Without stripping, the backend would see
+	# /api/scan/{id}/stream, is_stream_path would not match, and SSE would fail
+	# with a 401 that looks like an auth bug rather than a routing bug.
+	handle_path /api/* {
+		reverse_proxy api:8000 {
+			# OVERWRITE, never append. api_guard.client_identity trusts the
+			# FIRST entry of X-Forwarded-For, and reverse_proxy's default is to
+			# append the peer to whatever the client sent. A request arriving
+			# with a forged "X-Forwarded-For: 1.2.3.4" would be forwarded as
+			# "1.2.3.4, <real ip>", letting the caller choose its own
+			# rate-limit bucket — and rotating that value defeats
+			# RATE_LIMIT_PER_MINUTE entirely on /scan, the route that runs
+			# `git clone`.
+			#
+			# {remote_host} is the actual peer, so the header cannot be forged.
+			header_up X-Forwarded-For {remote_host}
+
+			# Server-sent events: /scan/{id}/stream holds the response open and
+			# writes progress as it happens. Buffering it would batch the whole
+			# scan into one delivery at the end, which looks exactly like a
+			# hung scan from the browser.
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * /srv
+		# React Router is client-side: /history/abc has no file on disk, so a
+		# refresh on any non-root route 404s without this line.
+		try_files {path} /index.html
+		file_server
+	}
+
+	encode gzip
+}
