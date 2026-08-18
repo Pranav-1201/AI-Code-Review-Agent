@@ -1,0 +1,19 @@
+# ==========================================================
+# Line endings for files that are executed by Linux, not read by Windows.
+#
+# core.autocrlf is true on the development machine, so without this a fresh
+# clone rewrites these files with CRLF. That is invisible in an editor and
+# fatal in a container: a shell script whose shebang line ends in \r fails
+# with "no such file or directory" naming an interpreter that plainly exists,
+# which is one of the least legible errors Docker can produce.
+#
+# Everything here ships INTO an image or is read by a Linux tool, so all of it
+# is pinned to LF regardless of platform.
+# ==========================================================
+
+*.sh            text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+Caddyfile       text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf

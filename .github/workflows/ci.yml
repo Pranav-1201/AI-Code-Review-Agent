@@ -4,8 +4,8 @@
 #
 # The July audit scored deployment readiness 3/10, and "no CI at all" was the
 # single biggest reason: every quality claim rested on someone remembering to
-# run the suite locally on Windows. This runs the same four commands on Linux,
-# on every push and PR.
+# run the suite locally on Windows. This runs the same checks on Linux, on every
+# push and PR.
 #
 # The checks mirror exactly what is run by hand before a commit:
 #   pytest                          backend suite
@@ -14,9 +14,14 @@
 #   vite build                      frontend production build
 #   vitest run                      frontend unit tests
 #   playwright test                 end-to-end smoke + 375/768 viewport gate
+#   docker compose up               both images build and the whole stack boots
 #
-# Backend and frontend are separate jobs so they run in parallel and a
-# frontend-only break is legible at a glance.
+# Backend, frontend, and deploy-stack are separate jobs so they run in parallel
+# and a break in one is legible at a glance. deploy-stack is the newest and the
+# one worth explaining: the development machine has no Docker, so before it the
+# compose stack had never actually been run anywhere. It builds both images,
+# boots everything, and drives the edge through Caddy, which turns "it deploys"
+# from a claim into a gate.
 
 name: CI
 
@@ -131,3 +136,167 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 7
+
+  deploy-stack:
+    name: Deploy stack (build images + boot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    # This job exists because the development machine has no Docker, so until
+    # now nothing in this repository had ever built the images or started the
+    # stack — the compose file was authored, reviewed, and shipped unexecuted
+    # from Phase B onward. The GitHub runner does have Docker, so the claim
+    # can simply be tested instead of deferred to whoever deploys.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: false
+          load: true
+          tags: local/acra:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build the web image
+        # Context is the repo root, not frontend/, because the Caddyfile lives
+        # beside docker-compose.yml. Same convention as backend/Dockerfile.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: false
+          load: true
+          tags: local/acra-web:ci
+          build-args: |
+            VITE_API_BASE=/api
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate the merged compose configuration
+        # Renders the base file and the overlay together, resolving variables
+        # and every !reset. A far stronger check than parsing the overlay
+        # alone, and it catches the realistic failure: an overlay that is
+        # valid YAML but does not merge.
+        env:
+          IMAGE_REPO: local/acra
+          WEB_IMAGE_REPO: local/acra-web
+          IMAGE_TAG: ci
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+
+      - name: Validate the Caddyfile
+        # Caddy only reports a bad config when it starts, where it surfaces as
+        # the edge never coming up and a 90-second timeout. Adapting the config
+        # explicitly turns that into an immediate, named error.
+        run: |
+          docker run --rm --entrypoint caddy local/acra-web:ci \
+            validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Boot the stack
+        env:
+          IMAGE_REPO: local/acra
+          WEB_IMAGE_REPO: local/acra-web
+          IMAGE_TAG: ci
+          # Deliberately the EMPTY STRING, not merely unset. There is no DNS
+          # name here and no way to complete an ACME challenge, so the stack
+          # has to come up on :80 — but empty is also the case that broke the
+          # first run of this job: Caddy substitutes a set-but-empty variable
+          # as empty, the site-address line collapsed to a bare "{", and Caddy
+          # read the whole site block as global options. Keeping it empty
+          # here is the regression test for that.
+          SITE_ADDRESS: ""
+          BACKUP_HOST_DIR: ./ci-backups
+          # Short enough that the smoke test can observe a snapshot actually
+          # being written, rather than only that the container started.
+          BACKUP_INTERVAL_SECONDS: "10"
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+      - name: Smoke test through the proxy
+        run: |
+          set -euo pipefail
+
+          # Wait for the edge rather than sleeping a fixed amount. `web`
+          # depends on the api healthcheck, so this also proves the
+          # healthcheck itself works.
+          for i in $(seq 1 90); do
+            if curl -fsS -o /dev/null http://localhost/api/health; then
+              echo "edge is up after ${i}s"
+              break
+            fi
+            if [ "$i" = "90" ]; then
+              echo "edge never came up" >&2
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "--- GET /api/health (proxied, prefix stripped) ---"
+          curl -fsS http://localhost/api/health | tee /tmp/health.json
+          echo
+
+          # The prefix strip is the subtle part of the Caddyfile, so assert it
+          # rather than assume it: the backend serves /health, and it is only
+          # reachable at /api/health if handle_path removed the prefix.
+          grep -q '"status"' /tmp/health.json
+
+          echo "--- GET / (SPA shell) ---"
+          curl -fsS http://localhost/ | head -c 400
+          echo
+
+          # try_files: a deep client-side route has no file on disk and must
+          # still return the shell rather than 404.
+          echo "--- GET /history/deep-link (client-side route) ---"
+          code=$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost/history/deep-link)
+          echo "$code"
+          test "$code" = "200"
+
+      - name: Confirm the API port is NOT published
+        # The overlay resets it. If this regresses, an unauthenticated API is
+        # exposed beside the proxy instead of behind it, which is the worst
+        # outcome available in this stack.
+        run: |
+          if curl -fsS -o /dev/null --max-time 5 http://localhost:8000/health; then
+            echo "FAIL: the API answered on :8000; the overlay's port reset regressed" >&2
+            exit 1
+          fi
+          echo "OK: :8000 is not published"
+
+      - name: Confirm a backup snapshot is actually written
+        # Not just that the service started. The store mounts read-only into
+        # the backup container, and SQLite readers of a WAL database need the
+        # -shm sidecar, so "can this even take a snapshot" is a real question
+        # that only a running stack can answer. Creating the store here is
+        # necessary because it is otherwise created lazily on the first scan.
+        run: |
+          set -euo pipefail
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api \
+            python -c "import sqlite3; c=sqlite3.connect('/data/scan_states.db'); c.execute('pragma journal_mode=WAL'); c.execute('create table if not exists ci_probe(x)'); c.commit()"
+
+          for i in $(seq 1 45); do
+            if ls ./ci-backups/scan-*.db >/dev/null 2>&1; then
+              echo "snapshot written after ${i}s:"
+              ls -l ./ci-backups/
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "no snapshot was written; backup service logs follow" >&2
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml logs backup >&2
+          exit 1
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=200
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
