@@ -183,3 +183,81 @@ GHCR rejects uppercase paths and this repository's owner has capitals.
   open production-readiness item tracked separately — the clone cache is worker-local
   and ephemeral per container here, so it self-limits until the worker is given a
   persistent cache volume.
+
+## Operations (Phase E)
+
+### Disk ceilings
+
+Two caches grow as repositories are scanned: a full git clone per distinct
+repository URL, and a small JSON prior per repository used for incremental
+re-analysis. Both are now bounded.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `MAX_CACHE_MB` | `5120` | Combined ceiling across both caches. When exceeded, least-recently-scanned repositories are evicted — clone and prior together — at the start of the next scan. |
+| `MAX_REPO_MB` | `1024` | Ceiling on a single repository. A clone growing past it is killed mid-flight, the partial tree deleted, and the scan fails with a clear error. |
+
+Eviction runs inline at the start of a scan, not on a timer. An idle
+deployment therefore reclaims nothing until the next scan arrives — which is
+also the moment it next needs the space. If a host is tight on disk, lower
+`MAX_CACHE_MB` rather than adding a cron job.
+
+Eviction is best-effort: if it fails (a directory locked longer than the
+delete retry budget), it is logged and the scan proceeds. It is housekeeping,
+not part of the scan's contract.
+
+A clone and its prior are always evicted as a pair. An orphaned prior would be
+the dangerous direction — the pipeline gates incremental analysis on both
+existing, so a prior without its clone falls back to a full scan correctly,
+while a clone without its prior would silently stop diffing history.
+
+`MAX_REPO_MB` is the guard against a hostile or accidental giant repository.
+The clone timeout is not a substitute: a fast link moves many gigabytes well
+inside 300 seconds. A watchdog thread polls the clone directory and kills git
+on breach, because git has no native size limit.
+
+### Logs
+
+Containers emit one JSON object per line — the Dockerfile sets
+`LOG_FORMAT=json`. Every record carries `timestamp`, `level`, `logger`,
+`message`, and `scan_id`, plus `exc_info` when an exception is attached.
+
+`scan_id` is `null` outside a scan, so it is always present and filtering a
+whole scan out of an aggregator is a single query. The root logger is
+configured, so uvicorn and celery records are included.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+| `LOG_FORMAT` | `text` | `text` or `json`. The Dockerfile overrides this to `json`. |
+
+Set `LOG_FORMAT=text` when tailing a container by hand and you want it
+readable.
+
+### Error reporting
+
+Sentry is off unless `SENTRY_DSN` is set — with no DSN configured, nothing is
+sent anywhere. To turn it on, set the DSN and optionally `SENTRY_ENVIRONMENT`
+(default `development`), then restart the API and the worker.
+
+`SENTRY_TRACES_SAMPLE_RATE` defaults to `0.0`; raise it only if you want
+performance tracing and accept the cost.
+
+### Optional ML stack
+
+The production image does **not** install `torch`, `transformers`,
+`sentence-transformers`, or `faiss-cpu`. No shipped configuration could reach
+that code: no FAISS index is built into the image, so retrieval takes its
+fallback path, and `ENABLE_CODEBERT` defaults to `false`. Removing them took
+the base lock from 282 pinned packages to 163 and dropped the multi-gigabyte
+CPU-torch wheel.
+
+A deployment that genuinely wants CodeBERT scoring or FAISS retrieval needs
+both locks, and an index built into the image:
+
+```
+pip install -r requirements.lock -r requirements-ml.lock
+```
+
+Without the extra installed, the retrieval and CodeBERT paths degrade quietly
+and log at warning level. They do not fail the scan.
