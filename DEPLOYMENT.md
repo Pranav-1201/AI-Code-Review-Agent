@@ -24,9 +24,123 @@ docker compose up --build
 ```
 
 That builds one image (used by both `api` and `worker`) and starts `redis`, `api`,
-and `worker`. First build is **multi-GB and slow** — `requirements.txt` pulls
-torch/transformers/faiss (CPU wheels). Subsequent code-only rebuilds are fast
-(deps are a cached layer).
+and `worker`. Phase E moved the ML stack (torch/transformers/faiss) out of this
+image into `requirements-ml.lock`, which the Dockerfile does not install, so the
+base lock is 174 packages and the multi-GB CPU-torch wheel is gone. Code-only
+rebuilds are fast — dependencies are a cached layer.
+
+This is the **development** stack. For a real deployment, see
+[Deploy to a VPS](#deploy-to-a-vps-phase-f) below, which adds TLS, a web tier,
+backups, and a rollback.
+
+## Deploy to a VPS (Phase F)
+
+The development stack above has no TLS, no frontend host, and no backup. This
+section is the production path: one host, Caddy at the edge, images pulled by
+tag so a rollback is a redeploy rather than a rebuild.
+
+Everything the application serves lives on **one origin** — Caddy serves the
+built React bundle at `/` and reverse-proxies `/api/*` to the API container. A
+same-origin request has no CORS preflight to fail, which is why
+`ALLOWED_ORIGINS` can stay unset in production.
+
+### Requirements
+
+- A host with **Docker Engine** and **Docker Compose v2.24 or newer**. The
+  overlay uses `!reset` to remove the API's published port; older Compose
+  versions reject the file rather than ignoring the tag.
+- **Ports 80 and 443 both open.** 80 is required even though only 443 serves
+  traffic: Let's Encrypt's HTTP-01 challenge uses it.
+- A **DNS A record** pointing at the host, if you want TLS. Without one the
+  stack still runs, on plain HTTP.
+
+### First deploy
+
+```bash
+git clone https://github.com/Pranav-1201/AI-Code-Review-Agent.git
+cd AI-Code-Review-Agent
+cp .env.example .env
+```
+
+Edit `.env` and set at minimum:
+
+| Variable | Why |
+|---|---|
+| `API_KEY` | **Not optional here.** `/scan` runs `git clone` on request. Leaving it unset publishes that to anyone who finds the host. |
+| `SITE_ADDRESS` | Your hostname, e.g. `scan.example.com`. Unset means plain HTTP on `:80`. |
+| `BACKUP_HOST_DIR` | Where snapshots land on the host, e.g. `/var/lib/acra-backups`. |
+
+Then bring it up:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+Caddy obtains a certificate on first boot. Nothing else is needed for TLS.
+
+### Verification checklist
+
+Confirm each of these yourself. None of them is asserted by this repository.
+
+- [ ] `docker compose -f docker-compose.yml -f docker-compose.prod.yml ps`
+      shows `api` **healthy**, and `web`, `worker`, `redis`, `backup` running.
+- [ ] `curl -fsS https://<host>/api/health` returns JSON containing
+      `"auth": "enabled"`. **If it says `disabled`, stop** — `API_KEY` did not
+      reach the container, and the deployment is open.
+- [ ] The app loads at `https://<host>/`.
+- [ ] A deep link such as `https://<host>/history/x` survives a browser
+      refresh (proves Caddy's `try_files` is serving the SPA shell).
+- [ ] A scan's live progress updates continuously rather than arriving all at
+      once at the end (proves SSE is not being buffered).
+- [ ] `curl http://<host>:8000/health` **fails to connect.** Success means the
+      API is exposed beside the proxy instead of behind it, which skips the
+      `X-Forwarded-For` normalisation the rate limiter depends on.
+- [ ] After one `BACKUP_INTERVAL_SECONDS`, `ls $BACKUP_HOST_DIR` contains a
+      `scan-*.db`.
+
+### Upgrade
+
+```bash
+IMAGE_TAG=<sha> docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+IMAGE_TAG=<sha> docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### Rollback
+
+The same two commands with an earlier commit sha. Both the API and web images
+carry the same tag and are published on the same run, so they move together —
+rolling back only one would leave a bundle talking to an API it disagrees with.
+
+Available tags are listed under the repository's Packages on GitHub.
+
+### Restore the scan store
+
+Stop the stack first. `scripts/restore-sqlite.sh` refuses a snapshot that
+fails `integrity_check`, and deletes the `-wal`/`-shm` sidecars, which
+otherwise get replayed over the restored file and quietly bring the old data
+back.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+./scripts/restore-sqlite.sh /var/lib/acra-backups/scan-20260819T000000Z.db
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+### What CI proves, and what it does not
+
+The `deploy-stack` job in `.github/workflows/ci.yml` runs on every push. It
+builds both images, renders the merged compose configuration, boots the whole
+stack, and drives it through Caddy — asserting that `/api/health` is reachable
+(so the `/api` prefix is being stripped), that a deep link returns the SPA
+shell, that port 8000 is **not** published, and that a backup snapshot is
+actually written.
+
+So "the images build", "the stack boots", and "the proxy routes correctly" are
+gated claims, not assurances.
+
+**Not covered by CI, and genuinely unverified until you deploy:** TLS
+certificate issuance, real DNS, and behaviour under load. The CI job runs on
+`:80` with no hostname, so it never exercises ACME.
 
 ## Verification checklist — please confirm on your Docker-capable machine
 
@@ -179,10 +293,12 @@ GHCR rejects uppercase paths and this repository's owner has capitals.
   copy ships inside a public static bundle. It raises the cost of drive-by abuse
   of `/scan`; it does not identify or isolate callers. A login + short-lived
   token flow is the real answer if this ever serves more than its owner.
-- **Clone-cache disk growth** (one full clone per repo_url, no eviction) is an
-  open production-readiness item tracked separately — the clone cache is worker-local
-  and ephemeral per container here, so it self-limits until the worker is given a
-  persistent cache volume.
+- **Disk ceilings bound the caches, not the whole host.** Phase E added LRU
+  eviction across both caches (`MAX_CACHE_MB`) and a clone-size watchdog
+  (`MAX_REPO_MB`); see "Operations (Phase E) → Disk ceilings" below for the
+  values and how they interact. What remains true is that those ceilings cover
+  the *analysis caches* only — the backup directory added in Phase F sits
+  outside them and is bounded separately by `BACKUP_KEEP`.
 
 ## Operations (Phase E)
 

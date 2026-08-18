@@ -3,7 +3,7 @@
 **Date:** 2026-08-19
 **Branch:** `phase-f/deploy`
 **Baseline:** `main` = `69b941e` (Phase E shipped, CI green, pytest 324/0)
-**Status:** design approved, implementation pending
+**Status:** implemented on `phase-f/deploy`; corrections from implementation folded back in
 
 ---
 
@@ -55,18 +55,27 @@ What CAN be verified locally:
 | Artifact | Verification | Tool |
 |---|---|---|
 | `docker-compose.prod.yml` | parses as YAML, expected services/keys present | `python -c "import yaml..."` |
-| `frontend/Dockerfile` | *nothing* — no docker, no hadolint | — |
-| `Caddyfile` | *nothing* — no `caddy` binary | — |
+| `frontend/Dockerfile` | *nothing locally* — built and run by the CI `deploy-stack` job | — |
+| `Caddyfile` | *nothing locally* — exercised by the CI `deploy-stack` job | — |
 | Frontend still builds | exit 0 | `npm run build` |
 | Types still check | exit 0 | `npx tsc -b` |
 | Backend unaffected | 324/0 | `.\venv\Scripts\python.exe -m pytest` |
 
-What CANNOT be verified, and must be labelled as such in every claim: that the
-images build, that the compose stack boots, that Caddy's config is syntactically
-valid, that TLS issuance works, that the proxy path actually reaches the API.
+**Corrected during implementation.** The original draft of this section said the
+image build and the stack boot could not be verified at all. That was true of
+*this machine* and false of *CI*: the GitHub runner has Docker, and `release.yml`
+was already building images on it. A `deploy-stack` job now builds both images,
+renders the merged compose configuration, boots the stack, and drives it through
+Caddy — asserting the `/api` prefix is stripped, that a deep link returns the SPA
+shell, that port 8000 is not published, and that a backup snapshot is written.
 
-The DEPLOYMENT.md checklist exists precisely to convert that list into something
-the operator confirms on a Docker-capable machine.
+So the following are **gated in CI**, not assumed: images build, stack boots,
+Caddy's configuration is valid, the proxy reaches the API.
+
+What genuinely remains unverified until someone deploys: **TLS issuance, real
+DNS, and behaviour under load.** The CI job runs on `:80` with no hostname, so
+it never exercises ACME. The DEPLOYMENT.md checklist covers exactly that
+remainder.
 
 ---
 
@@ -120,7 +129,8 @@ on the compose network.
 
 ### 4.1 `frontend/Dockerfile` — two stages
 
-Stage 1, `node:22-alpine` (matches the local Node v22.14.0): `npm ci` →
+Stage 1, `node:20-alpine` (matches `ci.yml`, the only version this frontend
+has evidence of building under): `npm ci` →
 `npm run build` → `/app/dist`.
 
 Stage 2, `caddy:2-alpine`: copy `dist` to `/srv`, copy `Caddyfile` to
@@ -145,9 +155,11 @@ anything inlined into a static bundle is readable by anyone who loads the page.
 boundary is deliberate: that is where someone will be tempted to pass a real
 secret.
 
-A `frontend/.dockerignore` is required, not optional. Without it the build
-context includes `node_modules/` and `dist/`, which is both slow and can shadow
-the `npm ci` result.
+**Build context is the repository root**, matching `backend/Dockerfile`, because
+the `Caddyfile` lives at the root beside `docker-compose.yml`. That also means no
+`frontend/.dockerignore` is needed: the root `.dockerignore` already excludes
+`frontend/node_modules/` and `frontend/dist/`, which would otherwise be slow to
+send and could shadow the `npm ci` result.
 
 ### 4.2 `Caddyfile`
 
@@ -313,22 +325,34 @@ Phase F is configuration and documentation. It adds no Python and no TypeScript,
 so it adds no unit tests — a test asserting the *contents* of a YAML file tests
 the file against itself.
 
-What is tested:
+**A pytest-based compose check was planned and rejected.** It would have needed
+`import yaml`, and `pyyaml` is not a declared dependency: it appears only in
+`requirements-ml.lock`, which neither the production image nor the CI backend job
+installs. It imports on the development machine solely because the dev venv still
+carries the ML stack. Such a test would have passed locally and died at collection
+in CI — the same failure Phase E hit with `httpx`, from the same cause. It would
+also have been the weaker check: `docker compose config` validates the *merged*
+base-plus-overlay result, which is the thing that actually has to work.
 
-1. **`docker-compose.prod.yml` parses and has the expected shape.** A check that
-   loads the YAML and asserts the services exist, that `api` no longer publishes
-   a port, and that image references are tag-parameterized. This catches the
-   realistic failure (a typo making the overlay unusable) without asserting
-   trivia.
-2. **The frontend still builds and typechecks.** `npm run build`, `npx tsc -b`.
-   Relevant because §4.1 changes how the frontend is configured at build time.
-3. **The backend is untouched.** Full pytest run, expected 324/0. Any deviation
-   means the change was not as inert as claimed.
+What is tested, and where:
 
-Explicitly NOT tested, and honest to say so rather than approximate: image build,
-stack boot, Caddy config validity, TLS issuance, proxy reachability, backup
-execution. No local tool can perform any of these. They are the content of the
-operator checklist in §5.1.
+| Claim | Gate |
+|---|---|
+| Both images build | CI `deploy-stack` |
+| Base and overlay merge into a valid configuration | CI `deploy-stack` (`docker compose config`) |
+| The stack boots and the API reaches `healthy` | CI `deploy-stack` |
+| Caddy strips the `/api` prefix | CI `deploy-stack` (`GET /api/health`) |
+| Deep links serve the SPA shell | CI `deploy-stack` (`GET /history/deep-link`) |
+| Port 8000 is not published | CI `deploy-stack` (negative check) |
+| A backup snapshot is actually written | CI `deploy-stack` |
+| The frontend still builds and typechecks | local + CI `frontend` |
+| The backend is untouched | local + CI `backend` (324 passed) |
+
+Explicitly NOT tested, because nothing available can test it: **TLS issuance,
+real DNS, and behaviour under load.** The CI job runs on `:80` with no hostname,
+so ACME is never exercised. That remainder is the content of the operator
+checklist in §5.1 — and it is a much shorter list than this document originally
+assumed.
 
 ---
 
