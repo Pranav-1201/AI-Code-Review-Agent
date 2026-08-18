@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app import api_guard
+from backend.app import disk_guard
 
 from backend.app.services.scan_manager import (
     create_scan,
@@ -229,6 +230,14 @@ def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "sen
 
     os.makedirs(CLONE_CACHE, exist_ok=True)
     repo_dir = os.path.join(CLONE_CACHE, hashlib.md5(repo_url.encode("utf-8")).hexdigest())
+
+    # Bound the disk before adding to it. `keep` is this scan's own key so a
+    # sweep can never delete the cached clone this run is about to reuse.
+    disk_guard.evict_caches(
+        CLONE_CACHE,
+        incremental.CACHE_DIR,
+        keep=os.path.basename(repo_dir),
+    )
 
     since_sha = None
     prior_files = None
