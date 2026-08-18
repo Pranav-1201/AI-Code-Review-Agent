@@ -11,7 +11,6 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import subprocess
 import tempfile
-import shutil
 import hashlib
 import asyncio
 import json
@@ -267,12 +266,11 @@ def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "sen
             # re-scans can diff. Not shallow (no --depth 1) for that reason.
             update_scan(scan_id, "cloning", 5, stage="cloning",
                         stage_detail="Cloning repository...")
-            shutil.rmtree(repo_dir, ignore_errors=True)  # clear any stale/partial dir
-            subprocess.run(
-                ["git", "-c", "http.postBuffer=524288000", "clone",
-                 "--single-branch", repo_url, repo_dir],
-                check=True, timeout=300,
-            )
+            # clone_with_limit clears any stale/partial dir itself, using the
+            # rmtree that copes with git's read-only packfiles — the plain
+            # ignore_errors=True call this replaces could leave the directory
+            # behind and make the clone fail with exit 128.
+            disk_guard.clone_with_limit(repo_url, repo_dir, timeout=300)
 
         update_scan(scan_id, "analyzing", 15,
                     stage="cloning", stage_detail="Repository ready")

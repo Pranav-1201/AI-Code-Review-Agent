@@ -156,3 +156,149 @@ def test_max_cache_mb_reads_env_at_call_time(monkeypatch):
     assert disk_guard.max_cache_mb() == 77
     monkeypatch.delenv("MAX_CACHE_MB")
     assert disk_guard.max_cache_mb() == disk_guard.DEFAULT_MAX_CACHE_MB
+
+
+def _growing_clone_command(dest, total_mb, chunk_mb=1, delay=0.05):
+    """A fake `git clone`: creates dest and grows a file inside it.
+
+    Used instead of a real clone so the watchdog is tested against observable
+    growth without a network dependency in the suite.
+    """
+    script = textwrap.dedent(
+        f"""
+        import os, time
+        os.makedirs({str(dest)!r}, exist_ok=True)
+        with open(os.path.join({str(dest)!r}, "big.bin"), "wb") as fh:
+            for _ in range({total_mb} // {chunk_mb}):
+                fh.write(b"x" * ({chunk_mb} * 1024 * 1024))
+                fh.flush()
+                os.fsync(fh.fileno())
+                time.sleep({delay})
+        """
+    )
+    return [sys.executable, "-c", script]
+
+
+def test_watchdog_kills_a_clone_that_exceeds_the_cap(tmp_path):
+    dest = tmp_path / "huge"
+
+    with pytest.raises(disk_guard.RepoTooLargeError) as excinfo:
+        disk_guard.clone_with_limit(
+            "https://example.invalid/huge.git",
+            str(dest),
+            max_mb=2,
+            poll_seconds=0.05,
+            command=_growing_clone_command(dest, total_mb=40),
+        )
+
+    assert excinfo.value.limit_mb == 2
+    # The partial clone must not be left behind eating disk.
+    assert not dest.exists()
+
+
+def test_a_small_clone_completes_untouched(tmp_path):
+    """The guard must not be passing by killing everything."""
+    dest = tmp_path / "small"
+
+    disk_guard.clone_with_limit(
+        "https://example.invalid/small.git",
+        str(dest),
+        max_mb=64,
+        poll_seconds=0.05,
+        command=_growing_clone_command(dest, total_mb=2),
+    )
+
+    assert dest.exists()
+    assert (dest / "big.bin").exists()
+
+
+def test_a_failing_clone_raises_called_process_error(tmp_path):
+    dest = tmp_path / "broken"
+
+    with pytest.raises(subprocess.CalledProcessError):
+        disk_guard.clone_with_limit(
+            "https://example.invalid/broken.git",
+            str(dest),
+            max_mb=64,
+            poll_seconds=0.05,
+            command=[sys.executable, "-c", "raise SystemExit(128)"],
+        )
+
+
+def test_post_clone_check_catches_a_repo_that_slipped_past_polling(tmp_path):
+    """A clone can finish between two polls; the size check must still fire."""
+    dest = tmp_path / "fast"
+    script = textwrap.dedent(
+        f"""
+        import os
+        os.makedirs({str(dest)!r}, exist_ok=True)
+        with open(os.path.join({str(dest)!r}, "big.bin"), "wb") as fh:
+            fh.write(b"x" * (4 * 1024 * 1024))
+        """
+    )
+
+    with pytest.raises(disk_guard.RepoTooLargeError):
+        disk_guard.clone_with_limit(
+            "https://example.invalid/fast.git",
+            str(dest),
+            max_mb=1,
+            poll_seconds=30,  # guarantees no poll fires before the process ends
+            command=[sys.executable, "-c", script],
+        )
+
+    assert not dest.exists()
+
+
+def test_max_repo_mb_reads_env_at_call_time(monkeypatch):
+    monkeypatch.setenv("MAX_REPO_MB", "42")
+    assert disk_guard.max_repo_mb() == 42
+    monkeypatch.delenv("MAX_REPO_MB")
+    assert disk_guard.max_repo_mb() == disk_guard.DEFAULT_MAX_REPO_MB
+
+
+def test_clone_refuses_a_url_that_parses_as_a_git_option(tmp_path):
+    """`git clone --upload-pack=<cmd>` executes <cmd>; a dash-leading URL must not reach git."""
+    with pytest.raises(ValueError):
+        disk_guard.clone_with_limit(
+            "--upload-pack=touch owned",
+            str(tmp_path / "dest"),
+            max_mb=64,
+        )
+
+
+def test_force_rmtree_retries_a_transient_sharing_violation(tmp_path, monkeypatch):
+    """A just-killed process releases its handles a moment after it dies.
+
+    Windows raises PermissionError [WinError 32] in that window, which no
+    chmod can fix -- force_rmtree has to wait it out rather than propagate.
+    """
+    victim = tmp_path / "locked"
+    victim.mkdir()
+    (victim / "held.bin").write_text("data")
+
+    real_rmtree = disk_guard.shutil.rmtree
+    calls = []
+
+    def _flaky(path, **kwargs):
+        calls.append(path)
+        if len(calls) < 3:
+            raise PermissionError(32, "The process cannot access the file")
+        return real_rmtree(path, **kwargs)
+
+    monkeypatch.setattr(disk_guard.shutil, "rmtree", _flaky)
+
+    disk_guard.force_rmtree(victim, attempts=5, delay=0.01)
+
+    assert len(calls) == 3
+    assert not victim.exists()
+
+
+def test_force_rmtree_gives_up_on_a_permanently_locked_path(tmp_path, monkeypatch):
+    """The retry is bounded -- a genuinely locked directory must still raise."""
+    def _always_locked(path, **kwargs):
+        raise PermissionError(32, "The process cannot access the file")
+
+    monkeypatch.setattr(disk_guard.shutil, "rmtree", _always_locked)
+
+    with pytest.raises(PermissionError):
+        disk_guard.force_rmtree(tmp_path, attempts=3, delay=0.01)

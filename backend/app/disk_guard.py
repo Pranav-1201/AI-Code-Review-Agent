@@ -22,7 +22,10 @@
 import os
 import shutil
 import stat
+import subprocess
 import sys
+import threading
+import time
 
 DEFAULT_MAX_CACHE_MB = 5120
 DEFAULT_MAX_REPO_MB = 1024
@@ -48,15 +51,24 @@ def max_repo_mb():
     return _int_env("MAX_REPO_MB", DEFAULT_MAX_REPO_MB)
 
 
-def force_rmtree(path):
-    """rmtree that copes with git's read-only pack files.
+def force_rmtree(path, attempts=10, delay=0.2):
+    """rmtree that copes with BOTH ways Windows holds a git directory open.
 
-    git marks objects/pack/*.idx read-only; on Windows unlinking those raises
-    PermissionError [WinError 5]. Passing ignore_errors=True "fixes" that by
-    leaving the directory in place, which then makes `git clone` fail with exit
-    128 on a non-empty destination — a worse symptom than the original.
-    Clearing the read-only bit and retrying is the actual fix, and a genuine
-    failure is allowed to propagate so the caller can report it.
+    Two distinct failures, one function, because callers should not have to
+    know which of them they are about to hit:
+
+    1. git marks objects/pack/*.idx read-only, so unlinking raises
+       PermissionError [WinError 5]. The onexc/onerror hook clears the
+       read-only bit and retries that single file.
+
+    2. A process that has just been killed does not release its open handles
+       synchronously -- TerminateProcess signals the process object, but the
+       kernel frees the handle a moment later. A delete issued in between
+       raises PermissionError [WinError 32], a sharing violation, which no
+       amount of chmod will fix. The bounded retry below waits it out.
+
+    Retries are capped (default ~2s total) so a directory that is genuinely
+    locked still raises rather than hanging the scan.
 
     Moved here from run_benchmark.py in Phase E: eviction and the clone
     watchdog both delete git directories, so all three callers need it.
@@ -65,12 +77,19 @@ def force_rmtree(path):
         os.chmod(target, stat.S_IWRITE)
         func(target)
 
-    # shutil renamed the hook onerror -> onexc in 3.12 (onerror deprecated).
-    # The handler signature is compatible with both.
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_retry_after_chmod)
-    else:
-        shutil.rmtree(path, onerror=_retry_after_chmod)
+    for attempt in range(attempts):
+        try:
+            # shutil renamed the hook onerror -> onexc in 3.12 (onerror
+            # deprecated). The handler signature is compatible with both.
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=_retry_after_chmod)
+            else:
+                shutil.rmtree(path, onerror=_retry_after_chmod)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
 
 
 def dir_size_bytes(path):
@@ -196,3 +215,96 @@ def evict_caches(clone_cache, prior_cache, max_mb=None, keep=None):
         evicted.append(key)
 
     return evicted
+
+
+# ----------------------------------------------------------
+# Clone size watchdog
+# ----------------------------------------------------------
+#
+# git has no native size limit, which is why this is a watchdog rather than a
+# flag. Polling beats a pre-clone provider API query, which only covers hosts
+# exposing a size endpoint, adds a network round-trip to the scan path, and is
+# bypassed entirely by a self-hosted host. It beats a post-clone-only check
+# because by then the disk has already absorbed the whole repository — that
+# bounds the cache, not the peak.
+
+GIT_CLONE_BASE = ["git", "-c", "http.postBuffer=524288000", "clone",
+                  "--single-branch"]
+
+
+class RepoTooLargeError(RuntimeError):
+    """A repository exceeded MAX_REPO_MB during or after cloning."""
+
+    def __init__(self, size_mb, limit_mb):
+        super().__init__(
+            f"Repository is {size_mb:.0f} MB, over the {limit_mb} MB limit"
+        )
+        self.size_mb = size_mb
+        self.limit_mb = limit_mb
+
+
+def clone_with_limit(url, dest, max_mb=None, timeout=300, poll_seconds=2.0,
+                     command=None):
+    """Clone `url` into `dest`, killing it if it grows past the cap.
+
+    A daemon thread polls dest's size while git runs. On breach the process is
+    killed and the partial clone deleted, so a hostile repository cannot leave
+    gigabytes behind. A post-clone check covers a repository that finishes
+    between two polls.
+
+    `command` overrides the git argv and exists for tests; production callers
+    leave it None.
+    """
+    limit_mb = max_mb if max_mb is not None else max_repo_mb()
+    limit_bytes = limit_mb * 1024 * 1024
+
+    # `git clone` parses a leading-dash argument as an option, and
+    # --upload-pack=<cmd> executes <cmd>. api_guard.validate_repo_url already
+    # requires an https:// URL on an allowlisted host, so this cannot be
+    # reached through the API — but this helper is module-level and its next
+    # caller may not go through that check, so the sink guards itself.
+    if url.startswith("-"):
+        raise ValueError(f"refusing to clone a URL that parses as a git option: {url!r}")
+
+    # Any stale or partial directory from a previous attempt, cleared the way
+    # that copes with git's read-only packfiles.
+    if os.path.exists(dest):
+        force_rmtree(dest)
+
+    argv = command if command is not None else [*GIT_CLONE_BASE, "--", url, dest]
+    proc = subprocess.Popen(argv)
+
+    breach = {"size": None}
+    done = threading.Event()
+
+    def _watch():
+        while not done.wait(poll_seconds):
+            size = dir_size_bytes(dest)
+            if size > limit_bytes:
+                breach["size"] = size
+                proc.kill()
+                return
+
+    watcher = threading.Thread(target=_watch, daemon=True)
+    watcher.start()
+
+    try:
+        proc.wait(timeout=timeout)
+    finally:
+        done.set()
+        watcher.join(timeout=5)
+
+    if breach["size"] is not None:
+        if os.path.exists(dest):
+            force_rmtree(dest)
+        raise RepoTooLargeError(breach["size"] / (1024 * 1024), limit_mb)
+
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, argv)
+
+    # The clone can finish inside one poll interval, so the cap is enforced
+    # once more against the finished tree.
+    final = dir_size_bytes(dest)
+    if final > limit_bytes:
+        force_rmtree(dest)
+        raise RepoTooLargeError(final / (1024 * 1024), limit_mb)
