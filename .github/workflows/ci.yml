@@ -190,6 +190,13 @@ jobs:
           IMAGE_TAG: ci
         run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 
+      - name: Validate the Caddyfile
+        # Caddy only reports a bad config when it starts, where it surfaces as
+        # the edge never coming up and a 90-second timeout. Adapting the config
+        # explicitly turns that into an immediate, named error.
+        run: |
+          docker run --rm --entrypoint caddy local/acra-web:ci             validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
       - name: Boot the stack
         env:
           IMAGE_REPO: local/acra

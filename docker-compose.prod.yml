@@ -59,7 +59,15 @@ services:
     # certificate automatically. Port 80 must stay open even when only 443
     # serves traffic: the HTTP-01 challenge uses it.
     environment:
-      SITE_ADDRESS: ${SITE_ADDRESS:-}
+      # Default is ":80" here, NOT the empty string. Caddy substitutes a
+      # set-but-empty variable as empty, which collapses the site-address line
+      # to a bare "{" — and Caddy then reads the whole site block as the
+      # GLOBAL OPTIONS block, failing with "unrecognized global option:
+      # handle_path". The Caddyfile's own {$SITE_ADDRESS::80} default only
+      # covers the variable being UNSET, which it never is once compose
+      # passes it. Compose's :- covers unset AND empty, so the fix belongs
+      # here.
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
     ports:
       - "80:80"
       - "443:443"
