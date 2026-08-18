@@ -195,15 +195,21 @@ jobs:
         # the edge never coming up and a 90-second timeout. Adapting the config
         # explicitly turns that into an immediate, named error.
         run: |
-          docker run --rm --entrypoint caddy local/acra-web:ci             validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          docker run --rm --entrypoint caddy local/acra-web:ci \
+            validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Boot the stack
         env:
           IMAGE_REPO: local/acra
           WEB_IMAGE_REPO: local/acra-web
           IMAGE_TAG: ci
-          # Left unset on purpose so Caddy binds :80 and serves plain HTTP.
-          # There is no DNS name here and no way to complete an ACME challenge.
+          # Deliberately the EMPTY STRING, not merely unset. There is no DNS
+          # name here and no way to complete an ACME challenge, so the stack
+          # has to come up on :80 — but empty is also the case that broke the
+          # first run of this job: Caddy substitutes a set-but-empty variable
+          # as empty, the site-address line collapsed to a bare "{", and Caddy
+          # read the whole site block as global options. Keeping it empty
+          # here is the regression test for that.
           SITE_ADDRESS: ""
           BACKUP_HOST_DIR: ./ci-backups
           # Short enough that the smoke test can observe a snapshot actually
