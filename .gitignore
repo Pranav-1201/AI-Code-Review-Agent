@@ -84,3 +84,7 @@ frontend/blob-report/
 # ==========================================================
 .cache/
 models/
+# Phase F: SQLite snapshots written by the backup service (host bind mount).
+# These are database copies — never commit them.
+/backups/
+/ci-backups/
