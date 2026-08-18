@@ -5,6 +5,12 @@
 # One image serves BOTH the api and worker services — same code, the compose
 # service picks the command (see backend/Dockerfile and docker-compose.yml).
 #
+# A SECOND image carries the web tier (frontend/Dockerfile: the built React
+# bundle served by Caddy). Both are tagged with the same commit sha on the
+# same run, because the bundle and the API are versioned together and can
+# disagree about request shapes — rolling back only one would not be a
+# rollback.
+#
 # Deliberately a SEPARATE workflow from ci.yml, gated on CI succeeding: a
 # published image that never passed the tests is worse than no image, because
 # the tag implies it did. `workflow_run` is what enforces that ordering.
@@ -49,7 +55,10 @@ jobs:
         # GHCR rejects uppercase in image paths and this repository's owner has
         # capitals, so ${{ github.repository }} cannot be used raw.
         id: img
-        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+        run: |
+          base="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "name=$base" >> "$GITHUB_OUTPUT"
+          echo "web=$base-web" >> "$GITHUB_OUTPUT"
 
       - name: Resolve commit SHA
         id: sha
@@ -76,5 +85,29 @@ jobs:
             ${{ steps.img.outputs.name }}:latest
           # The torch/transformers layer is multi-GB and identical across
           # code-only changes; without a cache every push re-downloads it.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push the web image
+        # The frontend bundle and the API are versioned together and can
+        # disagree about request shapes, so a sha-tagged rollback covering
+        # only the API would not be a rollback.
+        #
+        # Context is the repo root, not frontend/, because the Caddyfile lives
+        # beside docker-compose.yml. Same convention as backend/Dockerfile.
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.img.outputs.web }}:${{ steps.sha.outputs.value }}
+            ${{ steps.img.outputs.web }}:latest
+          build-args: |
+            VITE_API_BASE=/api
+          # VITE_API_KEY is deliberately absent. Vite inlines these values into
+          # the bundle and a published image is a public artifact, so passing a
+          # key here would publish the key. A deployment that wants one builds
+          # the web image on the host; DEPLOYMENT.md says how.
           cache-from: type=gha
           cache-to: type=gha,mode=max
