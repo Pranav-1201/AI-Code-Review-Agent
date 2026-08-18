@@ -9,7 +9,6 @@ import os
 import ast
 from typing import Dict, List, Any
 
-from backend.app.services.retriever_service import CodeRetriever
 from backend.app.services.security_analyzer import detect_security_issues
 from backend.app.services.quality_scorer import compute_quality_score
 from backend.app.analysis.cohesion_analyzer import size_verdict
@@ -80,6 +79,11 @@ def get_retriever():
     global _retriever
 
     if _retriever is None:
+        # Local import: retriever_service reaches for the optional ML stack,
+        # and importing it at module scope would make every scan path require
+        # dependencies no shipped configuration can reach.
+        from backend.app.services.retriever_service import CodeRetriever
+
         _retriever = CodeRetriever()
 
     return _retriever

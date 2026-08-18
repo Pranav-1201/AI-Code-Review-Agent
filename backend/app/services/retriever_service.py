@@ -3,12 +3,16 @@
 # Purpose: Retrieve relevant repository context using FAISS
 # ==========================================================
 
-import faiss
 import pickle
 from pathlib import Path
 from typing import List
 
-from sentence_transformers import SentenceTransformer
+# NOTE: faiss and sentence_transformers are NOT imported here. Phase E moved
+# the ML stack to an optional requirements-ml.txt, and the scan path imports
+# this module unconditionally, so a module-scope import would make every scan
+# require dependencies that no shipped configuration can actually use. Both
+# are imported inside the functions that need them, and ImportError folds into
+# the graceful-degradation path this module already had.
 
 from backend.app.observability import get_logger
 
@@ -42,9 +46,13 @@ def get_embedding_model():
 
     if _embedding_model is None:
         try:
+            from sentence_transformers import SentenceTransformer
+
             _embedding_model = SentenceTransformer(MODEL_NAME)
         except Exception as e:
-            logger.warning("failed to load embedding model: %s", e)
+            # ImportError is an Exception, so a base install with no ML extra
+            # lands here exactly like a model that failed to download.
+            logger.warning("embedding model unavailable: %s", e)
             _embedding_model = None
 
     return _embedding_model
@@ -69,13 +77,15 @@ class CodeRetriever:
         if INDEX_PATH.exists() and METADATA_PATH.exists():
 
             try:
+                import faiss
+
                 self.index = faiss.read_index(str(INDEX_PATH))
 
                 with open(METADATA_PATH, "rb") as f:
                     self.metadata = pickle.load(f)
 
             except Exception as e:
-                logger.warning("failed to load FAISS index: %s", e)
+                logger.warning("FAISS index unavailable: %s", e)
 
         else:
             logger.info("FAISS index not found; using fallback retrieval")

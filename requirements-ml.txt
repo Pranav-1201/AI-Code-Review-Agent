@@ -1,0 +1,22 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# ==========================================================
+# Optional ML stack (Phase E)
+# ==========================================================
+# NOT installed in the production image. Nothing in a shipped configuration
+# can reach this code: rag/faiss_index/ is gitignored, so CodeRetriever always
+# takes its no-index fallback, and ENABLE_CODEBERT defaults to false. The
+# imports in retriever_service.py and llm_service.py are lazy, so a base
+# install degrades gracefully rather than failing at import.
+#
+# Install alongside the base requirements only for a deployment that actually
+# wants CodeBERT scoring or FAISS retrieval, and that ships an index:
+#     pip install -r requirements.lock -r requirements-ml.lock
+#
+# There is no pyproject.toml in this repo, so this is a separate requirements
+# file rather than a setuptools [ml] extra.
+
+torch
+transformers
+sentence-transformers
+faiss-cpu

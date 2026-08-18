@@ -60,3 +60,30 @@ def test_search_failure_is_swallowed():
     retriever.model = MagicMock()
     retriever.model.encode.return_value = [[0.0, 0.1]]
     assert retriever.retrieve("loops") == []
+
+
+def test_retriever_degrades_when_ml_deps_are_absent(monkeypatch):
+    """A base install has no sentence-transformers; import must not explode.
+
+    Phase E moved the ML stack to an optional requirements file. The scan path
+    imports this module unconditionally, so a missing dependency has to fold
+    into the existing graceful-degradation path rather than raising at import.
+    """
+    import builtins
+
+    import backend.app.services.retriever_service as rs
+
+    real_import = builtins.__import__
+
+    def _no_ml(name, *args, **kwargs):
+        if name.startswith("sentence_transformers") or name == "faiss":
+            raise ImportError(f"No module named {name!r}")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_ml)
+    monkeypatch.setattr(rs, "_embedding_model", None)
+
+    retriever = rs.CodeRetriever()
+
+    assert retriever.model is None
+    assert isinstance(retriever.retrieve("anything"), list)

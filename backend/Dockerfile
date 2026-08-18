@@ -19,13 +19,23 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Install dependencies first so the (large, slow) ML layer is cached across
+# Install dependencies first so the dependency layer is cached across
 # code-only rebuilds.
 #
 # Installs from requirements.lock, NOT requirements.txt: the loose file would
 # let a transitive release change what ships between two builds of the same
-# commit. The lock carries its own --extra-index-url for the CPU torch wheel,
-# so the first build is still multi-GB and slow — expected.
+# commit.
+#
+# Phase E: the ML stack (torch, transformers, sentence-transformers, faiss)
+# moved to requirements-ml.lock and is deliberately NOT installed here. No
+# shipped configuration could reach it — rag/faiss_index/ is gitignored, so
+# retrieval always took its no-index fallback, and ENABLE_CODEBERT defaults
+# to false. The image was paying gigabytes for code that could not run. The
+# base lock dropped from 282 to 163 pinned packages as a result, and the
+# multi-GB CPU-torch wheel is gone with it.
+#
+# A deployment that genuinely wants CodeBERT scoring or FAISS retrieval (and
+# ships an index) adds a second install line for requirements-ml.lock.
 COPY requirements.lock ./
 RUN pip install --no-cache-dir -r requirements.lock
 

@@ -1,16 +1,15 @@
---extra-index-url https://download.pytorch.org/whl/cpu
-
 # ==========================================================
-# Core AI / ML
+# Core AI / ML — moved to requirements-ml.txt (Phase E)
 # ==========================================================
-torch
-transformers
-sentence-transformers
+# torch, transformers, sentence-transformers and faiss-cpu are optional and
+# are NOT installed in the production image. No shipped configuration can
+# reach them: rag/faiss_index/ is gitignored so retrieval always takes its
+# fallback path, and ENABLE_CODEBERT defaults to false. See
+# requirements-ml.txt for how to install them deliberately.
 
 # ==========================================================
 # Vector Search / RAG
 # ==========================================================
-faiss-cpu
 numpy
 scikit-learn
 
