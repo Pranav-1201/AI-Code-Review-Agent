@@ -84,7 +84,53 @@ def _looks_like_sql(text: str) -> bool:
 # The one subprocess verdict that clears a call instead of flagging it. Shared
 # between _classify_subprocess_call (which emits it) and visit_Call (which
 # suppresses it as benign), so the two cannot drift apart silently.
-SAFE_SUBPROCESS_INVOCATION = 'constant list args with shell=False — safe invocation pattern'
+SAFE_SUBPROCESS_INVOCATION = 'list argv with shell=False naming a non-shell program — safe invocation pattern'
+
+# PHASE G / S3: argv[0] decides whether a list invocation is safe.
+#
+# Under shell=False the list is handed to execve as-is, so no element after
+# argv[0] can begin a new command — it can only ever be an argument to the
+# program argv[0] names. Element constancy is therefore the wrong test:
+# `subprocess.run(["git", *args])` is safe and was being reported, while
+# `["sh", "-c", user]` is a live injection and must not be cleared.
+#
+# The exception is a program whose job is to run another command. For those the
+# rest of argv IS a command line again and the argument is back in play.
+_SHELL_PROGRAMS = frozenset({
+    "sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish", "ash", "busybox",
+    "cmd", "cmd.exe", "command.com", "powershell", "powershell.exe", "pwsh",
+    "pwsh.exe", "env", "xargs", "nohup", "timeout", "sudo", "ssh",
+})
+
+# The flags that turn an otherwise ordinary program into a command interpreter.
+_SHELL_COMMAND_FLAGS = frozenset({"-c", "/c", "--command", "-command", "-encodedcommand"})
+
+
+def _argv_program_is_safe(argv: ast.List) -> bool:
+    """True when a list argv names a fixed, non-shell program.
+
+    Requires argv[0] to be a string literal: if the program itself is a
+    variable the attacker chooses what runs, which is the worst case, not a
+    safe one. Non-constant elements AFTER argv[0] are fine and are exactly the
+    case this exists to clear.
+    """
+    if not argv.elts:
+        return False
+
+    first = argv.elts[0]
+    if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+        return False
+
+    program = first.value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if program in _SHELL_PROGRAMS:
+        return False
+
+    return not any(
+        isinstance(element, ast.Constant)
+        and isinstance(element.value, str)
+        and element.value.lower() in _SHELL_COMMAND_FLAGS
+        for element in argv.elts
+    )
 
 
 def _has_safe_yaml_loader(node: ast.Call) -> bool:
@@ -148,6 +194,11 @@ class SecurityAnalyzer(ast.NodeVisitor):
         self._module_aliases: dict[str, str] = {}   # local name -> module
         self._name_bindings: dict[str, str] = {}    # local name -> "module.attr"
 
+        # PHASE G / S3: names bound exactly once to a list literal, so that
+        # `cmd = ["git", "status"]` followed by `subprocess.run(cmd)` can be
+        # judged on its argv instead of being written off as dynamic.
+        self._list_bindings: dict[str, ast.List] = {}
+
         # Framework-aware file patterns where eval/exec/compile are expected
         # and controlled (not user-input driven).
         #
@@ -210,6 +261,43 @@ class SecurityAnalyzer(ast.NodeVisitor):
                     if alias.name != "*":
                         local = alias.asname or alias.name
                         self._name_bindings[local] = f"{node.module}.{alias.name}"
+
+    def bind_list_literals(self, tree: ast.AST) -> None:
+        """Record names bound exactly ONCE to a list literal (PHASE G / S3).
+
+        Exactly once is the whole point. With two bindings, which list reaches
+        the call is not decidable from a single pass, and the safe answer is to
+        go on treating the argument as dynamic rather than to clear it.
+
+        Deliberately module-wide rather than scope-aware: two functions that
+        both use the name `cmd` simply stop resolving, which errs towards
+        reporting. Scope-correct resolution is the SymbolTable's job and is not
+        worth pulling in for this.
+        """
+        counts: dict[str, int] = {}
+        candidates: dict[str, ast.List] = {}
+
+        for node in ast.walk(tree):
+
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                counts[node.id] = counts.get(node.id, 0) + 1
+
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        candidates[target.id] = node.value
+
+        self._list_bindings = {
+            name: value for name, value in candidates.items() if counts.get(name) == 1
+        }
+
+    def _resolve_argv(self, arg0: ast.AST) -> ast.List:
+        """The list literal behind a subprocess first argument, if there is one."""
+        if isinstance(arg0, ast.List):
+            return arg0
+        if isinstance(arg0, ast.Name):
+            return self._list_bindings.get(arg0.id)
+        return None
 
     def _resolve_module(self, value: ast.AST) -> str:
         """Best-effort module name for the receiver of an attribute call.
@@ -433,17 +521,22 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
         arg0 = node.args[0]
 
-        if isinstance(arg0, ast.List):
-            # "list form" is NOT the same as "constant list". ['sh', '-c', user]
-            # is a list, carries no shell=True, and is still a live command
-            # injection. Claiming it is safe was worse than over-reporting: the
-            # reader was handed a vector with the word "safe" attached. Only a
-            # list whose every element is a literal is genuinely inert; anything
-            # else falls through to the dynamic-argument branch below, which is
-            # where it always belonged.
-            if all(isinstance(element, ast.Constant) for element in arg0.elts):
+        argv = self._resolve_argv(arg0)
+
+        if argv is not None:
+            # "list form" is NOT the same as safe. ['sh', '-c', user] is a list,
+            # carries no shell=True, and is still a live command injection;
+            # calling it safe was worse than over-reporting, because the reader
+            # was handed a vector with the word "safe" attached.
+            #
+            # PHASE G / S3: but element constancy was the wrong test for the
+            # other direction. Under shell=False only argv[0] chooses the
+            # program, so ['git', *args] is inert and was being reported. The
+            # gate is argv[0]; anything it does not clear falls through to the
+            # dynamic-argument branch below, where it always belonged.
+            if _argv_program_is_safe(argv):
                 if shell_true:
-                    return 'Medium', 'subprocess list arg with shell=True — shell flag is redundant and risky'
+                    return 'Medium', 'list argv with shell=True — shell flag is redundant and risky'
                 return 'Low', SAFE_SUBPROCESS_INVOCATION
 
         elif isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
@@ -911,8 +1004,11 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
             if getattr(node, "parent", None) is not None
         }
 
-        # PHASE G / S1: bind imports before the walk so call targets resolve.
+        # PHASE G: bind module-level facts before the walk — imports so call
+        # targets resolve (S1), list literals so an argv held in a variable can
+        # be judged on its contents (S3).
         analyzer.bind_imports(tree)
+        analyzer.bind_list_literals(tree)
 
         analyzer.visit(tree)
 
