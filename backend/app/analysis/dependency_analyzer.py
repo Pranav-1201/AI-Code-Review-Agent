@@ -198,6 +198,43 @@ def _exact_npm_version(spec) -> Optional[str]:
     return match.group(1) if match else None
 
 
+# PHASE H / S7: the Python counterpart of _exact_npm_version.
+#
+# The Python parsers used to strip the operator off a constraint and keep the
+# digits, so `flask>=2.0` was recorded as version "2.0". A lower bound is not a
+# version, and that invented value was then used as the OSV query key — the
+# report listed CVEs against 2.0 for a project whose lockfile installs 3.0.3.
+# The node side has refused to do this since Phase C; this is the same rule.
+#
+# PEP 440 exact-equality clause. `==1.4.*` is excluded on purpose: a wildcard
+# pin still names a range, and no single version can be queried for it.
+_PY_EXACT_RE = re.compile(r'^={2,3}\s*([0-9][^,;\s]*)$')
+
+
+def _exact_python_version(spec) -> Optional[str]:
+    """Return the single version a requirement specifier pins, else None.
+
+    None means "range, wildcard, or absent" — the installed version is not
+    knowable from this manifest alone, and a lockfile is the only honest way to
+    find out.
+
+    A compound specifier is accepted when exactly one of its clauses is an
+    exact pin: `==3.11,<4` does pin 3.11, the `<4` merely restating it.
+    """
+    if not spec:
+        return None
+
+    for clause in str(spec).split(","):
+        clause = clause.strip()
+        if "*" in clause:
+            continue
+        match = _PY_EXACT_RE.match(clause)
+        if match:
+            return match.group(1).strip()
+
+    return None
+
+
 def _npm_locked_versions(repo_path: str) -> dict:
     """Map package name -> exact installed version from package-lock.json.
 
@@ -265,19 +302,42 @@ def analyze_dependencies(repo_path):
     setup_py = os.path.join(repo_path, "setup.py")
     setup_cfg = os.path.join(repo_path, "setup.cfg")
 
-    def _add_dep(name, version="unknown", dep_type="python"):
+    def _add_dep(name, version="unknown", dep_type="python", constraint=""):
+        """Record a dependency.
+
+        PHASE H / S7: `version` holds a concrete version or "unknown", never a
+        constraint. Callers that only have a specifier pass it as `constraint`
+        and leave `version` alone; resolution happens here so no parser can
+        break the invariant on its own. `version_source` says how the value was
+        arrived at, so a reader can tell a pin from a guess.
+        """
         key = (name.strip().lower(), dep_type)
-        if key not in seen and name.strip():
-            seen.add(key)
-            dependencies.append({
-                "name": name.strip(),
-                "version": version.strip() if version else "unknown",
-                "latest_version": "unknown",   # enriched below
-                "is_outdated": False,           # enriched below
-                "risk_level": "Low",
-                "vulnerabilities": [],
-                "type": dep_type
-            })
+        if key in seen or not name.strip():
+            return
+
+        seen.add(key)
+
+        constraint = (constraint or "").strip()
+        version = (version or "unknown").strip() or "unknown"
+
+        if version != "unknown":
+            source = "pinned"
+        elif constraint:
+            source = "unpinned"
+        else:
+            source = "unspecified"
+
+        dependencies.append({
+            "name": name.strip(),
+            "version": version,
+            "constraint": constraint,
+            "version_source": source,
+            "latest_version": "unknown",   # enriched below
+            "is_outdated": False,           # enriched below
+            "risk_level": "Low",
+            "vulnerabilities": [],
+            "type": dep_type
+        })
 
     # -------------------------------------
     # Python dependencies (requirements.txt)
@@ -298,12 +358,19 @@ def analyze_dependencies(repo_path):
 
                     # Handle various version specifiers
                     # name==version, name>=version, name~=version, name[extra]==version
-                    match = re.match(r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]+\])?)\s*([><=!~]+\s*[\d\.\*]+)?', line)
+                    # PHASE H / S7: capture the WHOLE specifier, not just its
+                    # first clause, and resolve it rather than stripping the
+                    # operator off and keeping the digits. `flask>=2.0` used to
+                    # be recorded as version "2.0".
+                    match = re.match(
+                        r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]+\])?)\s*([^;#]*)', line)
                     if match:
                         name = re.sub(r'\[.*\]', '', match.group(1))  # Remove extras
-                        version = match.group(2) or "unknown"
-                        version = re.sub(r'[><=!~]+\s*', '', version).strip()
-                        _add_dep(name, version, "python")
+                        constraint = (match.group(2) or "").strip()
+                        _add_dep(name,
+                                 _exact_python_version(constraint) or "unknown",
+                                 "python",
+                                 constraint)
         except Exception:
             pass
 
@@ -361,22 +428,32 @@ def analyze_dependencies(repo_path):
                             in_deps = False
                             continue
 
-                        # Extract package name and version from quoted string
-                        dep_match = re.match(r'["\']([a-zA-Z0-9_\-\.]+)(?:\[.*\])?\s*(?:([><=!~]+)\s*([\d\.\*]+))?["\']', stripped)
+                        # PHASE H / S7: take the whole specifier out of the
+                        # quoted string and resolve it, rather than capturing
+                        # one operator and one run of digits.
+                        dep_match = re.match(
+                            r'''["']([a-zA-Z0-9_\-\.]+)(?:\[[^\]]*\])?\s*([^"';]*)''',
+                            stripped)
                         if dep_match:
                             name = dep_match.group(1)
-                            version = dep_match.group(3) or "unknown"
-                            _add_dep(name, version, "python")
+                            constraint = (dep_match.group(2) or "").strip()
+                            _add_dep(name,
+                                     _exact_python_version(constraint) or "unknown",
+                                     "python",
+                                     constraint)
 
-                # Fallback: regex for "name==version" patterns anywhere
-                matches = re.findall(r'"([a-zA-Z0-9_\-\.]+)==([^"]+)"', content)
-                for name, version in matches:
-                    _add_dep(name, version, "python")
-
-                # Also match "name>=version" patterns
-                matches = re.findall(r'"([a-zA-Z0-9_\-\.]+)>=([^"]+)"', content)
-                for name, version in matches:
-                    _add_dep(name, version, "python")
+                # Fallback: any quoted "name<specifier>" anywhere in the file.
+                #
+                # This is where `"flit_core==3.11,<4"` became version
+                # "3.11,<4" — the old pattern captured everything up to the
+                # closing quote and stored it verbatim in a version field.
+                for name, constraint in re.findall(
+                        r'"([a-zA-Z0-9_\-\.]+)\s*((?:[><=!~]=?|===)[^"]*)"', content):
+                    constraint = constraint.strip()
+                    _add_dep(name,
+                             _exact_python_version(constraint) or "unknown",
+                             "python",
+                             constraint)
 
         except Exception:
             pass
@@ -414,12 +491,14 @@ def analyze_dependencies(repo_path):
                         # Format: package_name = "==1.0.0" or package_name = "*"
                         match = re.match(r'^([a-zA-Z0-9_\-\.]+)\s*=\s*["\']([^"\']*)["\']', stripped)
                         if match:
+                            # PHASE H / S7: the operator carried meaning and
+                            # was being deleted — `">=2.0"` became "2.0".
                             name = match.group(1)
-                            version = match.group(2)
-                            version = re.sub(r'[><=!~]+', '', version).strip()
-                            if version == "*":
-                                version = "latest"
-                            _add_dep(name, version, "python")
+                            constraint = (match.group(2) or "").strip()
+                            _add_dep(name,
+                                     _exact_python_version(constraint) or "unknown",
+                                     "python",
+                                     constraint)
 
         except Exception:
             pass
@@ -465,15 +544,29 @@ def analyze_dependencies(repo_path):
                         continue
 
                     if in_install:
-                        if stripped.startswith("[") or (stripped and "=" in stripped and not stripped[0].isspace()):
+                        if not stripped:
+                            continue
+
+                        # PHASE H / S7: the continuation test has to look at
+                        # the ORIGINAL line's indentation. `stripped` has
+                        # already had it removed, so `stripped[0].isspace()`
+                        # was always False — and since every versioned
+                        # requirement contains "=", `flask>=2.0` closed the
+                        # section on its own first line and no setup.cfg
+                        # dependency with a version was ever recorded.
+                        if stripped.startswith("[") or not line[:1].isspace():
                             in_install = False
                             continue
 
-                        match = re.match(r'^([a-zA-Z0-9_\-\.]+)(?:\s*[><=!~]+\s*([\d\.]+))?', stripped)
+                        match = re.match(
+                            r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]*\])?)\s*([^;#]*)', stripped)
                         if match and match.group(1):
-                            name = match.group(1)
-                            version = match.group(2) or "unknown"
-                            _add_dep(name, version, "python")
+                            name = re.sub(r'\[.*\]', '', match.group(1))
+                            constraint = (match.group(2) or "").strip()
+                            _add_dep(name,
+                                     _exact_python_version(constraint) or "unknown",
+                                     "python",
+                                     constraint)
 
         except Exception:
             pass
