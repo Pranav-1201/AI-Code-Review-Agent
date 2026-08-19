@@ -43,12 +43,82 @@
 		}
 	}
 
+	# Security response headers, applied to every response.
+	header {
+		# max-age only. includeSubDomains and preload are both effectively
+		# one-way doors: the first breaks any future plain-HTTP subdomain, and
+		# the second is famously hard to reverse. DEPLOYMENT.md covers
+		# hardening this once a domain is settled. Browsers ignore HSTS on
+		# plain-HTTP responses (RFC 6797 s8.1), so this is inert on the :80
+		# default and correct the moment SITE_ADDRESS is a hostname.
+		Strict-Transport-Security "max-age=31536000"
+
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+
+		# Redundant with frame-ancestors below, deliberately: it is what old
+		# browsers without CSP Level 2 actually obey.
+		X-Frame-Options "DENY"
+
+		# style-src carries 'unsafe-inline' because Radix UI and vaul set inline
+		# style ATTRIBUTES for positioning, and those fall back to style-src
+		# when style-src-attr is absent. Without it every popover, tooltip and
+		# drawer in the app breaks. That is a real weakening, accepted knowingly.
+		#
+		# script-src has no such escape hatch and must not gain one — it is the
+		# directive that actually stops XSS.
+		#
+		# fonts.googleapis.com / fonts.gstatic.com are required by
+		# frontend/src/index.css, which loads Inter and JetBrains Mono.
+		# connect-src 'self' covers both the API and the SSE stream, because
+		# Phase F put them on this same origin.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+
+		# Do not advertise the server and version.
+		-Server
+	}
+
+	# The client-side routes, mirrored from frontend/src/lib/routes.ts.
+	#
+	# This list is duplicated knowingly: Caddy cannot import TypeScript. It is
+	# kept honest by frontend/src/lib/routes.test.ts, which reads THIS file and
+	# fails if the two lists diverge. Change one, change the other.
+	#
+	# `path` with multiple arguments is a logical OR, and its matches are exact
+	# rather than prefixes — /security is a route, /security/anything is not.
+	@spa path / /results /overview /file-analysis /security /quality 		/dependencies /duplicates /ai-suggestions /health /issues 		/visualizations /history /export /settings
+
+	# Known routes get the SPA shell, so a refresh on /history still works.
+	# `rewrite`, not `try_files`: we already know the answer is index.html, and
+	# try_files is precisely the catch-all that made every unknown URL a 200.
+	handle @spa {
+		root * /srv
+		rewrite * /index.html
+		file_server
+	}
+
+	# Everything else is served from disk if it exists — /assets/*.js,
+	# /favicon.svg, /robots.txt, /sitemap.xml — and 404s if it does not. This is
+	# what stops an unknown URL being an indexable duplicate of the shell, and
+	# what stops /favicon.ico returning the application.
 	handle {
 		root * /srv
-		# React Router is client-side: /history/abc has no file on disk, so a
-		# refresh on any non-root route 404s without this line.
-		try_files {path} /index.html
 		file_server
+	}
+
+	# Turn that bare 404 back into the app's own 404 page.
+	#
+	# `status {err.status_code}` is load-bearing and invisible: without it
+	# file_server serves 404.html with 200, which reproduces one layer down the
+	# exact bug this whole block exists to fix. 404.html is written by
+	# frontend/vite-plugin-seo.ts as a copy of index.html, so the page IS the
+	# SPA and React Router renders the existing NotFound component.
+	handle_errors {
+		root * /srv
+		rewrite * /404.html
+		file_server {
+			status {err.status_code}
+		}
 	}
 
 	encode gzip
