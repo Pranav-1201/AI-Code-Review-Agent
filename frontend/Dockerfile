@@ -43,6 +43,23 @@ ENV VITE_API_BASE=$VITE_API_BASE
 ARG VITE_API_KEY=
 ENV VITE_API_KEY=$VITE_API_KEY
 
+# The public origin, e.g. https://example.com. Unlike VITE_API_KEY this IS safe
+# to bake into a published image: it is the address the site answers on, which
+# is public by definition. Empty until a domain exists, and everything that
+# consumes it (canonical links, og:url, sitemap.xml, the robots.txt pointer)
+# omits itself rather than emitting a placeholder origin.
+#
+# vite.config.ts reads this from process.env, which is why it is an ENV and not
+# only an ARG.
+ARG VITE_SITE_URL=
+ENV VITE_SITE_URL=$VITE_SITE_URL
+
+# Google Search Console verification token. A DNS TXT record is the better
+# option once a domain exists, because it survives a rebuild; this is here for
+# the case where DNS is not available to whoever is verifying.
+ARG VITE_SEARCH_CONSOLE_TOKEN=
+ENV VITE_SEARCH_CONSOLE_TOKEN=$VITE_SEARCH_CONSOLE_TOKEN
+
 RUN npm run build
 
 
