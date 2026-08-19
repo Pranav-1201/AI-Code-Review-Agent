@@ -4,9 +4,8 @@
 short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
-**Last updated:** 2026-08-19 · **Updated by:** Claude Opus 5 session
-`a55eaf1f` · **Branch at handover:** `fix/dev-launcher-cors` (2 commits ahead of
-`main`, **unpushed**)
+**Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
+`0f899c51` · **Branch at handover:** `main` (Phase G merged and pushed)
 
 ---
 
@@ -15,47 +14,69 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 The project is an AI code review agent: you give it a public repository URL, it
 clones it, runs a deterministic AST analysis, and returns a health report.
 
-**Status: strong MVP, not deployable yet.** Graded **6.5/10** in
-`docs/STAFF_AUDIT_2026-08-19.md`. The engineering around the product is good
-(security 8, tests 8, docs 8). The analyzer's precision is not (correctness 4).
+**Status: strong MVP, Phase G done, not yet deployed.** Graded **6.5/10** in
+`docs/STAFF_AUDIT_2026-08-19.md`, before Phase G. The engineering around the
+product was already good (security 8, tests 8, docs 8); the analyzer's
+precision was the failing grade (correctness 4) and is the part Phase G fixed.
 
-The single most important fact to carry into any work here:
+The fact that drove that grade:
 
 > On `pallets/flask`, **all five** security findings the tool produced were
-> false positives. This was measured, not estimated — see
-> `docs/ANALYZER_ACCURACY_2026-08.md`.
+> false positives. Measured, not estimated — `docs/ANALYZER_ACCURACY_2026-08.md`.
+
+**That is now fixed and re-measured.** flask produces **zero** security
+findings; the 623 findings that remain are all `dead_function`, `dead_import`
+and `high_complexity`. An unrelated local RL project went from 3 security
+findings to 1, and the survivor is correct (its `argv[0]` is `str(PYTHON)`, so
+the program being launched is not statically knowable).
+
+`ANALYZER_ACCURACY_2026-08.md` still describes the PRE-Phase-G behaviour. It is
+a dated study, not a live status page — read it as history and read this
+section for current state.
 
 ### Git state at handover
 
 | | |
 |---|---|
-| Current branch | `fix/dev-launcher-cors` |
-| Commits ahead of `main` | 2 (`03dccba` launcher/CORS fix, `06de9fc` audit docs) |
-| Pushed? | **No.** Nothing has been pushed. |
+| Current branch | `main` |
+| Pushed? | **Yes** — Phase G merged to `main` and pushed |
 | Working tree | Clean |
-| `main` | `00a11a6`, in sync with `origin/main` |
-
-**First thing to decide with the user:** merge `fix/dev-launcher-cors` into
-`main` and push, or keep stacking work on the branch. Do not push without
-asking — pushing is outward-facing.
+| `fix/dev-launcher-cors` | merged and deleted |
 
 ---
 
 ## 2. What is DONE (verified by running it, not by reading changelogs)
 
-Phases A–F shipped before this session. Verified this session by execution:
+Phases A–G shipped. **The session column matters** — a row is evidence only for
+the session that ran it, and anything older is testimony to re-check.
 
-| Area | Evidence |
+| Area | Evidence | Run in |
+|---|---|---|
+| Backend suite | `373 passed` in 47.65s | `0f899c51` |
+| Fixture gate | `GATE PASSED`, 11/11 types at precision/recall 1.00 | `0f899c51` |
+| Real-repo benchmark | precision 0.60, recall 1.00 (TP 6, FP 4, FN 0) | `0f899c51` |
+| Frontend suite | `39 passed`, 5 files | `a55eaf1f` |
+| Typecheck | `tsc --noEmit` exit 0 | `a55eaf1f` |
+| Production build | built in 4.49s | `a55eaf1f` |
+| Live API | `OPTIONS /scan` 200, `POST /scan` 200 with a real `scan_id` | `a55eaf1f` |
+| CI on disk | `.github/workflows/ci.yml` (15.9 KB) + `release.yml` | `a55eaf1f` |
+| Deploy files on disk | `Caddyfile`, `docker-compose.prod.yml`, both Dockerfiles | `a55eaf1f` |
+
+**Phase G shipped in session `0f899c51`** — five commits, merged to `main`:
+
+| Commit | What |
 |---|---|
-| Backend suite | `326 passed` in 22.89s |
-| Frontend suite | `39 passed`, 5 files |
-| Typecheck | `tsc --noEmit` exit 0 |
-| Production build | built in 4.49s |
-| Live API | `OPTIONS /scan` 200, `POST /scan` 200 with a real `scan_id` |
-| CI on disk | `.github/workflows/ci.yml` (15.9 KB) + `release.yml` |
-| Deploy files on disk | `Caddyfile`, `docker-compose.prod.yml`, both Dockerfiles |
+| `9691e0c` | S1 — resolve the call target; `app.run()`, `self.run()` no longer Command Injection |
+| `193ff23` | S2 — SQL detectors gate on statement shape, not a bare verb |
+| `f54df2c` | S3 — list argv judged by `argv[0]`; `["git", *args]` safe, `["sh","-c",user]` not |
+| `01b0585` | corpus fixture `f9_detector_precision` + `command_injection` promoted to the no-FP list |
+| `35c044b` | kept Phase C's all-constant rule alongside `argv[0]` |
 
-Also fixed **this session** (commit `03dccba`): the dev launcher. Vite had
+Two departures from the plan as written, plus a fourth defect that was not in
+it — all recorded in `DECISIONS.md` **D14**. Read D14 before touching these
+detectors; the reasoning is not obvious from the code.
+
+Earlier that session, the dev launcher (commit `03dccba`). Vite had
 `port: 8080` but no `strictPort`, so a busy port sent it silently to 8081, which
 put the browser on an origin outside the CORS allowlist — every API call died at
 the preflight with a bare `OPTIONS /scan 400` in the log. `strictPort: true` now
@@ -71,39 +92,34 @@ Full detail, including acceptance criteria and idea IDs, is in
 
 | Phase | Scope | Blocks |
 |---|---|---|
-| **G** | Detector truth — corpus fixtures first, then S1, S2, S3 | **blocks M** |
+| ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | **H** | Dependency truth — S5 lookup status, S6 lockfiles, S7 version parsing | — |
 | **I** | Sidebar defect (F2) + light/dark theming (F1) | — |
 | **J** | Explanation UX — F4, F5, F6, F7, F8, F9, F15 | — |
 | **K** | Language contract — B6, F10 | — |
-| **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | after G |
-| **M** | Deploy | after G |
+| **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
+| **M** | Deploy | now unblocked |
 
-**Start at Phase G.** It is the only thing standing between this project and a
-public deployment that embarrasses its author.
+**Start at Phase H.** G is done and both phases it blocked are now open, so if
+priorities change, M (deploy) is a legitimate jump — G was the only thing
+standing in its way.
 
-### Phase G, concretely
+### Phase G's acceptance criteria, and what they measured
 
-1. **Write the fixtures first.** Add corpus cases that FAIL today:
-   `app.run(debug=True)` (must not be Command Injection), an f-string containing
-   the word "delete" in prose (must not be SQL Injection), and
-   `subprocess.run(["git", *args])` (must not be flagged).
-2. Then fix, in `backend/app/services/security_analyzer.py`:
-   - **S1** — resolve the call target before flagging Command Injection. Today
-     it matches the bare method name `run`, so Flask's `app.run()` and a Celery
-     task's `self.run()` are both reported.
-   - **S2** — `visit_JoinedStr` substring-matches `select|insert|update|delete`
-     in any f-string. Require SQL shape and, better, that the value reaches a
-     cursor/execute sink. The taint analyzer already models that sink and this
-     detector is not using it.
-   - **S3** — treat `subprocess.*` with list argv and no shell as safe,
-     including `[*unpacking]` and list variables.
-3. **Then raise the thresholds** — do not leave a floor sitting at a value that
-   ratifies the old behaviour.
+Kept here because they are the template for judging the phases that follow.
 
-**Verification for G:** `pytest backend/tests -q` → ≥329 passed; then re-scan
-flask → **0** security findings, and re-scan the RL project → **0** SQL
-Injection findings.
+| Criterion | Result |
+|---|---|
+| `pytest backend/tests -q` ≥ 329 | **373 passed**, 0 failed |
+| re-scan flask → 0 security findings | **0** (was 5, all false positives) |
+| re-scan the RL project → 0 SQL Injection | **0**; command injection also 3 → 1 |
+| fixture gate holds | `GATE PASSED`, 11/11 types at 1.00 |
+
+The new fixture was additionally run against the pre-Phase-G analyzer and fails
+it (`command_injection` 0.38, `sql_injection` 0.50, exit 1). **Do this for every
+future gate you add** — a fixture that passes both before and after a fix is
+measuring nothing, which is precisely how the gate read 1.00 across the board
+while every security finding on flask was wrong.
 
 ---
 
@@ -116,9 +132,13 @@ Injection findings.
   in CI, never locally.
 - **The Bash tool's working directory persists between calls.** A `cd frontend`
   silently breaks a later repo-root command. Use absolute paths.
-- **Unquoted `(` or `)` in a bash command creates zero-byte junk files** in the
-  repo root. This is where the stray `390.52` file came from — it is a captured
-  Vite bundle size from a build log.
+- **Zero-byte junk files keep appearing in the repo root.** Unquoted `(` or `)`
+  in a bash command is one cause — the stray `390.52` is a captured Vite bundle
+  size. But session `0f899c51` produced `1.0`, `bool`, `str` and `analyzer`
+  without any unquoted parens, so something else in the toolchain also does it.
+  **Run `git status --short` after every commit** and delete what appears. This
+  is survivable only because explicit-path staging is mandatory here; `git add
+  -A` would have committed all four.
 - **Run `npx vite` from `frontend/`, never the repo root** — the root resolves a
   different Vite major than the pinned 5.4.21.
 - **Exclude `backend/app/.cache/` from greps.** It holds cached scan JSON and a

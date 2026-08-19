@@ -199,3 +199,55 @@ limiter and the shared-SQLite assumption.
 
 Rough cost ~$5–7/month. **Not verified during the audit** — check current
 pricing before committing.
+
+---
+
+### D14 — Phase G departs from its own written plan in two places
+**2026-08-19** · Claude Opus 5, session `0f899c51` · implemented, verified
+
+`HANDOVER.md` specified the three detector fixes. Two were implemented
+differently from the text, deliberately, and the reasons need to outlive the
+commit messages.
+
+**S3 — not "list argv with no shell is safe".** Taken literally that clears
+`subprocess.run(["sh", "-c", user])`, which is a live injection and is exactly
+what Phase C had fixed after finding the analyzer describing it to the reader
+as a "safe invocation pattern". The rule implemented instead is: a list argv
+with `shell` not True is cleared when **either** every element is a literal
+(Phase C's rule, kept) **or** argv[0] is a string literal naming a non-shell
+program with no `-c` style flag present. Under `shell=False` the list goes to
+execve as-is, so nothing after argv[0] can begin a new command — which is why
+`["git", *args]` is inert and was being reported.
+
+The all-constant half was not in the first implementation and had to be put
+back. Rescanning a real repository found `subprocess.run(["powershell",
+"-NoProfile", "-Command", "<literal>"])` still flagged, because argv[0] names a
+shell. Every element was constant. **The lesson is that the real-repo rescan,
+not the unit tests, caught it** — the tests only knew the cases their author
+had thought of.
+
+**S2 — SQL shape only, not sink reachability.** HANDOVER asked for statement
+shape "and, better, that the value reaches a cursor/execute sink". Shape alone
+is what shipped. The corpus fixture builds its query on one line and executes
+it on the next (`q = "SELECT ... " + uid` / `db.execute(q)`), so gating on sink
+adjacency would trade this false-positive class for a false-negative one, and
+the taint layer's dataflow is not wired into these two visitors. Shape is
+gated as: the string must **begin** with a SQL verb and contain a clause
+keyword. Requiring the leading verb rather than matching `select ... from`
+anywhere is what separates "Please select an option from the menu" from a
+query.
+
+**A fourth defect, not in the plan.** `visit_BinOp` carried the identical
+substring bug to `visit_JoinedStr` — `log("Deleted user: " + name)` was a High
+SQL Injection finding. Fixed in the same commit as S2.
+
+**Known residual, accepted:** prose that genuinely begins with a SQL verb and
+contains a clause word — `f"Select a template from {folder}"` — still matches.
+Narrower than the class removed, and tightening further starts to cost real
+queries.
+
+**Verified:** pytest 373 passed, fixture gate 1.00 across all 11 types, flask
+**0** security findings (was 5, all false positives), RLPROJECT **0** SQL
+Injection and command injection 3 → 1. The new corpus fixture was checked
+against the pre-Phase-G analyzer and fails it at command_injection precision
+0.38 / sql_injection 0.50, so the gate is load-bearing rather than decorative.
