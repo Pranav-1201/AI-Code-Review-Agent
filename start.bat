@@ -49,6 +49,35 @@ if not exist "frontend\node_modules" (
     )
 )
 
+REM ---- ports must be free ----------------------------------------
+REM  A server left over from a previous run is the single most common way this
+REM  script half-works. Closing THIS window never stopped the servers - only
+REM  closing the two server windows does - so leftovers accumulate easily.
+REM
+REM  It used to fail silently and confusingly: vite would quietly move to 8081,
+REM  the page still loaded, but its Origin was no longer in the backend's CORS
+REM  allowlist, so every API call died at the preflight with nothing in the
+REM  uvicorn log but "OPTIONS /scan 400". Meanwhile this script kept polling
+REM  8080 and never opened the browser. vite.config.ts now sets strictPort so
+REM  the drift cannot happen - which means a busy port stops us here instead,
+REM  and the operator gets told which PID to kill.
+set "PORTCLASH="
+for %%p in (8000 8080) do (
+    for /f "tokens=5" %%a in ('netstat -ano ^| findstr /r /c:":%%p .*LISTENING"') do (
+        echo  [X] Port %%p is already in use by PID %%a
+        set "PORTCLASH=1"
+    )
+)
+if defined PORTCLASH (
+    echo.
+    echo      Close the old "ETP Backend" / "ETP Frontend" windows, or run:
+    echo          taskkill /F /PID ^<pid^>
+    echo      then re-run start.bat.
+    echo.
+    pause
+    exit /b 1
+)
+
 REM ---- launch ----------------------------------------------------
 echo  [1/3] Starting backend on http://localhost:8000 ...
 start "ETP Backend  (port 8000)" cmd /k "cd /d "%~dp0" && venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000"

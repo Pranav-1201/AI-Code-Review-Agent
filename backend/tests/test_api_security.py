@@ -378,6 +378,51 @@ def test_github_webhook_route_is_removed(client):
     assert r.status_code == 404, r.text
 
 
+def _vite_config_text():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    return (root / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+
+
+def test_vite_dev_port_is_in_the_cors_allowlist():
+    """The dev server's port and the backend's CORS allowlist must agree.
+
+    They are two files in two languages and nothing tied them together. The
+    moment they disagree, the browser's Origin stops matching the allowlist and
+    every preflight returns 400 "Disallowed CORS origin" - which reaches the
+    user as "the site cannot reach the backend", while the uvicorn log shows
+    nothing but a bare 400 with no reason in it. Pin the pair here so changing
+    the port breaks a test instead of the app.
+    """
+    import re
+    from backend.app import api_guard
+
+    match = re.search(r"port:\s*(\d+)", _vite_config_text())
+    assert match, "no server.port found in vite.config.ts"
+    port = match.group(1)
+
+    defaults = api_guard.allowed_origins("")
+    assert f"http://localhost:{port}" in defaults, defaults
+    assert f"http://127.0.0.1:{port}" in defaults, defaults
+
+
+def test_vite_pins_its_port_so_the_origin_cannot_drift():
+    """Without strictPort, an occupied 8080 makes Vite serve on 8081 silently.
+
+    That is not a cosmetic difference. The page still loads, so the app looks
+    up, but its Origin is no longer allowlisted and every API call dies at the
+    preflight - and start.bat, which polls 8080 to decide when to open the
+    browser, never sees the server at all. Failing loudly on a busy port is far
+    better than a running app whose every backend call fails.
+    """
+    import re
+
+    assert re.search(r"strictPort:\s*true", _vite_config_text()), (
+        "vite.config.ts must set strictPort: true so the dev port cannot drift "
+        "off the CORS allowlist"
+    )
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

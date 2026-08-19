@@ -4,6 +4,7 @@
 # ==========================================================
 
 import ast
+import re
 from typing import List, Dict
 
 from backend.app.analysis.ast_parser import parse_module
@@ -44,10 +45,100 @@ SHA_SEVERITY_MAP: dict[str, tuple[str, str]] = {
 # buy recall at the cost of precision on exactly the repos the benchmark scores.
 _SAFE_YAML_LOADERS = frozenset({"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"})
 
+# PHASE G / S2: SQL statement shape.
+#
+# Both SQL detectors used to substring-match the verbs select|insert|update|
+# delete, so "Failed to delete {name}" was reported as SQL injection at High.
+# A verb is not a query. Two conditions now have to hold.
+#
+# First, the string must BEGIN with a SQL verb. Matching `select ... from`
+# anywhere still swallows ordinary prose -- "Please select an option from the
+# menu" -- whereas a real interpolated query is written starting at the verb,
+# which is what every true positive in the corpus does.
+_SQL_LEADING_VERB = re.compile(
+    r"^\s*\(?\s*(?:"
+    r"with\b[\s\S]*?\bselect\b"
+    r"|select\b"
+    r"|insert\s+into\b"
+    r"|replace\s+into\b"
+    r"|update\b"
+    r"|delete\s+from\b"
+    r"|truncate\s+table\b"
+    r"|drop\s+(?:table|index|view|database)\b"
+    r"|alter\s+table\b"
+    r"|create\s+(?:table|index|view|database)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Second, a clause keyword must appear. This is what separates the imperative
+# sentence "Select a file to insert ..." from "SELECT id FROM ...".
+_SQL_CLAUSE = re.compile(r"\b(?:from|set|values|where|join|into)\b", re.IGNORECASE)
+
+
+def _looks_like_sql(text: str) -> bool:
+    """True when `text` has the shape of a SQL statement, not merely a SQL word."""
+    return bool(_SQL_LEADING_VERB.match(text)) and bool(_SQL_CLAUSE.search(text))
+
+
 # The one subprocess verdict that clears a call instead of flagging it. Shared
 # between _classify_subprocess_call (which emits it) and visit_Call (which
 # suppresses it as benign), so the two cannot drift apart silently.
-SAFE_SUBPROCESS_INVOCATION = 'constant list args with shell=False — safe invocation pattern'
+SAFE_SUBPROCESS_INVOCATION = 'list argv with shell=False naming a non-shell program — safe invocation pattern'
+
+# PHASE G / S3: argv[0] decides whether a list invocation is safe.
+#
+# Under shell=False the list is handed to execve as-is, so no element after
+# argv[0] can begin a new command — it can only ever be an argument to the
+# program argv[0] names. Element constancy is therefore the wrong test:
+# `subprocess.run(["git", *args])` is safe and was being reported, while
+# `["sh", "-c", user]` is a live injection and must not be cleared.
+#
+# The exception is a program whose job is to run another command. For those the
+# rest of argv IS a command line again and the argument is back in play.
+_SHELL_PROGRAMS = frozenset({
+    "sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish", "ash", "busybox",
+    "cmd", "cmd.exe", "command.com", "powershell", "powershell.exe", "pwsh",
+    "pwsh.exe", "env", "xargs", "nohup", "timeout", "sudo", "ssh",
+})
+
+# The flags that turn an otherwise ordinary program into a command interpreter.
+_SHELL_COMMAND_FLAGS = frozenset({"-c", "/c", "--command", "-command", "-encodedcommand"})
+
+
+def _argv_program_is_safe(argv: ast.List) -> bool:
+    """True when a list argv names a fixed, non-shell program.
+
+    Requires argv[0] to be a string literal: if the program itself is a
+    variable the attacker chooses what runs, which is the worst case, not a
+    safe one. Non-constant elements AFTER argv[0] are fine and are exactly the
+    case this exists to clear.
+    """
+    if not argv.elts:
+        return False
+
+    # Phase C's rule, kept rather than replaced. A fully literal argv has no
+    # input to inject, whatever argv[0] names -- RLPROJECT queries a memory
+    # counter with a hardcoded PowerShell command line, which the argv[0] rule
+    # alone rejected. Judging it dangerous requires believing a constant can
+    # vary.
+    if all(isinstance(element, ast.Constant) for element in argv.elts):
+        return True
+
+    first = argv.elts[0]
+    if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+        return False
+
+    program = first.value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if program in _SHELL_PROGRAMS:
+        return False
+
+    return not any(
+        isinstance(element, ast.Constant)
+        and isinstance(element.value, str)
+        and element.value.lower() in _SHELL_COMMAND_FLAGS
+        for element in argv.elts
+    )
 
 
 def _has_safe_yaml_loader(node: ast.Call) -> bool:
@@ -103,6 +194,19 @@ class SecurityAnalyzer(ast.NodeVisitor):
         self._source_lines: list[str] = source.splitlines() if source else []
         self._parent_map: dict = {}
 
+        # PHASE G / S1: import bindings, so a call target can be resolved to
+        # the module it actually belongs to. Populated by bind_imports() before
+        # the walk. Without this the detector matches the bare attribute name,
+        # and `subprocess.run` is indistinguishable from Flask's `app.run` —
+        # which on real repositories was every command-injection finding.
+        self._module_aliases: dict[str, str] = {}   # local name -> module
+        self._name_bindings: dict[str, str] = {}    # local name -> "module.attr"
+
+        # PHASE G / S3: names bound exactly once to a list literal, so that
+        # `cmd = ["git", "status"]` followed by `subprocess.run(cmd)` can be
+        # judged on its argv instead of being written off as dynamic.
+        self._list_bindings: dict[str, ast.List] = {}
+
         # Framework-aware file patterns where eval/exec/compile are expected
         # and controlled (not user-input driven).
         #
@@ -135,6 +239,122 @@ class SecurityAnalyzer(ast.NodeVisitor):
             "client_secret",
             "auth_token"
         }
+
+    # ------------------------------------------------------
+    # Call-target resolution (PHASE G / S1)
+    # ------------------------------------------------------
+
+    def bind_imports(self, tree: ast.AST) -> None:
+        """Record this module's import bindings for call-target resolution.
+
+        Runs over the whole tree BEFORE the walk on purpose. Visit order does
+        not guarantee an import is seen before the call that uses it — a
+        function body is visited where it is defined, and a late or
+        conditional import is common — and a binding missed that way turns a
+        true positive silent, which is the worse direction to fail in.
+        """
+        for node in ast.walk(tree):
+
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self._module_aliases[alias.asname] = alias.name
+                    else:
+                        # `import os.path` binds the name `os`, not `os.path`.
+                        root = alias.name.split(".")[0]
+                        self._module_aliases[root] = root
+
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    if alias.name != "*":
+                        local = alias.asname or alias.name
+                        self._name_bindings[local] = f"{node.module}.{alias.name}"
+
+    def bind_list_literals(self, tree: ast.AST) -> None:
+        """Record names bound exactly ONCE to a list literal (PHASE G / S3).
+
+        Exactly once is the whole point. With two bindings, which list reaches
+        the call is not decidable from a single pass, and the safe answer is to
+        go on treating the argument as dynamic rather than to clear it.
+
+        Deliberately module-wide rather than scope-aware: two functions that
+        both use the name `cmd` simply stop resolving, which errs towards
+        reporting. Scope-correct resolution is the SymbolTable's job and is not
+        worth pulling in for this.
+        """
+        counts: dict[str, int] = {}
+        candidates: dict[str, ast.List] = {}
+
+        for node in ast.walk(tree):
+
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                counts[node.id] = counts.get(node.id, 0) + 1
+
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        candidates[target.id] = node.value
+
+        self._list_bindings = {
+            name: value for name, value in candidates.items() if counts.get(name) == 1
+        }
+
+    def _resolve_argv(self, arg0: ast.AST) -> ast.List:
+        """The list literal behind a subprocess first argument, if there is one."""
+        if isinstance(arg0, ast.List):
+            return arg0
+        if isinstance(arg0, ast.Name):
+            return self._list_bindings.get(arg0.id)
+        return None
+
+    def _resolve_module(self, value: ast.AST) -> str:
+        """Best-effort module name for the receiver of an attribute call.
+
+        `subprocess.run` -> "subprocess"; `sp.run` under `import subprocess as
+        sp` -> "subprocess"; `app.run` -> "app". An unimported plain name
+        resolves to itself rather than to nothing, so a snippet that omits its
+        imports is still analysed correctly.
+
+        Anything that is not a plain name — `self.client.run`, `get().run` —
+        returns "", which reads correctly as "not the module we are after".
+        """
+        if isinstance(value, ast.Name):
+            return self._module_aliases.get(value.id, value.id)
+        return ""
+
+    def _report_os_system(self, node: ast.Call, line: int) -> None:
+        severity, desc, tb, conf = self._apply_taint(
+            node, "High",
+            "Use of os.system() detected which may allow command injection.")
+        self._add_issue(
+            severity=severity,
+            description=desc,
+            recommendation="Use subprocess.run() with a list of arguments instead of os.system() to prevent shell injection.",
+            line=line,
+            issue_type="Command Injection",
+            trust_boundary=tb,
+            confidence_override=conf,
+        )
+
+    def _report_subprocess_call(self, node: ast.Call, line: int) -> None:
+        # PHASE 1: argument-type-aware severity
+        severity, message = self._classify_subprocess_call(node)
+        # PHASE 3: escalate to Critical when the command argument is
+        # data-flow reachable from untrusted input.
+        severity, message, tb, conf = self._apply_taint(node, severity, message)
+        self._add_issue(
+            severity=severity,
+            description=message,
+            recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
+            line=line,
+            issue_type="Command Injection",
+            trust_boundary=tb,
+            confidence_override=conf,
+            # Checked AFTER taint on purpose: _apply_taint replaces the
+            # description for untrusted-input sinks, so a call that
+            # still carries the marker here is one taint also cleared.
+            benign=SAFE_SUBPROCESS_INVOCATION in message,
+        )
 
     # ------------------------------------------------------
     # Helper to add structured issue
@@ -309,17 +529,22 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
         arg0 = node.args[0]
 
-        if isinstance(arg0, ast.List):
-            # "list form" is NOT the same as "constant list". ['sh', '-c', user]
-            # is a list, carries no shell=True, and is still a live command
-            # injection. Claiming it is safe was worse than over-reporting: the
-            # reader was handed a vector with the word "safe" attached. Only a
-            # list whose every element is a literal is genuinely inert; anything
-            # else falls through to the dynamic-argument branch below, which is
-            # where it always belonged.
-            if all(isinstance(element, ast.Constant) for element in arg0.elts):
+        argv = self._resolve_argv(arg0)
+
+        if argv is not None:
+            # "list form" is NOT the same as safe. ['sh', '-c', user] is a list,
+            # carries no shell=True, and is still a live command injection;
+            # calling it safe was worse than over-reporting, because the reader
+            # was handed a vector with the word "safe" attached.
+            #
+            # PHASE G / S3: but element constancy was the wrong test for the
+            # other direction. Under shell=False only argv[0] chooses the
+            # program, so ['git', *args] is inert and was being reported. The
+            # gate is argv[0]; anything it does not clear falls through to the
+            # dynamic-argument branch below, where it always belonged.
+            if _argv_program_is_safe(argv):
                 if shell_true:
-                    return 'Medium', 'subprocess list arg with shell=True — shell flag is redundant and risky'
+                    return 'Medium', 'list argv with shell=True — shell flag is redundant and risky'
                 return 'Low', SAFE_SUBPROCESS_INVOCATION
 
         elif isinstance(arg0, ast.Constant) and isinstance(arg0.value, str):
@@ -350,6 +575,18 @@ class SecurityAnalyzer(ast.NodeVisitor):
         if isinstance(node.func, ast.Name):
 
             name = node.func.id
+
+            # PHASE G / S1: `from subprocess import run` / `from os import
+            # system` produce a bare Name call, not an Attribute. Tightening
+            # the attribute branch to a resolved receiver would have made
+            # these silent, so resolve the from-import binding here.
+            bound = self._name_bindings.get(name, "")
+
+            if bound == "os.system":
+                self._report_os_system(node, line)
+            elif bound in {"subprocess.Popen", "subprocess.call", "subprocess.run"}:
+                self._report_subprocess_call(node, line)
+                _handled_as_subprocess = True
 
             if name == "eval":
                 is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
@@ -423,41 +660,20 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             attr = node.func.attr
 
+            # PHASE G / S1: resolve the receiver before matching the name.
+            # Matching `attr` alone made `app.run(debug=True)` — the most
+            # common single line in a Flask application — a Command Injection
+            # finding, along with every `self.run()`, `scheduler.run()` and
+            # `manager.system()` in the corpus.
+            receiver = self._resolve_module(node.func.value)
+
             # os.system
-            if attr == "system":
-                severity, desc, tb, conf = self._apply_taint(
-                    node, "High",
-                    "Use of os.system() detected which may allow command injection.")
-                self._add_issue(
-                    severity=severity,
-                    description=desc,
-                    recommendation="Use subprocess.run() with a list of arguments instead of os.system() to prevent shell injection.",
-                    line=line,
-                    issue_type="Command Injection",
-                    trust_boundary=tb,
-                    confidence_override=conf,
-                )
+            if attr == "system" and receiver == "os":
+                self._report_os_system(node, line)
 
             # subprocess commands
-            if attr in {"Popen", "call", "run"}:
-                # PHASE 1: argument-type-aware severity
-                severity, message = self._classify_subprocess_call(node)
-                # PHASE 3: escalate to Critical when the command argument is
-                # data-flow reachable from untrusted input.
-                severity, message, tb, conf = self._apply_taint(node, severity, message)
-                self._add_issue(
-                    severity=severity,
-                    description=message,
-                    recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
-                    line=line,
-                    issue_type="Command Injection",
-                    trust_boundary=tb,
-                    confidence_override=conf,
-                    # Checked AFTER taint on purpose: _apply_taint replaces the
-                    # description for untrusted-input sinks, so a call that
-                    # still carries the marker here is one taint also cleared.
-                    benign=SAFE_SUBPROCESS_INVOCATION in message,
-                )
+            if attr in {"Popen", "call", "run"} and receiver == "subprocess":
+                self._report_subprocess_call(node, line)
                 _handled_as_subprocess = True                 # PHASE 1 FIX
 
             # unsafe deserialization
@@ -588,9 +804,12 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
                 if isinstance(node.left.value, str):
 
-                    query = node.left.value.lower()
+                    # PHASE G / S2: shape, not a bare verb -- and a dynamic
+                    # right-hand side, since concatenating two literals
+                    # produces a constant that cannot be injected into.
+                    dynamic = not isinstance(node.right, ast.Constant)
 
-                    if any(q in query for q in ["select", "insert", "update", "delete"]):
+                    if dynamic and _looks_like_sql(node.left.value):
                         self._add_issue(
                             severity="High",
                             description="Possible SQL injection via string concatenation.",
@@ -609,20 +828,29 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
         line = getattr(node, "lineno", 0)
 
-        for value in node.values:
+        # PHASE G / S2: an f-string with nothing interpolated is a constant,
+        # and a constant carries no injection. Previously every literal chunk
+        # was tested on its own, which both produced duplicate findings and
+        # missed a query whose keywords straddle an interpolation. Joining the
+        # chunks first fixes both: `f"SELECT {cols} FROM {tbl}"` reads as
+        # "SELECT   FROM  ". The separator is a space so that `f"SELECT{x}FROM"`
+        # does not glue into a single token.
+        if any(isinstance(value, ast.FormattedValue) for value in node.values):
 
-            if isinstance(value, ast.Constant):
+            literal = " ".join(
+                str(value.value)
+                for value in node.values
+                if isinstance(value, ast.Constant)
+            )
 
-                text = str(value.value).lower()
-
-                if any(q in text for q in ["select", "insert", "update", "delete"]):
-                    self._add_issue(
-                        severity="High",
-                        description="Possible SQL injection via formatted string query.",
-                        recommendation="Use parameterized queries instead of f-strings for SQL. ORMs like SQLAlchemy provide safe query builders.",
-                        line=line,
-                        issue_type="SQL Injection"
-                    )
+            if _looks_like_sql(literal):
+                self._add_issue(
+                    severity="High",
+                    description="Possible SQL injection via formatted string query.",
+                    recommendation="Use parameterized queries instead of f-strings for SQL. ORMs like SQLAlchemy provide safe query builders.",
+                    line=line,
+                    issue_type="SQL Injection"
+                )
 
         self.generic_visit(node)
 
@@ -783,6 +1011,12 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
             for node in ast.walk(tree)
             if getattr(node, "parent", None) is not None
         }
+
+        # PHASE G: bind module-level facts before the walk — imports so call
+        # targets resolve (S1), list literals so an argv held in a variable can
+        # be judged on its contents (S3).
+        analyzer.bind_imports(tree)
+        analyzer.bind_list_literals(tree)
 
         analyzer.visit(tree)
 

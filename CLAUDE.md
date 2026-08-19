@@ -28,3 +28,38 @@ work done entirely by an assistant. Authorship of the repository is Pranav's.
 **Not affected:** code comments explaining *why* a change was made, and the
 memory/roadmap notes under `~/.claude/projects/` — those are working notes, not
 published attribution.
+
+---
+
+## Start here, every session
+
+**Read `docs/HANDOVER.md` before doing anything else.** It is the single entry
+point: current state, what is done, what is next, and the traps that have
+already cost time. If the instruction you were given is as short as "finish my
+project", that file is the entire brief and the phase order in it is the plan.
+
+Then read `docs/CONSTRAINTS.md` — what must never happen without asking.
+
+### The document set
+
+| File | What it answers |
+|---|---|
+| `docs/HANDOVER.md` | Where things stand and what to do next |
+| `docs/CONSTRAINTS.md` | What is off-limits |
+| `docs/TEST_CHECKLIST.md` | The exact commands that make "done" true |
+| `docs/ARCHITECTURE.md` | The shape of the system |
+| `docs/FLOW.md` | How execution actually travels, with line numbers |
+| `docs/DECISIONS.md` | Why things are the way they are |
+| `docs/ROLLBACK.md` | How to undo it when it goes wrong |
+| `docs/bugs/` | One file per bug, start to finish |
+| `docs/STAFF_AUDIT_2026-08-19.md` | The graded audit and the full phased plan |
+| `docs/ANALYZER_ACCURACY_2026-08.md` | Measured precision against independent tools |
+
+### Working rules
+
+- **No success claim without fresh evidence from this session.** A command you
+  ran just now, and its output. Prior notes are testimony, not evidence.
+- **One logical change per commit.** Stage explicit paths; never `git add -A`.
+- **Plan before implementing** anything beyond a one-liner.
+- **Update `docs/HANDOVER.md` before the session ends**, and append to
+  `docs/DECISIONS.md` if a real decision was made. Note which model made it.

@@ -21,7 +21,7 @@ import run_benchmark as rb  # noqa: E402
 
 def test_all_fixtures_discovered():
     names = rb._fixture_names()
-    assert len(names) == 8, names
+    assert len(names) == 9, names
     assert all(n.startswith("f") for n in names), names
 
 
@@ -41,9 +41,13 @@ def test_fixture_gate_passes():
 def test_clean_types_have_no_false_positives():
     """Types that are supposed to be perfect must not start crying wolf."""
     fx = rb.run_fixtures()
-    for t in ("dangerous_function", "sql_injection", "hardcoded_credential",
-              "weak_crypto", "race_condition", "insecure_config",
-              "dead_import", "high_complexity"):
+    # command_injection joined this list in Phase G. It was absent because it
+    # genuinely did produce false positives — app.run(), ["git", *args] and an
+    # argv in a local variable were all reported. Leaving it out once those are
+    # fixed would leave the floor sitting at the old behaviour.
+    for t in ("dangerous_function", "sql_injection", "command_injection",
+              "hardcoded_credential", "weak_crypto", "race_condition",
+              "insecure_config", "dead_import", "high_complexity"):
         assert fx[t]["fp"] == 0, (t, dict(fx[t]))
 
 

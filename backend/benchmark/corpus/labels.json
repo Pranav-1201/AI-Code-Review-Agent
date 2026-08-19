@@ -85,5 +85,21 @@
     "decoys": [
       {"type": "high_complexity", "file": "app.js", "name": "simpleJs", "why": "cyclomatic complexity 1"}
     ]
+  },
+  "f9_detector_precision": {
+    "expected": [
+      {"type": "command_injection", "file": "app.py", "line": 47},
+      {"type": "sql_injection", "file": "app.py", "line": 51}
+    ],
+    "decoys": [
+      {"type": "command_injection", "file": "app.py", "line": 19, "why": "Flask app.run(debug=True) - the receiver is not subprocess (Phase G / S1)"},
+      {"type": "command_injection", "file": "app.py", "line": 24, "why": "a method happens to be named run - the receiver is not subprocess (Phase G / S1)"},
+      {"type": "sql_injection", "file": "app.py", "line": 28, "why": "prose containing the word delete - no SQL statement shape (Phase G / S2)"},
+      {"type": "sql_injection", "file": "app.py", "line": 29, "why": "prose containing the word update - no SQL statement shape (Phase G / S2)"},
+      {"type": "sql_injection", "file": "app.py", "line": 30, "why": "prose concatenation containing Deleted - no SQL statement shape (Phase G / S2)"},
+      {"type": "command_injection", "file": "app.py", "line": 34, "why": "list argv, shell=False, argv[0] is a fixed non-shell program (Phase G / S3)"},
+      {"type": "command_injection", "file": "app.py", "line": 38, "why": "dynamic ARGUMENT to git, not a dynamic program - execve cannot start a new command (Phase G / S3)"},
+      {"type": "command_injection", "file": "app.py", "line": 43, "why": "argv held in a singly-bound local variable (Phase G / S3)"}
+    ]
   }
 }
