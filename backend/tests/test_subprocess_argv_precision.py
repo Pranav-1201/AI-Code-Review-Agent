@@ -88,6 +88,33 @@ def test_a_cleared_argv_call_is_still_visible_as_benign():
 
 
 # ----------------------------------------------------------
+# A fully literal argv is safe whatever argv[0] names
+#
+# Found on a real repository, not invented: RLPROJECT launches PowerShell with
+# a hardcoded counter query. argv[0] is a shell, so the argv[0] rule alone
+# rejected it -- but every element is a literal, so there is no input to
+# inject. Phase C's all-constant rule was right and had to be kept ALONGSIDE
+# the argv[0] rule rather than replaced by it.
+# ----------------------------------------------------------
+
+def test_fully_constant_shell_invocation_is_safe():
+    code = (
+        "import subprocess\ndef mem():\n"
+        "    subprocess.run(['powershell', '-NoProfile', '-Command', 'Get-Date'],\n"
+        "                   capture_output=True)\n"
+    )
+
+    assert _cmd_findings(code) == []
+
+
+def test_fully_constant_sh_dash_c_is_safe():
+    """No variable anywhere -- a fixed command line cannot be injected into."""
+    code = "import subprocess\ndef f():\n    subprocess.run(['sh', '-c', 'ls -l'])\n"
+
+    assert _cmd_findings(code) == []
+
+
+# ----------------------------------------------------------
 # argv[0] names a shell -- the Phase C case, must NOT go quiet
 # ----------------------------------------------------------
 

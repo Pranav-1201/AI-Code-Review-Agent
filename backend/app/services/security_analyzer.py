@@ -117,6 +117,14 @@ def _argv_program_is_safe(argv: ast.List) -> bool:
     if not argv.elts:
         return False
 
+    # Phase C's rule, kept rather than replaced. A fully literal argv has no
+    # input to inject, whatever argv[0] names -- RLPROJECT queries a memory
+    # counter with a hardcoded PowerShell command line, which the argv[0] rule
+    # alone rejected. Judging it dangerous requires believing a constant can
+    # vary.
+    if all(isinstance(element, ast.Constant) for element in argv.elts):
+        return True
+
     first = argv.elts[0]
     if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
         return False
