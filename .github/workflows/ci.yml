@@ -123,7 +123,16 @@ jobs:
       - name: Install Playwright browser
         # Only chromium. The suite targets one engine across three viewports,
         # so downloading firefox and webkit would cost time and prove nothing.
-        run: npx playwright install --with-deps chromium
+        #
+        # No --with-deps. That flag runs apt-get update && apt-get install for
+        # Chromium's system libraries, which the ubuntu-latest runner image
+        # already ships. It bought nothing and cost everything: on 2026-08-19 it
+        # hung twice in a row against the Ubuntu mirrors — once 5 minutes on a
+        # single font package, once 14 minutes on `noble-security InRelease` —
+        # and burned the 15-minute job timeout before a single test ran. If a
+        # library ever genuinely goes missing, chromium fails to launch with a
+        # named error, which is a far better failure than a silent stall.
+        run: npx playwright install chromium
 
       - name: End-to-end and mobile viewport tests
         # playwright.config.ts starts its own `vite preview` against the

@@ -69,41 +69,53 @@ echo  [3/3] Waiting for backend (8000) and frontend (8080) ...
 
 set "BACK="
 set "FRONT="
-for /l %%i in (1,1,90) do (
+for /l %%i in (1,1,60) do (
     if not defined BACK (
-        curl.exe -s --max-time 2 http://localhost:8000/ >NUL 2>&1
+        curl.exe -s -o NUL --max-time 1 http://localhost:8000/ >NUL 2>&1
         if not errorlevel 1 (
             set "BACK=1"
             echo      backend  ready
         )
     )
     if not defined FRONT (
-        curl.exe -s --max-time 2 http://localhost:8080/ >NUL 2>&1
+        curl.exe -s -o NUL --max-time 1 http://localhost:8080/ >NUL 2>&1
         if not errorlevel 1 (
             set "FRONT=1"
             echo      frontend ready
         )
     )
-    if not defined BACK ping -n 2 127.0.0.1 >NUL
-    if defined BACK if not defined FRONT ping -n 2 127.0.0.1 >NUL
+
+    REM  Leave the moment both answer. A batch FOR cannot break, so this is a
+    REM  GOTO out of the loop - and without it the loop ran all 60 iterations
+    REM  no matter what, which is why the browser used to appear minutes after
+    REM  the servers were already up and the script looked like it did nothing.
+    if defined BACK if defined FRONT goto :ready
+
+    ping -n 2 127.0.0.1 >NUL
 )
 
+:ready
 if not defined BACK (
     echo.
-    echo  [!] Backend never answered on port 8000 within ~90s.
+    echo  [!] Backend never answered on port 8000.
     echo      Read the "ETP Backend" window - the traceback is in there.
-    echo      The page will load but every scan will fail with
+    echo      The page will still load, but every scan will fail with
     echo      "Cannot reach backend".
     echo.
 )
 if not defined FRONT (
     echo.
-    echo  [!] Frontend never answered on port 8080 within ~90s.
+    echo  [!] Frontend never answered on port 8080.
     echo      Read the "ETP Frontend" window for the real error.
+    echo      Opening the browser anyway so you can see its error page.
     echo.
 )
 
-start "" http://localhost:8080
+REM  Open the app. The URL is echoed as well, so that if the default browser
+REM  fails to launch there is still something to click rather than a script
+REM  that appears to have done nothing.
+echo  Opening http://localhost:8080 ...
+start "" "http://localhost:8080"
 
 echo.
 echo  Done. Two server windows are running:
