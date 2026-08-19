@@ -10,6 +10,14 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    // Refuse to start rather than drift to 8081 when 8080 is busy. The drift is
+    // silent and the page still loads, so the app looks up - but its Origin is
+    // no longer in the backend's CORS allowlist (backend/app/api_guard.py
+    // DEFAULT_ORIGINS), so every API call dies at the preflight with a bare
+    // "400 Bad Request" in the uvicorn log. start.bat polls 8080 too, so it
+    // never opens the browser either. A stale dev server from a previous run is
+    // the usual cause, and a loud "port in use" points straight at it.
+    strictPort: true,
     hmr: {
       overlay: false,
     },
