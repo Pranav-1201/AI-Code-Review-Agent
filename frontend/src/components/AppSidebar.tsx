@@ -1,7 +1,8 @@
+import type { LucideIcon } from "lucide-react";
 import {
   Search, Shield, FileCode, BarChart3, GitBranch,
   Brain, Heart, History, AlertTriangle, Copy,
-  PieChart, Download, TestTube, Settings, LayoutDashboard,
+  PieChart, Download, Settings, LayoutDashboard,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
@@ -15,40 +16,57 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { ROUTES, SITE_NAME, type NavGroup } from "@/lib/routes";
 
-const scanItems = [
-  { title: "Repository Scanner", url: "/", icon: Search },
-  { title: "Scan Results", url: "/results", icon: LayoutDashboard },
-  { title: "Repository Overview", url: "/overview", icon: GitBranch },
-];
+/**
+ * Icons are the one thing the nav owns.
+ *
+ * The paths, titles and grouping all come from routes.ts, which the Caddyfile,
+ * the sitemap generator and the head manager also read. Icons cannot live
+ * there: routes.ts must import nothing at all so vite.config.ts can load it in
+ * Node at build time, and lucide-react is very much an import.
+ */
+const ICONS: Record<string, LucideIcon> = {
+  "/": Search,
+  "/results": LayoutDashboard,
+  "/overview": GitBranch,
+  "/file-analysis": FileCode,
+  "/security": Shield,
+  "/quality": BarChart3,
+  "/dependencies": GitBranch,
+  "/duplicates": Copy,
+  "/ai-suggestions": Brain,
+  "/health": Heart,
+  "/issues": AlertTriangle,
+  "/visualizations": PieChart,
+  "/history": History,
+  "/export": Download,
+  "/settings": Settings,
+};
 
-const analysisItems = [
-  { title: "File Analysis", url: "/file-analysis", icon: FileCode },
-  { title: "Security Report", url: "/security", icon: Shield },
-  { title: "Code Quality", url: "/quality", icon: BarChart3 },
-  { title: "Dependencies", url: "/dependencies", icon: GitBranch },
-  { title: "Duplicates", url: "/duplicates", icon: Copy },
-];
+/**
+ * Group the routes for the nav, preserving first-appearance order for the
+ * groups and array order within each — so the order of ROUTES *is* the order
+ * of the sidebar.
+ */
+const groups: { label: NavGroup; items: { url: string; title: string; icon: LucideIcon }[] }[] =
+  ROUTES.reduce<{ label: NavGroup; items: { url: string; title: string; icon: LucideIcon }[] }[]>(
+    (accumulated, route) => {
+      if (!route.navGroup) return accumulated;
 
-const aiItems = [
-  { title: "AI Suggestions", url: "/ai-suggestions", icon: Brain },
-  { title: "Health Score", url: "/health", icon: Heart },
-  { title: "Issue Explorer", url: "/issues", icon: AlertTriangle },
-  { title: "Visualizations", url: "/visualizations", icon: PieChart },
-];
+      const existing = accumulated.find((group) => group.label === route.navGroup);
+      const item = { url: route.path, title: route.title, icon: ICONS[route.path] };
 
-const systemItems = [
-  { title: "Scan History", url: "/history", icon: History },
-  { title: "Export Report", url: "/export", icon: Download },
-  { title: "Settings", url: "/settings", icon: Settings },
-];
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        accumulated.push({ label: route.navGroup, items: [item] });
+      }
 
-const groups = [
-  { label: "Scan", items: scanItems },
-  { label: "Analysis", items: analysisItems },
-  { label: "Insights", items: aiItems },
-  { label: "System", items: systemItems },
-];
+      return accumulated;
+    },
+    [],
+  );
 
 export function AppSidebar() {
   const { state, isMobile, setOpenMobile } = useSidebar();
@@ -74,7 +92,7 @@ export function AppSidebar() {
             </div>
             {!collapsed && (
               <div>
-                <h1 className="text-sm font-bold text-foreground">AI Code Review</h1>
+                <h1 className="text-sm font-bold text-foreground">{SITE_NAME}</h1>
                 <p className="text-[10px] text-muted-foreground">Agent Dashboard</p>
               </div>
             )}

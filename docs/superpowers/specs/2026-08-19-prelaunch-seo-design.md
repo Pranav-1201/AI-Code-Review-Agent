@@ -342,8 +342,12 @@ stack. It gains assertions, each mapping to one defect above:
 
 1. `GET /` → **200**
 2. `GET /nonsense` → **404** (defect 1)
-3. `GET /nonsense` body contains the 404 page's marker text — proving
-   `handle_errors` serves the app and not Caddy's bare error
+3. `GET /nonsense` body contains `id="root"` — proving `handle_errors` served
+   the app shell and not Caddy's plain-text `404 page not found`. The body
+   cannot be checked for the *rendered* 404 text: `NotFound.tsx` renders
+   client-side, and `404.html` is a byte-copy of `index.html`, so what curl
+   receives is the shell either way. Presence of the mount point is the only
+   thing that actually distinguishes the two outcomes over HTTP.
 4. `GET /history` → **200** (the client-side deep link still works — this is the
    regression the `@spa` list exists to prevent)
 5. `GET /favicon.svg` → **200** (defect 2)
