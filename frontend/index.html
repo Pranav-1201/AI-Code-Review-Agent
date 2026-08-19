@@ -5,11 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Code Review</title>
     <meta name="description" content="AI-powered code quality and security analysis platform." />
-    <!-- TODO: Update og:title to match your application name -->
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Browsers request /favicon.ico unprompted. Before this existed that
+         request fell through to the SPA fallback and returned the whole
+         application with a 200. -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- These are the cold-start values. RouteHead overwrites og:title and
+         og:description per route once React mounts; crawlers that do not run
+         JavaScript read what is here. -->
     <meta property="og:title" content="AI Code Review" />
     <meta property="og:description" content="AI-powered code quality and security analysis platform." />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="/og-image.png" />
+
+    <!-- summary_large_image was already set with no image behind it, so every
+         shared link rendered a blank card. -->
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/og-image.png" />
   </head>
 
   <body>

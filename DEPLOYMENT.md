@@ -131,9 +131,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 The `deploy-stack` job in `.github/workflows/ci.yml` runs on every push. It
 builds both images, renders the merged compose configuration, boots the whole
 stack, and drives it through Caddy — asserting that `/api/health` is reachable
-(so the `/api` prefix is being stripped), that a deep link returns the SPA
-shell, that port 8000 is **not** published, and that a backup snapshot is
-actually written.
+(so the `/api` prefix is being stripped), that a known route returns the SPA
+shell, that an **unknown** path returns a real 404 whose body is still the
+application, that static assets and `/favicon.svg` are served, that the
+security headers are present, that port 8000 is **not** published, and that a
+backup snapshot is actually written.
 
 So "the images build", "the stack boots", and "the proxy routes correctly" are
 gated claims, not assurances.
@@ -141,6 +143,38 @@ gated claims, not assurances.
 **Not covered by CI, and genuinely unverified until you deploy:** TLS
 certificate issuance, real DNS, and behaviour under load. The CI job runs on
 `:80` with no hostname, so it never exercises ACME.
+
+**The CSP is asserted present, not proven non-breaking.** A header check cannot
+tell you that a chart rendered or that a popover opened. The Playwright suite
+runs against `vite preview`, which does not go through Caddy and therefore has
+no CSP at all, so nothing in this repository currently exercises the app *under*
+the policy. If something visual breaks after deploying, open the browser console
+first: a CSP violation names the directive it blocked. `style-src` already
+carries `'unsafe-inline'` because Radix and vaul set inline style attributes,
+which is the failure this would otherwise have caused — but `script-src` is
+strict deliberately and must stay that way.
+
+### SEO surface
+
+Set `VITE_SITE_URL` **at image build time** (see `.env.example`) once a domain
+exists. Until then, `sitemap.xml`, the `robots.txt` sitemap pointer, canonical
+links and `og:url` are all omitted on purpose rather than emitted with a
+placeholder origin — a crawler acts on whatever URLs it is given, so wrong ones
+are worse than absent ones.
+
+The list of client-side routes lives in **two** places: `frontend/src/lib/routes.ts`
+and the `@spa` matcher in the `Caddyfile`. Caddy cannot import TypeScript, so
+this duplication is deliberate; `frontend/src/lib/routes.test.ts` reads the real
+Caddyfile and fails if the two diverge. **Adding a page means editing both.**
+
+Once a domain is live: submit `https://<domain>/sitemap.xml` in Google Search
+Console, and prefer a DNS TXT record over `VITE_SEARCH_CONSOLE_TOKEN` for
+verification — the TXT record survives a rebuild.
+
+To harden HSTS after the domain has been stable on HTTPS for a while, add
+`includeSubDomains` (and only then consider `preload`) to the
+`Strict-Transport-Security` value in the `Caddyfile`. Both are close to one-way
+doors, which is why neither ships by default.
 
 ## Verification checklist — please confirm on your Docker-capable machine
 

@@ -5,6 +5,14 @@ interface ImportMetaEnv {
   readonly VITE_API_BASE?: string;
   /** Must match the backend's API_KEY when the backend has one configured. */
   readonly VITE_API_KEY?: string;
+  /**
+   * Absolute public origin, e.g. https://example.com. Empty until a domain
+   * exists; canonical links, og:url and sitemap.xml all omit themselves rather
+   * than emit a placeholder origin.
+   */
+  readonly VITE_SITE_URL?: string;
+  /** Google Search Console verification token, when one has been issued. */
+  readonly VITE_SEARCH_CONSOLE_TOKEN?: string;
 }
 
 interface ImportMeta {

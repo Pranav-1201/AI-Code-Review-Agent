@@ -105,6 +105,12 @@ jobs:
             ${{ steps.img.outputs.web }}:latest
           build-args: |
             VITE_API_BASE=/api
+            VITE_SITE_URL=${{ vars.SITE_URL }}
+          # VITE_SITE_URL comes from a repository VARIABLE, not a secret: it is
+          # the public address of the site. Unset renders as empty, which is the
+          # correct state until a domain exists — canonical links, og:url and
+          # sitemap.xml all omit themselves rather than pointing somewhere wrong.
+          #
           # VITE_API_KEY is deliberately absent. Vite inlines these values into
           # the bundle and a published image is a public artifact, so passing a
           # key here would publish the key. A deployment that wants one builds

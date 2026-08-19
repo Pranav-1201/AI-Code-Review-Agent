@@ -27,7 +27,10 @@ name: CI
 
 on:
   push:
-    branches: ["main", "phase-*/**"]
+    # Branch families, not a catch-all. A branch outside this list gets NO CI
+    # run at all and the omission is silent — the push simply succeeds — so a
+    # new family has to be added here the first time it is used.
+    branches: ["main", "phase-*/**", "prelaunch/**"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -251,12 +254,57 @@ jobs:
           curl -fsS http://localhost/ | head -c 400
           echo
 
-          # try_files: a deep client-side route has no file on disk and must
-          # still return the shell rather than 404.
-          echo "--- GET /history/deep-link (client-side route) ---"
-          code=$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost/history/deep-link)
+          # A real client-side route has no file on disk and must still return
+          # the shell, so a refresh or a shared link works.
+          echo "--- GET /history (client-side route) ---"
+          code=$(curl -fsS -o /dev/null -w '%{http_code}' http://localhost/history)
+          test "$code" = "200" || { echo "FAIL: /history should serve the SPA shell, got $code" >&2; exit 1; }
           echo "$code"
-          test "$code" = "200"
+
+          # This assertion used to expect 200 and deliberately now expects 404.
+          # The @spa matcher is exact, not a prefix: /history is a route and
+          # /history/deep-link is not. Serving the shell for it is what made
+          # every mistyped URL an indexable duplicate.
+          echo "--- GET /history/deep-link (NOT a route) ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/history/deep-link)
+          test "$code" = "404" || { echo "FAIL: an unknown sub-path should 404, got $code" >&2; exit 1; }
+          echo "$code"
+
+          echo "--- GET /nonsense (unknown path) ---"
+          code=$(curl -s -o /tmp/notfound.html -w '%{http_code}' http://localhost/nonsense)
+          test "$code" = "404" || { echo "FAIL: unknown paths must return 404, got $code" >&2; exit 1; }
+
+          # The body must be the application shell, not Caddy's plain-text
+          # "404 page not found". This is what catches a missing
+          # `status {err.status_code}` or a missing 404.html: the status alone
+          # cannot tell those apart from a correct response.
+          grep -q 'id="root"' /tmp/notfound.html             || { echo "FAIL: the 404 body is not the app shell; handle_errors or 404.html is wrong" >&2; cat /tmp/notfound.html >&2; exit 1; }
+          echo "404 serves the app shell"
+
+          # Static assets must survive the routing change. An over-eager @spa
+          # matcher would hand the shell to a .js request and the app would
+          # fail to boot with a MIME-type error.
+          echo "--- GET the entry chunk ---"
+          asset=$(grep -o '/assets/[^"]*\.js' /tmp/notfound.html | head -1)
+          test -n "$asset" || { echo "FAIL: no asset URL found in the shell" >&2; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost$asset")
+          test "$code" = "200" || { echo "FAIL: $asset returned $code" >&2; exit 1; }
+          echo "$asset -> $code"
+
+          echo "--- GET /favicon.svg ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost/favicon.svg)
+          test "$code" = "200" || { echo "FAIL: favicon.svg returned $code" >&2; exit 1; }
+          echo "$code"
+
+          # Security headers. Asserted as PRESENT — a header check cannot prove
+          # the CSP does not break a chart or a popover, and DEPLOYMENT.md says
+          # so plainly rather than implying more coverage than exists.
+          echo "--- security headers ---"
+          curl -sSI http://localhost/ | tee /tmp/headers.txt
+          for header in "content-security-policy" "x-content-type-options" "referrer-policy" "strict-transport-security"; do
+            grep -qi "^$header:" /tmp/headers.txt               || { echo "FAIL: missing response header $header" >&2; exit 1; }
+          done
+          echo "all security headers present"
 
       - name: Confirm the API port is NOT published
         # The overlay resets it. If this regresses, an unauthenticated API is
