@@ -27,7 +27,10 @@ name: CI
 
 on:
   push:
-    branches: ["main", "phase-*/**"]
+    # Branch families, not a catch-all. A branch outside this list gets NO CI
+    # run at all and the omission is silent — the push simply succeeds — so a
+    # new family has to be added here the first time it is used.
+    branches: ["main", "phase-*/**", "prelaunch/**"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
