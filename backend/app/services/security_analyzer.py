@@ -4,6 +4,7 @@
 # ==========================================================
 
 import ast
+import re
 from typing import List, Dict
 
 from backend.app.analysis.ast_parser import parse_module
@@ -43,6 +44,42 @@ SHA_SEVERITY_MAP: dict[str, tuple[str, str]] = {
 # the documented safe spelling and is common in real code, so flagging it would
 # buy recall at the cost of precision on exactly the repos the benchmark scores.
 _SAFE_YAML_LOADERS = frozenset({"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader"})
+
+# PHASE G / S2: SQL statement shape.
+#
+# Both SQL detectors used to substring-match the verbs select|insert|update|
+# delete, so "Failed to delete {name}" was reported as SQL injection at High.
+# A verb is not a query. Two conditions now have to hold.
+#
+# First, the string must BEGIN with a SQL verb. Matching `select ... from`
+# anywhere still swallows ordinary prose -- "Please select an option from the
+# menu" -- whereas a real interpolated query is written starting at the verb,
+# which is what every true positive in the corpus does.
+_SQL_LEADING_VERB = re.compile(
+    r"^\s*\(?\s*(?:"
+    r"with\b[\s\S]*?\bselect\b"
+    r"|select\b"
+    r"|insert\s+into\b"
+    r"|replace\s+into\b"
+    r"|update\b"
+    r"|delete\s+from\b"
+    r"|truncate\s+table\b"
+    r"|drop\s+(?:table|index|view|database)\b"
+    r"|alter\s+table\b"
+    r"|create\s+(?:table|index|view|database)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+# Second, a clause keyword must appear. This is what separates the imperative
+# sentence "Select a file to insert ..." from "SELECT id FROM ...".
+_SQL_CLAUSE = re.compile(r"\b(?:from|set|values|where|join|into)\b", re.IGNORECASE)
+
+
+def _looks_like_sql(text: str) -> bool:
+    """True when `text` has the shape of a SQL statement, not merely a SQL word."""
+    return bool(_SQL_LEADING_VERB.match(text)) and bool(_SQL_CLAUSE.search(text))
+
 
 # The one subprocess verdict that clears a call instead of flagging it. Shared
 # between _classify_subprocess_call (which emits it) and visit_Call (which
@@ -666,9 +703,12 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
                 if isinstance(node.left.value, str):
 
-                    query = node.left.value.lower()
+                    # PHASE G / S2: shape, not a bare verb -- and a dynamic
+                    # right-hand side, since concatenating two literals
+                    # produces a constant that cannot be injected into.
+                    dynamic = not isinstance(node.right, ast.Constant)
 
-                    if any(q in query for q in ["select", "insert", "update", "delete"]):
+                    if dynamic and _looks_like_sql(node.left.value):
                         self._add_issue(
                             severity="High",
                             description="Possible SQL injection via string concatenation.",
@@ -687,20 +727,29 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
         line = getattr(node, "lineno", 0)
 
-        for value in node.values:
+        # PHASE G / S2: an f-string with nothing interpolated is a constant,
+        # and a constant carries no injection. Previously every literal chunk
+        # was tested on its own, which both produced duplicate findings and
+        # missed a query whose keywords straddle an interpolation. Joining the
+        # chunks first fixes both: `f"SELECT {cols} FROM {tbl}"` reads as
+        # "SELECT   FROM  ". The separator is a space so that `f"SELECT{x}FROM"`
+        # does not glue into a single token.
+        if any(isinstance(value, ast.FormattedValue) for value in node.values):
 
-            if isinstance(value, ast.Constant):
+            literal = " ".join(
+                str(value.value)
+                for value in node.values
+                if isinstance(value, ast.Constant)
+            )
 
-                text = str(value.value).lower()
-
-                if any(q in text for q in ["select", "insert", "update", "delete"]):
-                    self._add_issue(
-                        severity="High",
-                        description="Possible SQL injection via formatted string query.",
-                        recommendation="Use parameterized queries instead of f-strings for SQL. ORMs like SQLAlchemy provide safe query builders.",
-                        line=line,
-                        issue_type="SQL Injection"
-                    )
+            if _looks_like_sql(literal):
+                self._add_issue(
+                    severity="High",
+                    description="Possible SQL injection via formatted string query.",
+                    recommendation="Use parameterized queries instead of f-strings for SQL. ORMs like SQLAlchemy provide safe query builders.",
+                    line=line,
+                    issue_type="SQL Injection"
+                )
 
         self.generic_visit(node)
 
