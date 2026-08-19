@@ -103,6 +103,14 @@ class SecurityAnalyzer(ast.NodeVisitor):
         self._source_lines: list[str] = source.splitlines() if source else []
         self._parent_map: dict = {}
 
+        # PHASE G / S1: import bindings, so a call target can be resolved to
+        # the module it actually belongs to. Populated by bind_imports() before
+        # the walk. Without this the detector matches the bare attribute name,
+        # and `subprocess.run` is indistinguishable from Flask's `app.run` —
+        # which on real repositories was every command-injection finding.
+        self._module_aliases: dict[str, str] = {}   # local name -> module
+        self._name_bindings: dict[str, str] = {}    # local name -> "module.attr"
+
         # Framework-aware file patterns where eval/exec/compile are expected
         # and controlled (not user-input driven).
         #
@@ -135,6 +143,85 @@ class SecurityAnalyzer(ast.NodeVisitor):
             "client_secret",
             "auth_token"
         }
+
+    # ------------------------------------------------------
+    # Call-target resolution (PHASE G / S1)
+    # ------------------------------------------------------
+
+    def bind_imports(self, tree: ast.AST) -> None:
+        """Record this module's import bindings for call-target resolution.
+
+        Runs over the whole tree BEFORE the walk on purpose. Visit order does
+        not guarantee an import is seen before the call that uses it — a
+        function body is visited where it is defined, and a late or
+        conditional import is common — and a binding missed that way turns a
+        true positive silent, which is the worse direction to fail in.
+        """
+        for node in ast.walk(tree):
+
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        self._module_aliases[alias.asname] = alias.name
+                    else:
+                        # `import os.path` binds the name `os`, not `os.path`.
+                        root = alias.name.split(".")[0]
+                        self._module_aliases[root] = root
+
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    if alias.name != "*":
+                        local = alias.asname or alias.name
+                        self._name_bindings[local] = f"{node.module}.{alias.name}"
+
+    def _resolve_module(self, value: ast.AST) -> str:
+        """Best-effort module name for the receiver of an attribute call.
+
+        `subprocess.run` -> "subprocess"; `sp.run` under `import subprocess as
+        sp` -> "subprocess"; `app.run` -> "app". An unimported plain name
+        resolves to itself rather than to nothing, so a snippet that omits its
+        imports is still analysed correctly.
+
+        Anything that is not a plain name — `self.client.run`, `get().run` —
+        returns "", which reads correctly as "not the module we are after".
+        """
+        if isinstance(value, ast.Name):
+            return self._module_aliases.get(value.id, value.id)
+        return ""
+
+    def _report_os_system(self, node: ast.Call, line: int) -> None:
+        severity, desc, tb, conf = self._apply_taint(
+            node, "High",
+            "Use of os.system() detected which may allow command injection.")
+        self._add_issue(
+            severity=severity,
+            description=desc,
+            recommendation="Use subprocess.run() with a list of arguments instead of os.system() to prevent shell injection.",
+            line=line,
+            issue_type="Command Injection",
+            trust_boundary=tb,
+            confidence_override=conf,
+        )
+
+    def _report_subprocess_call(self, node: ast.Call, line: int) -> None:
+        # PHASE 1: argument-type-aware severity
+        severity, message = self._classify_subprocess_call(node)
+        # PHASE 3: escalate to Critical when the command argument is
+        # data-flow reachable from untrusted input.
+        severity, message, tb, conf = self._apply_taint(node, severity, message)
+        self._add_issue(
+            severity=severity,
+            description=message,
+            recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
+            line=line,
+            issue_type="Command Injection",
+            trust_boundary=tb,
+            confidence_override=conf,
+            # Checked AFTER taint on purpose: _apply_taint replaces the
+            # description for untrusted-input sinks, so a call that
+            # still carries the marker here is one taint also cleared.
+            benign=SAFE_SUBPROCESS_INVOCATION in message,
+        )
 
     # ------------------------------------------------------
     # Helper to add structured issue
@@ -351,6 +438,18 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             name = node.func.id
 
+            # PHASE G / S1: `from subprocess import run` / `from os import
+            # system` produce a bare Name call, not an Attribute. Tightening
+            # the attribute branch to a resolved receiver would have made
+            # these silent, so resolve the from-import binding here.
+            bound = self._name_bindings.get(name, "")
+
+            if bound == "os.system":
+                self._report_os_system(node, line)
+            elif bound in {"subprocess.Popen", "subprocess.call", "subprocess.run"}:
+                self._report_subprocess_call(node, line)
+                _handled_as_subprocess = True
+
             if name == "eval":
                 is_constant_arg = len(node.args) > 0 and isinstance(node.args[0], ast.Constant)
                 if self._is_framework_context:
@@ -423,41 +522,20 @@ class SecurityAnalyzer(ast.NodeVisitor):
 
             attr = node.func.attr
 
+            # PHASE G / S1: resolve the receiver before matching the name.
+            # Matching `attr` alone made `app.run(debug=True)` — the most
+            # common single line in a Flask application — a Command Injection
+            # finding, along with every `self.run()`, `scheduler.run()` and
+            # `manager.system()` in the corpus.
+            receiver = self._resolve_module(node.func.value)
+
             # os.system
-            if attr == "system":
-                severity, desc, tb, conf = self._apply_taint(
-                    node, "High",
-                    "Use of os.system() detected which may allow command injection.")
-                self._add_issue(
-                    severity=severity,
-                    description=desc,
-                    recommendation="Use subprocess.run() with a list of arguments instead of os.system() to prevent shell injection.",
-                    line=line,
-                    issue_type="Command Injection",
-                    trust_boundary=tb,
-                    confidence_override=conf,
-                )
+            if attr == "system" and receiver == "os":
+                self._report_os_system(node, line)
 
             # subprocess commands
-            if attr in {"Popen", "call", "run"}:
-                # PHASE 1: argument-type-aware severity
-                severity, message = self._classify_subprocess_call(node)
-                # PHASE 3: escalate to Critical when the command argument is
-                # data-flow reachable from untrusted input.
-                severity, message, tb, conf = self._apply_taint(node, severity, message)
-                self._add_issue(
-                    severity=severity,
-                    description=message,
-                    recommendation="Ensure arguments are passed as a list (not a string), avoid shell=True, and validate all inputs.",
-                    line=line,
-                    issue_type="Command Injection",
-                    trust_boundary=tb,
-                    confidence_override=conf,
-                    # Checked AFTER taint on purpose: _apply_taint replaces the
-                    # description for untrusted-input sinks, so a call that
-                    # still carries the marker here is one taint also cleared.
-                    benign=SAFE_SUBPROCESS_INVOCATION in message,
-                )
+            if attr in {"Popen", "call", "run"} and receiver == "subprocess":
+                self._report_subprocess_call(node, line)
                 _handled_as_subprocess = True                 # PHASE 1 FIX
 
             # unsafe deserialization
@@ -783,6 +861,9 @@ def detect_security_issues(code: str, is_test_file: bool = False, file_path: str
             for node in ast.walk(tree)
             if getattr(node, "parent", None) is not None
         }
+
+        # PHASE G / S1: bind imports before the walk so call targets resolve.
+        analyzer.bind_imports(tree)
 
         analyzer.visit(tree)
 
