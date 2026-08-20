@@ -6,13 +6,13 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 
 **Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
 `cc9e8871` · **Branch at handover:** `main` — J1 **merged** (`37f0060`),
-branch deleted. **Not pushed** — `main` is 12 commits ahead of `origin/main`.
+branch deleted. **Not pushed** — `main` is 16 commits ahead of `origin/main`.
 
 > **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** All 7 tasks
 > done, every one review-clean; the final whole-branch review (Opus) returned
 > **spec PASS, quality PASS**. The feature branch is deleted.
 >
-> **`main` is NOT pushed** — 12 commits ahead of `origin/main`, so CI has not run
+> **`main` is NOT pushed** — 16 commits ahead of `origin/main`, so CI has not run
 > on any of this. Pushing is the first thing to do next session.
 >
 > **Verified this session:** vitest **59 passed / 11 files** (baseline 42/6),
@@ -61,7 +61,7 @@ section for current state.
 | | |
 |---|---|
 | Current branch | `main` (J1 merged at `37f0060`, branch deleted) |
-| Pushed? | **NO** — `main` is 12 commits ahead of `origin/main`; CI has not run |
+| Pushed? | **NO** — `main` is 16 commits ahead of `origin/main`; CI has not run |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 
