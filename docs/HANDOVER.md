@@ -6,7 +6,7 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 
 **Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
 `cc9e8871` · **Branch at handover:** `phase-j/j1-explanation-parity`, **unpushed**,
-5 commits ahead of `main` at `f1cedf7`.
+11 commits ahead of `main` at `f1cedf7`.
 
 > **J1 is COMPLETE and reviewed, on an unpushed branch awaiting your merge
 > decision.** All 7 tasks done, every one review-clean; the final whole-branch
@@ -59,8 +59,8 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` |
-| Pushed? | **Yes** — Phase G merged to `main` and pushed |
+| Current branch | `phase-j/j1-explanation-parity` (J1, complete, awaiting merge) |
+| Pushed? | `main` yes; **this branch NO** — 11 commits local only |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 
