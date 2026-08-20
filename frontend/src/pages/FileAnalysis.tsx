@@ -2,9 +2,8 @@ import { useState, useMemo } from "react";
 import { useScan } from "@/context/ScanContext";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SeverityBadge } from "@/components/SeverityBadge";
-import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
 import { ExplanationSourceBadge } from "@/components/ExplanationSourceBadge";
+import { FindingCard } from "@/components/FindingCard";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Search, Filter, AlertTriangle, FileCode, Beaker, FileKey, Layers, Activity } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getDisplayName } from "@/lib/response-mapper";
+import { fromFileIssue } from "@/lib/findings";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 
@@ -264,24 +264,7 @@ export default function FileAnalysis() {
                 <CardHeader><CardTitle className="text-lg flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-warning" /> Issues ({file.issues.length})</CardTitle></CardHeader>
                 <CardContent className="space-y-2">
                   {file.issues.map((issue, i) => (
-                    <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-secondary/20">
-                      <SeverityBadge severity={issue.severity} />
-                      <div className="flex-1">
-                        <p className="text-sm font-semibold">{issue.message}</p>
-                        {issue.why_it_matters && (
-                          <p className="text-xs text-muted-foreground mt-1.5"><span className="font-medium text-foreground/80">Context:</span> {issue.why_it_matters}</p>
-                        )}
-                        {issue.how_to_fix && (
-                          <p className="text-xs text-primary/80 mt-1"><span className="font-medium text-primary">Fix:</span> {issue.how_to_fix}</p>
-                        )}
-                        <div className="flex gap-2 mt-2 flex-wrap">
-                          {issue.line && <Badge variant="outline" className="text-[10px] font-mono">Line {issue.line}</Badge>}
-                          <Badge variant="outline" className="text-[10px]">{issue.category}</Badge>
-                          <TrustBoundaryBadge trustBoundary={issue.trust_boundary} />
-                          {issue.confidence && <Badge variant="outline" className="text-[10px] border-primary/20 text-primary/80">{(issue.confidence * 100).toFixed(0)}% Match</Badge>}
-                        </div>
-                      </div>
-                    </div>
+                    <FindingCard key={i} finding={fromFileIssue(issue, file)} />
                   ))}
                 </CardContent>
               </Card>
