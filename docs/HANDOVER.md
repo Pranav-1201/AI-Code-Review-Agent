@@ -5,14 +5,15 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
-`cc9e8871` · **Branch at handover:** `phase-j/j1-explanation-parity`, **unpushed**,
-11 commits ahead of `main` at `f1cedf7`.
+`cc9e8871` · **Branch at handover:** `main` — J1 **merged** (`37f0060`),
+branch deleted. **Not pushed** — `main` is 12 commits ahead of `origin/main`.
 
-> **J1 is COMPLETE and reviewed, on an unpushed branch awaiting your merge
-> decision.** All 7 tasks done, every one review-clean; the final whole-branch
-> review (Opus) returned **spec PASS, quality PASS** and recommended merge.
-> Everything on `main` is pushed (an earlier note claiming F2 was unpushed was
-> stale — `git rev-list --count origin/main..main` returns 0).
+> **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** All 7 tasks
+> done, every one review-clean; the final whole-branch review (Opus) returned
+> **spec PASS, quality PASS**. The feature branch is deleted.
+>
+> **`main` is NOT pushed** — 12 commits ahead of `origin/main`, so CI has not run
+> on any of this. Pushing is the first thing to do next session.
 >
 > **Verified this session:** vitest **59 passed / 11 files** (baseline 42/6),
 > `npm run typecheck` exit 0, `npm run build` succeeds, Playwright **17 passed**.
@@ -59,8 +60,8 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `phase-j/j1-explanation-parity` (J1, complete, awaiting merge) |
-| Pushed? | `main` yes; **this branch NO** — 11 commits local only |
+| Current branch | `main` (J1 merged at `37f0060`, branch deleted) |
+| Pushed? | **NO** — `main` is 12 commits ahead of `origin/main`; CI has not run |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 
