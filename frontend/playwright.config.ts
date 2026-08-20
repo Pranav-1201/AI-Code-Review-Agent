@@ -32,10 +32,14 @@ export default defineConfig({
     {
       name: "tablet-768",
       use: { ...devices["Desktop Chrome"], viewport: { width: 768, height: 1024 } },
+      // sidebar.spec.ts forces its own 960px viewport, so running it here would
+      // repeat the desktop project's run verbatim rather than test this width.
+      testIgnore: /sidebar\.spec\.ts/,
     },
     {
       name: "mobile-375",
       use: { ...devices["Desktop Chrome"], viewport: { width: 375, height: 812 } },
+      testIgnore: /sidebar\.spec\.ts/,
     },
   ],
 
