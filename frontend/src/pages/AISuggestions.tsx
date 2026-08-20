@@ -2,6 +2,9 @@ import { useScan } from "@/context/ScanContext";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Brain, Lightbulb, FileCode } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import { ExplanationSourceBadge } from "@/components/ExplanationSourceBadge";
 
 export default function AISuggestions() {
   const { currentReport } = useScan();
@@ -36,8 +39,11 @@ export default function AISuggestions() {
                   <div className="flex items-center gap-2 mb-2">
                     <Brain className="w-4 h-4 text-accent" />
                     <span className="text-sm font-semibold text-accent">AI Analysis</span>
+                    <ExplanationSourceBadge source={file.explanationSource} />
                   </div>
-                  <p className="text-sm text-foreground/80 leading-relaxed">{file.explanation}</p>
+                  <div className="prose prose-sm prose-invert max-w-none text-sm text-foreground/80 prose-p:leading-relaxed">
+                    <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{file.explanation}</ReactMarkdown>
+                  </div>
                 </div>
               )}
 
