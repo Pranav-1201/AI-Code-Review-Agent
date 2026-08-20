@@ -72,7 +72,10 @@ export default function SecurityReport() {
           <Card className="bg-card border-primary/30">
             <CardContent className="pt-6 text-center">
               <Shield className="w-12 h-12 text-primary mx-auto mb-2" />
-              <p className="text-primary font-medium">No security vulnerabilities detected</p>
+              {/* Scoped to match the headline above. An unqualified "none detected"
+                  would contradict the "N further findings in test/non-code files"
+                  line this same page renders when excludedCount > 0. */}
+              <p className="text-primary font-medium">No security findings in production files</p>
             </CardContent>
           </Card>
         ) : (

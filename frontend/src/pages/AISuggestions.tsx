@@ -21,7 +21,11 @@ export default function AISuggestions() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">AI Suggestions</h1>
-        <p className="text-muted-foreground mt-1">AI-generated explanations and recommendations</p>
+        {/* Not "AI-generated": every explanation below carries a badge saying whether
+            rules or the LLM layer wrote it, and the LLM layer is off by default, so
+            the page usually shows rule-based prose. Claiming otherwise here would
+            contradict the badges directly underneath it (CONSTRAINTS 18). */}
+        <p className="text-muted-foreground mt-1">Explanations and suggestions per file, each labelled with its source</p>
       </div>
 
       <div className="space-y-4">
