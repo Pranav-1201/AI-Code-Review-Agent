@@ -1,12 +1,10 @@
 import { useState } from "react";
 import { useScan } from "@/context/ScanContext";
 import { EmptyState } from "@/components/EmptyState";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { SeverityBadge } from "@/components/SeverityBadge";
-import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
-import { Badge } from "@/components/ui/badge";
+import { FindingCard } from "@/components/FindingCard";
+import { fromFileIssue } from "@/lib/findings";
 import { AlertTriangle, Search } from "lucide-react";
 
 export default function IssueExplorer() {
@@ -22,7 +20,13 @@ export default function IssueExplorer() {
   }
 
   const allIssues = currentReport.files.flatMap((f) =>
-    f.issues.map((issue) => ({ ...issue, fileName: f.name, filePath: f.path }))
+    f.issues.map((issue) => ({
+      view: fromFileIssue(issue, f),
+      severity: issue.severity,
+      category: issue.category,
+      message: issue.message,
+      fileName: f.name,
+    }))
   );
 
   const filteredIssues = allIssues.filter((issue) => {
@@ -81,22 +85,7 @@ export default function IssueExplorer() {
 
       <div className="space-y-2">
         {filteredIssues.map((issue, i) => (
-          <Card key={i} className="bg-card border-border/50">
-            <CardContent className="py-4">
-              <div className="flex items-start gap-3">
-                <SeverityBadge severity={issue.severity} />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm">{issue.message}</p>
-                  <div className="flex items-center gap-2 mt-1 flex-wrap">
-                    <Badge variant="outline" className="text-[10px] font-mono">{issue.fileName}</Badge>
-                    <Badge variant="outline" className="text-[10px]">{issue.category}</Badge>
-                    {issue.line && <Badge variant="outline" className="text-[10px] font-mono">L{issue.line}</Badge>}
-                    <TrustBoundaryBadge trustBoundary={issue.trust_boundary} />
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <FindingCard key={i} finding={issue.view} />
         ))}
       </div>
     </div>
