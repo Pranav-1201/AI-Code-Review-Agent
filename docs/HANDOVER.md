@@ -5,8 +5,17 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
-`848e92a5` · **Branch at handover:** `main` (G and H pushed; **F2 committed on
-`main` but NOT yet pushed** — `8ce9a3e`, `0c385bf`, plus this doc commit)
+`cc9e8871` · **Branch at handover:** `phase-j/j1-explanation-parity`, **unpushed**,
+5 commits ahead of `main` at `f1cedf7`.
+
+> **Phase J is underway — J1 is mid-flight.** Everything on `main` is pushed
+> (the earlier note claiming F2 was unpushed was stale; `git rev-list --count
+> origin/main..main` returns 0). Resume from
+> `.superpowers/sdd/2026-08-20-j1-explanation-parity/progress.md` — that ledger
+> is the recovery map and names every commit. **Tasks 1-3 complete and
+> review-clean; Task 4 implemented and fixed but its scoped re-review was never
+> run — do not mark it complete until that happens.** Tasks 5-7 not started.
+> Frontend suite is **56 passed / 10 files** (was 42/6 when J1 started).
 
 ---
 
