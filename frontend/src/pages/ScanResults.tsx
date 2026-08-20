@@ -77,7 +77,7 @@ export default function ScanResults() {
     { label: "Files", value: summary.files, icon: FileCode, color: "text-info" },
     { label: "With issues", value: summary.files_with_issues, icon: AlertTriangle, color: "text-warning" },
     { label: "Avg score", value: summary.avg_score.toFixed(1), icon: BarChart3, color: "text-primary" },
-    { label: "Security", value: summary.security_issues, icon: Shield, color: "text-destructive" },
+    { label: "Security (production)", value: summary.security_issues, icon: Shield, color: "text-destructive" },
   ];
 
   return (
@@ -102,7 +102,7 @@ export default function ScanResults() {
                 <p className="text-sm text-muted-foreground mt-1">
                   {summary.files} files analyzed · avg score {summary.avg_score.toFixed(1)} ·{" "}
                   {totalIssues} issue{totalIssues === 1 ? "" : "s"} ·{" "}
-                  {summary.security_issues} security finding{summary.security_issues === 1 ? "" : "s"}
+                  {summary.security_issues} security finding{summary.security_issues === 1 ? "" : "s"} in production files
                 </p>
               </div>
 

@@ -2,6 +2,9 @@ import { useScan } from "@/context/ScanContext";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Brain, Lightbulb, FileCode } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import { ExplanationSourceBadge } from "@/components/ExplanationSourceBadge";
 
 export default function AISuggestions() {
   const { currentReport } = useScan();
@@ -18,7 +21,11 @@ export default function AISuggestions() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">AI Suggestions</h1>
-        <p className="text-muted-foreground mt-1">AI-generated explanations and recommendations</p>
+        {/* Not "AI-generated": every explanation below carries a badge saying whether
+            rules or the LLM layer wrote it, and the LLM layer is off by default, so
+            the page usually shows rule-based prose. Claiming otherwise here would
+            contradict the badges directly underneath it (CONSTRAINTS 18). */}
+        <p className="text-muted-foreground mt-1">Explanations and suggestions per file, each labelled with its source</p>
       </div>
 
       <div className="space-y-4">
@@ -36,8 +43,11 @@ export default function AISuggestions() {
                   <div className="flex items-center gap-2 mb-2">
                     <Brain className="w-4 h-4 text-accent" />
                     <span className="text-sm font-semibold text-accent">AI Analysis</span>
+                    <ExplanationSourceBadge source={file.explanationSource} />
                   </div>
-                  <p className="text-sm text-foreground/80 leading-relaxed">{file.explanation}</p>
+                  <div className="prose prose-sm prose-invert max-w-none text-sm text-foreground/80 prose-p:leading-relaxed">
+                    <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{file.explanation}</ReactMarkdown>
+                  </div>
                 </div>
               )}
 

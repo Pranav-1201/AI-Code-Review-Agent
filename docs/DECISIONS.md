@@ -356,3 +356,64 @@ therefore a unit test that models fractional widths directly
 **Verified:** the two fractional cases watched failing against the old hook
 first; then vitest 42/42, `npm run typecheck` exit 0, Playwright 17/17, and the
 headed browser walk re-run against the rebuilt app.
+
+---
+
+## D17 — J1 is an extraction, not a new explanation layer
+
+**Date:** 2026-08-20 · **Decided by:** Claude Opus 5 session `cc9e8871`
+**Branch:** `phase-j/j1-explanation-parity` (9 task commits + fixes)
+
+Phase J bundles seven ideas across six pages and budgets three sessions, so it
+was split into J1 (explanation parity), J2 (wayfinding: F6, F9's expand,
+`snippet`, F16's a11y pass) and J3 (the code panes: F4, F5). This records J1.
+
+**The finding the design rests on:** every field Phase J wanted to surface was
+already computed by the backend and already rendered correctly — on exactly one
+page. `FileAnalysis.tsx` showed `why_it_matters`, `how_to_fix` and `confidence`;
+`SecurityReport` and `IssueExplorer` never read them. So J1 extracted the
+treatment that worked (`lib/findings.ts` normalizers + `components/FindingCard.tsx`)
+rather than designing a new one. No backend change, no LLM involvement, no new
+dependency.
+
+**F15 changed direction mid-design, and that is the decision worth keeping.**
+The production-only security count looked like a frontend labelling bug. It is
+not: the filter lives in `repository_review_engine.py:512-514` and feeds
+`health_score` at 25% weight (`:570`, `:574`), and **S9 (fixture exclusion) is
+still unstarted**, so widening the count would pull this repository's own
+deliberately-vulnerable `benchmark/corpus/fixtures/` into the headline number.
+The scoping stays; the page now matches it and accounts for what it excluded
+("N further findings in test/non-code files") instead of silently disagreeing
+with the dashboard tile.
+
+**Two latent bugs surfaced and were fixed by the extraction.** The old inline
+block guarded numeric fields on truthiness (`issue.confidence &&`), so a
+confidence of exactly `0` and a line of `0` rendered nothing. `FindingCard`
+tests `!== undefined`. A test pins the `0% Match` case.
+
+**Two copy claims were corrected as honesty fixes**, both flagged by the final
+review: the AI Suggestions subtitle said "AI-generated" directly above badges
+reading "Rule-based" (the LLM layer is off by default — CONSTRAINTS 18), and the
+Security Report all-clear said "No security vulnerabilities detected"
+unqualified while the same page could render "N further findings in test files".
+
+**Carried forward to J3, so it is not re-litigated:** F5's prose comes from a
+structured change list replacing the string-counting at
+`heuristic_refactor_engine.py:265-281` (which counts `"""` occurrences ÷ 2 and
+miscounts single-line docstrings), and F4's empty state says what was actually
+checked rather than implying a clean bill of health.
+
+**Verified this session:** vitest **59 passed / 11 files** (baseline 42/6 at plan
+start, measured not inherited), `npm run typecheck` (`tsc -b`) exit 0,
+`npm run build` succeeds, Playwright **17 passed** matching baseline. A 3-failure
+Playwright run was investigated rather than assumed flaky: the failing project
+passed 6/6 alone on both the merge-base and this branch, and the full suite then
+returned 17 — parallelism under concurrent projects, not a regression.
+
+**Process note worth keeping:** sequencing the reference-page swap last paid off.
+Because Task 7 was a pure swap against an already-green tree, the latent bugs in
+the old block surfaced as observations rather than as a conflict between
+"extract the reference" and "fix the reference". The gap was that no task owned
+the closing documentation obligations, and Task 7's brief deferred them to a
+browser step its implementer could not run — a plan-shape issue, not an
+implementer one.
