@@ -23,6 +23,23 @@ export interface FindingView {
   howToFix?: string;
   confidence?: number;
   trustBoundary?: string;
+  /** Numbered source lines around the finding. Absent when unknown. */
+  snippet?: string;
+}
+
+/**
+ * The shape the backend emitted before J2: "Line 42" or
+ * "Line 481 indicates: Command Injection". 523 cached scans still contain it
+ * and ScanHistory replays them, so it is filtered here rather than rendered.
+ * A real snippet is line-numbered as "42: <code>" and never matches this.
+ */
+const LEGACY_SNIPPET = /^Line \d+( indicates: .+)?$/;
+
+function cleanSnippet(raw?: string): string | undefined {
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed || LEGACY_SNIPPET.test(trimmed)) return undefined;
+  return raw;
 }
 
 export function fromSecurityVulnerability(v: SecurityVulnerability): FindingView {
@@ -39,6 +56,7 @@ export function fromSecurityVulnerability(v: SecurityVulnerability): FindingView
     howToFix: v.how_to_fix ?? v.recommendation,
     confidence: v.confidence,
     trustBoundary: v.trust_boundary,
+    snippet: cleanSnippet(v.snippet),
   };
 }
 
@@ -54,5 +72,6 @@ export function fromFileIssue(i: FileIssue, file: FileAnalysis): FindingView {
     howToFix: i.how_to_fix,
     confidence: i.confidence,
     trustBoundary: i.trust_boundary,
+    snippet: cleanSnippet(i.snippet),
   };
 }
