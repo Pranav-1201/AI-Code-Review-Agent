@@ -14,7 +14,15 @@ export default function SecurityReport() {
     );
   }
 
-  const allVulnerabilities = currentReport.files.flatMap((f) => f.security);
+  // The dashboard tile counts production files only, because the backend's
+  // total_security_issues does (repository_review_engine.py:512-514) and it
+  // feeds health_score. This page matches that scope so the two numbers agree,
+  // and accounts for what it excluded rather than hiding it.
+  const productionFiles = currentReport.files.filter((f) => f.fileType === "production");
+  const allVulnerabilities = productionFiles.flatMap((f) => f.security);
+  const excludedCount = currentReport.files
+    .filter((f) => f.fileType !== "production")
+    .reduce((n, f) => n + f.security.length, 0);
   const criticalCount = allVulnerabilities.filter((v) => v.severity === "Critical").length;
   const highCount = allVulnerabilities.filter((v) => v.severity === "High").length;
 
@@ -22,7 +30,14 @@ export default function SecurityReport() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Security Vulnerability Report</h1>
-        <p className="text-muted-foreground mt-1">{allVulnerabilities.length} vulnerabilities detected</p>
+        <p className="text-muted-foreground mt-1">
+          {allVulnerabilities.length} finding{allVulnerabilities.length === 1 ? "" : "s"} in production files
+        </p>
+        {excludedCount > 0 && (
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            {excludedCount} further finding{excludedCount === 1 ? "" : "s"} in test/non-code files, excluded from the score
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

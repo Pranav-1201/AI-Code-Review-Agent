@@ -45,4 +45,35 @@ describe("SecurityReport", () => {
     expect(screen.getByText(/Use subprocess.run/)).toBeInTheDocument();
     expect(screen.getByText("90% Match")).toBeInTheDocument();
   });
+
+  it("scopes the report to production files and accounts for the rest", () => {
+    mockUseScan.mockReturnValue({
+      currentReport: {
+        files: [
+          {
+            name: "runner.py",
+            path: "app/runner.py",
+            fileType: "production",
+            security: [{ type: "Command Injection", severity: "Critical", description: "d", file: "app/runner.py" }],
+          },
+          {
+            name: "test_runner.py",
+            path: "tests/test_runner.py",
+            fileType: "test",
+            security: [
+              { type: "Hardcoded Secret", severity: "High", description: "d", file: "tests/test_runner.py" },
+              { type: "Weak Hash", severity: "Low", description: "d", file: "tests/test_runner.py" },
+            ],
+          },
+        ],
+      } as unknown as ScanReport,
+    });
+
+    render(<SecurityReport />);
+
+    expect(screen.getByText(/1 finding in production files/)).toBeInTheDocument();
+    // Scoped, not hidden — a reader must be able to reconcile this with the tile.
+    expect(screen.getByText(/2 further findings in test\/non-code files/)).toBeInTheDocument();
+    expect(screen.queryByText("Hardcoded Secret")).not.toBeInTheDocument();
+  });
 });
