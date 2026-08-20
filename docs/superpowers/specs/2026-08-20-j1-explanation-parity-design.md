@@ -115,11 +115,17 @@ Two narrow defects, no new prose.
 1. **Literal markdown on screen.** `heuristic_refactor_engine.py:278-280`
    appends `**Suggested improvements (unapplied):** …` into the plain-text
    `explanation` string. `AISuggestions.tsx:40` renders `explanation` in a bare
-   `<p>`, so the asterisks display verbatim. Fix: split the string on that
-   marker and render the tail as its own labelled block. When the marker is
-   absent — the common case, since the engine only appends it when it actually
-   changed something — the whole string renders as it does today. No markdown
-   renderer, therefore no new dependency.
+   `<p>`, so the asterisks display verbatim. Fix: render it exactly as
+   `FileAnalysis.tsx:255-259` already does, through
+   `<ReactMarkdown rehypePlugins={[rehypeSanitize]}>`. `react-markdown@^10.1.0`
+   and `rehype-sanitize@^6.0.0` are already dependencies
+   (`frontend/package.json:59,63`), so this adds nothing and makes the two pages
+   that render `explanation` render it the same way.
+
+   An earlier draft of this spec proposed splitting the string on the marker
+   instead, on the belief that a markdown renderer would mean a new dependency.
+   That was wrong — the renderer is already here and already used for this exact
+   field. The simpler fix is also the consistent one.
 
 2. **Unlabelled provenance.** `FileAnalysis.tsx:252` already attaches
    `<ExplanationSourceBadge source={file.explanationSource} />`; this page does
