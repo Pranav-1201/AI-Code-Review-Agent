@@ -1,9 +1,14 @@
 # BUG-001 — sidebar unusable in a half-width browser window
 
-**Status:** OPEN · **Severity:** high (app is unusable in this window size)
+**Status:** **RESOLVED** 2026-08-20 (`8ce9a3e`) · **Severity:** high (app was
+unusable in this window size)
 **Reported:** 2026-08-19 by Pranav, with a screenshot
-**Owner of next step:** whoever starts Phase I
-**Investigated by:** Claude Opus 5, session `a55eaf1f` — **not root-caused**
+**Investigated by:** Claude Opus 5, session `a55eaf1f` — not root-caused
+**Root-caused and fixed by:** Claude Opus 5, session `848e92a5`
+
+**Read the Resolution section at the bottom first.** Everything between here
+and it is the investigation as it stood while the bug was open, kept because
+the two falsified hypotheses are still worth not repeating.
 
 ---
 
@@ -108,3 +113,77 @@ Playwright setup already covers mobile drawer behaviour and can host it.
 
 - Phase I in `docs/STAFF_AUDIT_2026-08-19.md` (idea **F2**)
 - `docs/FLOW.md` Path 3 for the component tree
+
+---
+
+## Resolution — 2026-08-20, session `848e92a5`
+
+### Root cause
+
+One breakpoint, written two different ways, with a gap between them.
+
+`useIsMobile()` listened to `(max-width: 767px)` but stored
+`window.innerWidth < 768`. Those are only equivalent when the viewport is a
+whole number of CSS pixels. It often is not — Windows display scaling (125% is
+the default on many laptops) makes the CSS width fractional, and a browser
+reports `window.innerWidth` **rounded**. CSS sees 767.6; JS sees 768.
+
+Neither of the two falsified hypotheses was close, and neither needed to be:
+the breakpoint values were never the problem. `md` really is 768 and the hook
+really is 768. The defect is that one of them is evaluated against a fraction
+and the other against a rounded integer.
+
+### Reproduced, then measured
+
+Headless Chromium at whole-pixel widths could not reproduce it — the sidebar
+was correct at every width from 320 to 1440, on all 15 routes, through every
+resize path. **That is why static reading and ordinary Playwright both missed
+it.** It reproduces in a headed Chrome at `devicePixelRatio` 1.25, walking the
+real window across the breakpoint. Two distinct failures, both from the cause
+above:
+
+| CSS width | `max-width:767px` | `min-width:768px` | `innerWidth` | Result |
+|---|---|---|---|---|
+| 767.6 | false | **false** | 768 (rounded up) | JS says desktop, CSS hides it — the wrapper renders inside a `display: none` box. No sidebar, no rail, and the trigger only flips `data-state`. **The screenshot.** |
+| 767.2 | false | false | 767 (rounded down) | The hook's only listener fires here and reads 767, latching `isMobile = true`. `max-width:767px` never fires again as the window widens, so the desktop sidebar never comes back. |
+
+The second one is the nastier half. Measured on the way back up: the wrapper
+was absent from CSS width 776 through 887, and clicking the trigger at 887px
+opened the *mobile drawer*. Only a reload restored the sidebar. So the bug
+outlives the window size that caused it — which is why Pranav saw no sidebar
+at a width where the sidebar demonstrably works.
+
+Note the band `767 < w < 768` matches **neither** query. That one pixel
+belonging to nobody is where both failures live.
+
+### Fix
+
+`frontend/src/hooks/use-mobile.tsx` now listens to `(min-width: 768px)` — byte
+for byte what Tailwind's `md:` compiles to — and reads its answer from
+`event.matches` rather than re-reading a rounded `window.innerWidth`. There is
+no second spelling left to disagree with, and no rounding involved.
+
+### Verified
+
+- `src/hooks/use-mobile.test.ts` — 3 tests. The two fractional-width cases were
+  **watched failing against the old hook first** (`expected true, got false`
+  and `expected false, got true`); the whole-pixel control passed both before
+  and after, which is what makes it a control.
+- The headed browser walk above, re-run against the rebuilt app: the wrapper is
+  now correctly *absent* at CSS 767.x (drawer mode, agreeing with CSS) and
+  returns at 776 and stays. Toggling at 887px moves the docked sidebar.
+- `npm run test` 42/42 · `npm run typecheck` (`tsc -b`) exit 0 ·
+  `npx playwright test` 17/17.
+
+### What this cost, and the lesson worth keeping
+
+Two sessions of static reading produced two dead ends, and a whole-pixel
+browser sweep produced a third. **A layout bug that only exists at fractional
+viewport widths is invisible to every tool that only offers integers** —
+jsdom, Playwright viewports, and devtools' device toolbar all do. Reaching it
+needed a real window, a non-integer `devicePixelRatio`, and a sweep across the
+boundary one pixel at a time.
+
+Generalise it: any breakpoint expressed once in CSS and once in JS is this bug
+waiting to happen. Grep for a second `MOBILE_BREAKPOINT`-style constant before
+adding one.

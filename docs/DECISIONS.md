@@ -324,3 +324,35 @@ believed it before `tsc -b` found six real type errors in the same tree.
 **Decision:** `npm run typecheck` (added, runs `tsc -b`) is the only frontend
 typecheck anyone should type. A green result from a command that checks nothing
 is worse than no result, because it is recorded as evidence.
+
+---
+
+### D17 — one breakpoint, one query, read from the query itself
+**2026-08-20** · Claude Opus 5, session `848e92a5` · root cause of BUG-001
+
+`useIsMobile()` listened to `(max-width: 767px)` and stored
+`window.innerWidth < 768`. Two spellings of one breakpoint, equivalent only at
+whole-pixel viewport widths. Windows display scaling makes the width
+fractional; `window.innerWidth` reports it rounded. The band
+`767 < w < 768` matches neither query, and crossing it either rendered the
+desktop sidebar inside a `display: none` box or latched the hook on
+`isMobile = true` until a page reload.
+
+**Decision:** a JS breakpoint check must use the **same media query string**
+its CSS counterpart compiles to, and must take its value from
+`event.matches` — never from a re-read of `window.innerWidth`. The hook now
+listens to `(min-width: 768px)`, which is exactly what Tailwind's `md:` emits.
+
+**Standing consequence:** do not introduce a second place where a breakpoint is
+expressed. If a component needs the answer, it calls the hook.
+
+**Also recorded:** whole-pixel tooling cannot see this class of bug. Headless
+Chromium was correct at every integer width 320–1440 across all 15 routes;
+jsdom and Playwright viewports are integers too. Reproduction needed a headed
+window at `devicePixelRatio` 1.25 swept one pixel at a time. The gate is
+therefore a unit test that models fractional widths directly
+(`src/hooks/use-mobile.test.ts`), not the Playwright spec.
+
+**Verified:** the two fractional cases watched failing against the old hook
+first; then vitest 42/42, `npm run typecheck` exit 0, Playwright 17/17, and the
+headed browser walk re-run against the rebuilt app.

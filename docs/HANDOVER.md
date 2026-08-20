@@ -5,7 +5,8 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
-`0f899c51` · **Branch at handover:** `main` (Phases G and H merged and pushed)
+`848e92a5` · **Branch at handover:** `main` (G and H pushed; **F2 committed on
+`main` but NOT yet pushed** — `8ce9a3e`, `0c385bf`, plus this doc commit)
 
 ---
 
@@ -14,7 +15,8 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 The project is an AI code review agent: you give it a public repository URL, it
 clones it, runs a deterministic AST analysis, and returns a health report.
 
-**Status: strong MVP, Phases G and H done, not yet deployed.** Graded
+**Status: strong MVP, Phases G and H done, F2 (the last open defect) fixed,
+not yet deployed.** Graded
 **6.5/10** in `docs/STAFF_AUDIT_2026-08-19.md`, before either. The engineering
 around the product was already good (security 8, tests 8, docs 8); the
 analyzer's precision was the failing grade (correctness 4), and G fixed the
@@ -56,8 +58,9 @@ the session that ran it, and anything older is testimony to re-check.
 | Backend suite | `417 passed` in 101.64s | `0f899c51` |
 | Fixture gate | `GATE PASSED`, 11/11 types at precision/recall 1.00 | `0f899c51` |
 | Real-repo benchmark | precision 0.60, recall 1.00 (TP 6, FP 4, FN 0) | `0f899c51` |
-| Frontend suite | `39 passed`, 5 files | `0f899c51` |
-| Typecheck | `npm run typecheck` (`tsc -b`) exit 0, 0 errors | `0f899c51` |
+| Frontend suite | `42 passed`, 6 files | `848e92a5` |
+| Typecheck | `npm run typecheck` (`tsc -b`) exit 0, 0 errors | `848e92a5` |
+| Playwright e2e | `17 passed` across 3 projects | `848e92a5` |
 | Production build | built in 4.49s | `a55eaf1f` |
 | Live API | `OPTIONS /scan` 200, `POST /scan` 200 with a real `scan_id` | `a55eaf1f` |
 | CI on disk | `.github/workflows/ci.yml` (15.9 KB) + `release.yml` | `a55eaf1f` |
@@ -95,15 +98,21 @@ Full detail, including acceptance criteria and idea IDs, is in
 |---|---|---|
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
-| **I** | Sidebar defect (F2) + light/dark theming (F1) | — |
+| **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
 | **J** | Explanation UX — F4, F5, F6, F7, F8, F9, F15 | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |
 
-**Start at Phase I** (sidebar defect + theming), or jump to **M** (deploy) —
-nothing blocks it any more. J is the highest-value remaining phase for the
-product's positioning; I is the only open *defect*.
+**The next unstarted item is F1** — light mode plus a toggle, the remaining
+half of Phase I. It moves the dark palette off `:root` into `.dark` /
+`[data-theme]`, adds a provider, persists the choice and honours
+`prefers-color-scheme`. Treat it as its own piece of work: it changes the
+token architecture in `index.css` that every component reads from, so it is
+not a small edit.
+
+Or jump to **M** (deploy) — nothing blocks it. **J** is the highest-value
+remaining phase for the product's positioning. There are no open *defects*.
 
 Phase H shipped in the same session as G:
 
@@ -169,18 +178,24 @@ while every security finding on flask was wrong.
 
 ---
 
-## 5. Open item handed over unsolved
+## 5. BUG-001 — CLOSED 2026-08-20
 
-**BUG-001 — the sidebar becomes unusable in a half-width browser window.**
-Full trace in `docs/bugs/BUG-001-sidebar-split-view.md`. Two hypotheses were
-already **falsified** — do not re-derive them:
+**The sidebar disappeared in a half-width browser window.** Root-caused, fixed
+and verified in session `848e92a5` (`8ce9a3e`). Full write-up, including the
+measurement table, in `docs/bugs/BUG-001-sidebar-split-view.md`.
 
-1. A Tailwind `md` vs `MOBILE_BREAKPOINT` mismatch. There is none: the `screens`
-   override is scoped to `container`, so `md` is 768px, matching the hook.
-2. `SidebarRail` at `z-20` overlapping the trigger. `AppSidebar` never renders a
-   `SidebarRail`.
+One line of it: `useIsMobile()` listened to `(max-width: 767px)` but stored
+`window.innerWidth < 768` — one breakpoint written two ways, and viewport
+widths are fractional under Windows display scaling while `innerWidth` is
+rounded. The hook now uses `(min-width: 768px)`, the exact query Tailwind's
+`md:` emits, and reads `event.matches`.
 
-**Reproduce before fixing**, at a viewport of roughly 940–960px.
+**The transferable lesson:** headless Chromium was correct at every integer
+width 320–1440 on all 15 routes. jsdom, Playwright viewports and the devtools
+device toolbar are all whole-pixel. A layout bug that lives at fractional
+widths is invisible to all of them — it took a headed window at
+`devicePixelRatio` 1.25 swept one pixel at a time. If a UI bug will not
+reproduce, check whether your tooling can even express the condition.
 
 ---
 
