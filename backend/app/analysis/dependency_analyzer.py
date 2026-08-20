@@ -235,6 +235,86 @@ def _exact_python_version(spec) -> Optional[str]:
     return None
 
 
+# PHASE H / S6: the Python counterpart of _npm_locked_versions.
+#
+# After S7 an unpinned requirement honestly resolves to "unknown". That is
+# better than inventing a number, but unhelpful when the real answer is sitting
+# in a lockfile beside the manifest — and it is the lockfile, not the range,
+# that says which version OSV should be asked about.
+_PY_LOCK_REQUIREMENT_RE = re.compile(
+    r'^([A-Za-z0-9][A-Za-z0-9._-]*)\s*==\s*([^\s;#]+)')
+
+# uv.lock and poetry.lock are both TOML with an array of [[package]] tables
+# carrying `name` and `version`. Parsed by scanning rather than with a TOML
+# reader: tomllib is 3.11+ only and the analysis layer is deliberately
+# dependency-free (DECISIONS D1).
+_PY_LOCK_TOML_NAME_RE = re.compile(r'^name\s*=\s*["\']([^"\']+)["\']')
+_PY_LOCK_TOML_VERSION_RE = re.compile(r'^version\s*=\s*["\']([^"\']+)["\']')
+
+
+def _normalise_project_name(name: str) -> str:
+    """PEP 503 normalisation: flit_core, flit-core and Flit.Core are one project."""
+    return re.sub(r'[-_.]+', '-', str(name).strip()).lower()
+
+
+def _python_locked_versions(repo_path: str) -> dict:
+    """Map normalised project name -> exact installed version from a lockfile.
+
+    Reads requirements.lock (pip-compile style) and the [[package]] tables of
+    uv.lock and poetry.lock. A missing or unreadable lockfile yields {} and the
+    caller simply learns nothing, which is the correct failure mode here.
+    """
+    locked: dict = {}
+
+    for filename in ("requirements.lock", "uv.lock", "poetry.lock"):
+        path = os.path.join(repo_path, filename)
+        if not os.path.exists(path):
+            continue
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                content = handle.read()
+        except OSError:
+            continue
+
+        if filename == "requirements.lock":
+            for line in content.splitlines():
+                line = line.strip()
+                if not line or line.startswith(("#", "-")):
+                    continue
+                match = _PY_LOCK_REQUIREMENT_RE.match(line)
+                if match:
+                    locked.setdefault(_normalise_project_name(match.group(1)),
+                                      match.group(2).strip())
+            continue
+
+        # TOML: a name and the first version that follows it, reset at each
+        # [[package]] boundary so a stray top-level `version = 1` (uv.lock
+        # opens with exactly that) cannot be attached to a package.
+        pending_name = None
+        for line in content.splitlines():
+            line = line.strip()
+
+            if line.startswith("[["):
+                pending_name = None
+                continue
+            if line.startswith("["):
+                pending_name = None
+                continue
+
+            name_match = _PY_LOCK_TOML_NAME_RE.match(line)
+            if name_match:
+                pending_name = _normalise_project_name(name_match.group(1))
+                continue
+
+            version_match = _PY_LOCK_TOML_VERSION_RE.match(line)
+            if version_match and pending_name:
+                locked.setdefault(pending_name, version_match.group(1).strip())
+                pending_name = None
+
+    return locked
+
+
 def _npm_locked_versions(repo_path: str) -> dict:
     """Map package name -> exact installed version from package-lock.json.
 
@@ -587,6 +667,23 @@ def analyze_dependencies(repo_path):
     # --------------------------------------------------
 
     npm_locked = _npm_locked_versions(repo_path)
+
+    # PHASE H / S6: fill unresolved Python versions from a lockfile before any
+    # enrichment runs, so the PyPI and OSV lookups below ask about the version
+    # that is actually installed rather than skipping the dependency entirely.
+    #
+    # Unknowns only. A lockfile disagreeing with an exact pin is a conflict
+    # between two manifests, and resolving that silently would hide it.
+    py_locked = _python_locked_versions(repo_path)
+
+    if py_locked:
+        for dep in dependencies:
+            if dep["type"] != "python" or dep["version"] != "unknown":
+                continue
+            resolved = py_locked.get(_normalise_project_name(dep["name"]))
+            if resolved:
+                dep["version"] = resolved
+                dep["version_source"] = "lockfile"
 
     for dep in dependencies:
 
