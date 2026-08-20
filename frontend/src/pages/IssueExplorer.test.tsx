@@ -36,6 +36,9 @@ describe("IssueExplorer", () => {
     render(<IssueExplorer />);
 
     expect(screen.getByText("Function exceeds the complexity budget")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Function exceeds the complexity budget/ }));
+
     expect(screen.getByText(/Complex functions are harder to test/)).toBeInTheDocument();
     expect(screen.getByText(/Extract the branching/)).toBeInTheDocument();
   });

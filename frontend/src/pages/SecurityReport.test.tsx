@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ScanReport } from "@/lib/types";
@@ -40,10 +40,12 @@ describe("SecurityReport", () => {
     render(<SecurityReport />);
 
     expect(screen.getByText("Command Injection")).toBeInTheDocument();
-    // These three are computed by the backend today and rendered by no page.
+    expect(screen.getByText("90% Match")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Command Injection/ }));
+
     expect(screen.getByText(/Attackers could run unauthorized utilities/)).toBeInTheDocument();
     expect(screen.getByText(/Use subprocess.run/)).toBeInTheDocument();
-    expect(screen.getByText("90% Match")).toBeInTheDocument();
   });
 
   it("scopes the report to production files and accounts for the rest", () => {
