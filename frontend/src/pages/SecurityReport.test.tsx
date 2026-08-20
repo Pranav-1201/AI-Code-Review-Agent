@@ -78,4 +78,92 @@ describe("SecurityReport", () => {
     expect(screen.getByText(/2 further findings in test\/non-code files/)).toBeInTheDocument();
     expect(screen.queryByText("Hardcoded Secret")).not.toBeInTheDocument();
   });
+
+  it("groups findings by severity and omits groups with nothing in them", () => {
+    mockUseScan.mockReturnValue({
+      currentReport: reportWith([
+        {
+          name: "runner.py",
+          path: "backend/app/runner.py",
+          fileType: "production",
+          security: [
+            { type: "Command Injection", severity: "Critical", description: "d", file: "runner.py", line: 1 },
+            { type: "Weak Hash", severity: "Low", description: "d", file: "runner.py", line: 2 },
+            { type: "Local Exec", severity: "Info", description: "d", file: "runner.py", line: 3 },
+          ],
+        },
+      ]),
+    });
+
+    render(<SecurityReport />);
+
+    expect(screen.getByRole("heading", { name: /Critical/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Low/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Info/ })).toBeInTheDocument();
+    // Nothing is High or Medium here, so neither heading exists.
+    expect(screen.queryByRole("heading", { name: /High/ })).toBeNull();
+    expect(screen.queryByRole("heading", { name: /Medium/ })).toBeNull();
+  });
+
+  it("counts Info findings on a tier, so the tiers sum to the headline", () => {
+    mockUseScan.mockReturnValue({
+      currentReport: reportWith([
+        {
+          name: "runner.py",
+          path: "backend/app/runner.py",
+          fileType: "production",
+          security: [
+            { type: "Local Exec", severity: "Info", description: "d", file: "runner.py", line: 3 },
+          ],
+        },
+      ]),
+    });
+
+    render(<SecurityReport />);
+
+    const tier = screen.getByRole("button", { name: /1 Info/ });
+    expect(tier).toBeInTheDocument();
+  });
+
+  it("scrolls to a group when its tier is activated", () => {
+    mockUseScan.mockReturnValue({
+      currentReport: reportWith([
+        {
+          name: "runner.py",
+          path: "backend/app/runner.py",
+          fileType: "production",
+          security: [
+            { type: "Command Injection", severity: "Critical", description: "d", file: "runner.py", line: 1 },
+          ],
+        },
+      ]),
+    });
+
+    render(<SecurityReport />);
+
+    fireEvent.click(screen.getByRole("button", { name: /1 Critical/ }));
+
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("renders a zero tier as text, not a control", () => {
+    mockUseScan.mockReturnValue({
+      currentReport: reportWith([
+        {
+          name: "runner.py",
+          path: "backend/app/runner.py",
+          fileType: "production",
+          security: [
+            { type: "Command Injection", severity: "Critical", description: "d", file: "runner.py", line: 1 },
+          ],
+        },
+      ]),
+    });
+
+    render(<SecurityReport />);
+
+    // Four tiers are empty; none of them is a button.
+    expect(screen.queryByRole("button", { name: /0 High/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /0 Info/ })).toBeNull();
+  });
 });
