@@ -5,7 +5,7 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
-`0f899c51` · **Branch at handover:** `main` (Phase G merged and pushed)
+`0f899c51` · **Branch at handover:** `main` (Phases G and H merged and pushed)
 
 ---
 
@@ -14,10 +14,11 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 The project is an AI code review agent: you give it a public repository URL, it
 clones it, runs a deterministic AST analysis, and returns a health report.
 
-**Status: strong MVP, Phase G done, not yet deployed.** Graded **6.5/10** in
-`docs/STAFF_AUDIT_2026-08-19.md`, before Phase G. The engineering around the
-product was already good (security 8, tests 8, docs 8); the analyzer's
-precision was the failing grade (correctness 4) and is the part Phase G fixed.
+**Status: strong MVP, Phases G and H done, not yet deployed.** Graded
+**6.5/10** in `docs/STAFF_AUDIT_2026-08-19.md`, before either. The engineering
+around the product was already good (security 8, tests 8, docs 8); the
+analyzer's precision was the failing grade (correctness 4), and G fixed the
+detectors while H fixed the dependency reporting.
 
 The fact that drove that grade:
 
@@ -47,15 +48,15 @@ section for current state.
 
 ## 2. What is DONE (verified by running it, not by reading changelogs)
 
-Phases A–G shipped. **The session column matters** — a row is evidence only for
+Phases A–H shipped. **The session column matters** — a row is evidence only for
 the session that ran it, and anything older is testimony to re-check.
 
 | Area | Evidence | Run in |
 |---|---|---|
-| Backend suite | `373 passed` in 47.65s | `0f899c51` |
+| Backend suite | `417 passed` in 101.64s | `0f899c51` |
 | Fixture gate | `GATE PASSED`, 11/11 types at precision/recall 1.00 | `0f899c51` |
 | Real-repo benchmark | precision 0.60, recall 1.00 (TP 6, FP 4, FN 0) | `0f899c51` |
-| Frontend suite | `39 passed`, 5 files | `a55eaf1f` |
+| Frontend suite | `39 passed`, 5 files | `0f899c51` |
 | Typecheck | `npm run typecheck` (`tsc -b`) exit 0, 0 errors | `0f899c51` |
 | Production build | built in 4.49s | `a55eaf1f` |
 | Live API | `OPTIONS /scan` 200, `POST /scan` 200 with a real `scan_id` | `a55eaf1f` |
@@ -93,16 +94,29 @@ Full detail, including acceptance criteria and idea IDs, is in
 | Phase | Scope | Blocks |
 |---|---|---|
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
-| **H** | Dependency truth — S5 lookup status, S6 lockfiles, S7 version parsing | — |
+| ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
 | **I** | Sidebar defect (F2) + light/dark theming (F1) | — |
 | **J** | Explanation UX — F4, F5, F6, F7, F8, F9, F15 | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |
 
-**Start at Phase H.** G is done and both phases it blocked are now open, so if
-priorities change, M (deploy) is a legitimate jump — G was the only thing
-standing in its way.
+**Start at Phase I** (sidebar defect + theming), or jump to **M** (deploy) —
+nothing blocks it any more. J is the highest-value remaining phase for the
+product's positioning; I is the only open *defect*.
+
+Phase H shipped in the same session as G:
+
+| Commit | What |
+|---|---|
+| `3f062f7` | S7 — a constraint is never stored in a version field |
+| `3f0b6d6` | S6 — `requirements.lock` / `uv.lock` / `poetry.lock` resolve unpinned deps |
+| `44e3456` | S5 — every dependency carries `checked` / `unreachable` / `skipped` |
+| `e147e38` | latest-release lookup no longer requires a known installed version |
+
+**`DECISIONS.md` D15 explains why flask now shows `unknown` for all 8
+dependencies and why that is correct, not a regression.** D16 records that
+`tsc --noEmit` checks nothing here.
 
 ### Phase G's acceptance criteria, and what they measured
 

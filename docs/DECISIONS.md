@@ -251,3 +251,76 @@ queries.
 Injection and command injection 3 → 1. The new corpus fixture was checked
 against the pre-Phase-G analyzer and fails it at command_injection precision
 0.38 / sql_injection 0.50, so the gate is load-bearing rather than decorative.
+
+---
+
+### D15 — "unknown" is a first-class dependency answer
+**2026-08-20** · Claude Opus 5, session `0f899c51` · implemented, verified
+
+Phase H's three items turned out to be one decision: **the report may not
+invent a version, and it may not imply a safety claim it did not earn.**
+
+Every Python manifest parser had been stripping the operator off a specifier
+and keeping the digits, so `flask>=2.0` was stored as version `2.0` — and that
+invented number was then the OSV query key, producing CVEs against a version
+the project may not install. The node side had already rejected this in Phase C
+(`_exact_npm_version`); Python simply never got it.
+
+**Decision:** `version` holds a concrete version or `"unknown"`, never a
+constraint. Three fields carry what used to be conflated into one:
+
+| field | meaning |
+|---|---|
+| `version` | a concrete version, or `unknown` |
+| `constraint` | the specifier as written, e.g. `>=2.0` |
+| `version_source` | `pinned` / `lockfile` / `unpinned` / `unspecified` |
+| `vuln_lookup` | `checked` / `unreachable` / `skipped` |
+
+**Why `vuln_lookup` matters more than it looks.** An empty vulnerability list
+meant three different things and rendered as one green tick: OSV answered zero,
+OSV was unreachable, or nothing was ever asked. A security report that cannot
+distinguish "clean" from "the lookup was down" is worse than one that says
+nothing, because it is believed. A failed lookup is also no longer cached — it
+was being written into a 24-hour cache as an empty result, so a single timeout
+reported a package clean for the rest of the day.
+
+**Consequence accepted:** pinned `pallets/flask` now shows `unknown` for all 8
+dependencies, where it used to show confident numbers. That is not a
+regression. Flask pins nothing and ships no lockfile, so the honest answer is
+that its installed versions are not knowable from the repository — and no CVE
+claim is made in either direction. The lockfile readers (`requirements.lock`,
+`uv.lock`, `poetry.lock`) mean any project that *does* pin gets real answers.
+
+**Two bugs found on the way, neither in the plan.** The `setup.cfg` reader
+decided where `install_requires` ended by testing `stripped[0].isspace()` on a
+string it had already stripped — always False — and since every versioned
+requirement contains `=`, the section closed on its own first line; no
+setup.cfg dependency carrying a version had ever been recorded. And the PyPI
+"latest release" lookup sat behind the unknown-version guard, so making
+versions honest silently removed the upgrade target from every unpinned
+dependency. **The acceptance criterion caught the second one, not the tests** —
+the same pattern as Phase G, where the real-repo rescan caught what the unit
+tests could not.
+
+**Verified:** pytest 417 passed, `npm run typecheck` 0 errors, vitest 39
+passed; against pinned flask, `latest_version` resolved **8/8**, zero
+constraints in any version field, zero dependencies missing a lookup status.
+
+---
+
+### D16 — `tsc --noEmit` is not the frontend typecheck
+**2026-08-20** · Claude Opus 5, session `0f899c51` · correction to the record
+
+`frontend/tsconfig.json` is solution-style: `"files": []` plus `references` to
+`tsconfig.app.json` and `tsconfig.node.json`. `tsc --noEmit` therefore compiles
+an **empty program** and exits 0 having checked nothing — `--listFiles` prints
+zero lines.
+
+`ci.yml` has always run `tsc -b` and carries a comment explaining exactly this,
+so the shipped gate was never wrong. What was wrong was the local ritual:
+`HANDOVER.md` recorded `tsc --noEmit exit 0` as evidence, and this session
+believed it before `tsc -b` found six real type errors in the same tree.
+
+**Decision:** `npm run typecheck` (added, runs `tsc -b`) is the only frontend
+typecheck anyone should type. A green result from a command that checks nothing
+is worse than no result, because it is recorded as evidence.
