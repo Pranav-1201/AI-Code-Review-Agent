@@ -12,6 +12,7 @@ from backend.app.analysis.symbol_table import SymbolTable
 from backend.app.analysis.taint_analyzer import (
     build_taint_map, TRUST_UNTRUSTED, TRUST_OPERATOR, TRUST_PARAMETER,
 )
+from backend.app.services.snippet import extract_snippet
 
 # PHASE 1: SHA constants
 SHA_CONTEXT_SIGNALS: dict[str, list[str]] = {
@@ -430,7 +431,9 @@ class SecurityAnalyzer(ast.NodeVisitor):
             "how_to_fix": recommendation,
             "confidence": confidence,
             "trust_boundary": trust_boundary,   # PHASE 3: taint provenance
-            "snippet": f"Line {line} indicates: {issue_type}"  # Simplified without full tree mapping
+            # Real evidence, not a restatement of the line number. Empty when
+            # the analyzer was constructed without source (see snippet.py).
+            "snippet": extract_snippet(self._source_lines, line),
         })
 
     # ------------------------------------------------------
