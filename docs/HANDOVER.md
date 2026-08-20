@@ -56,7 +56,7 @@ the session that ran it, and anything older is testimony to re-check.
 | Fixture gate | `GATE PASSED`, 11/11 types at precision/recall 1.00 | `0f899c51` |
 | Real-repo benchmark | precision 0.60, recall 1.00 (TP 6, FP 4, FN 0) | `0f899c51` |
 | Frontend suite | `39 passed`, 5 files | `a55eaf1f` |
-| Typecheck | `tsc --noEmit` exit 0 | `a55eaf1f` |
+| Typecheck | `npm run typecheck` (`tsc -b`) exit 0, 0 errors | `0f899c51` |
 | Production build | built in 4.49s | `a55eaf1f` |
 | Live API | `OPTIONS /scan` 200, `POST /scan` 200 with a real `scan_id` | `a55eaf1f` |
 | CI on disk | `.github/workflows/ci.yml` (15.9 KB) + `release.yml` | `a55eaf1f` |
@@ -141,6 +141,11 @@ while every security finding on flask was wrong.
   -A` would have committed all four.
 - **Run `npx vite` from `frontend/`, never the repo root** — the root resolves a
   different Vite major than the pinned 5.4.21.
+- **`tsc --noEmit` typechecks NOTHING here and exits 0.** `frontend/tsconfig.json`
+  is solution-style — `"files": []` plus `references` — so the command compiles
+  an empty program and reports success. Use **`npm run typecheck`** (`tsc -b`),
+  which is what `ci.yml` runs. Session `0f899c51` was handed a green
+  `tsc --noEmit` and `tsc -b` then found 6 real type errors in the same tree.
 - **Exclude `backend/app/.cache/` from greps.** It holds cached scan JSON and a
   careless recursive grep returns megabytes.
 - **Never `pip install` analysis tools into the project venv.** Use a throwaway

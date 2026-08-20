@@ -87,6 +87,12 @@ export function mapApiResponse(data: any, repoUrl: string): ScanReport {
     isOutdated: d.is_outdated ?? d.isOutdated ?? false,
     riskLevel: mapSeverity(d.risk_level || d.riskLevel || "Low"),
     vulnerabilities: normalizeVulnerabilities(d.vulnerabilities),
+    // Default to "skipped", never "checked": a response without the field is
+    // one we know nothing about, and guessing "checked" would present an
+    // unknown as an all-clear — the exact confusion S5 exists to remove.
+    vulnLookup: d.vuln_lookup || d.vulnLookup || "skipped",
+    constraint: d.constraint || "",
+    versionSource: d.version_source || d.versionSource || "unspecified",
   }));
 
   const backendDuplicates = data.duplicates || [];

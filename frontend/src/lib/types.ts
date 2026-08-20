@@ -85,6 +85,22 @@ export interface Dependency {
   riskLevel: Severity;
 
   vulnerabilities: Vulnerability[];
+
+  /**
+   * How the vulnerability lookup went (Phase H / S5).
+   *
+   * An empty `vulnerabilities` array means three different things, and the UI
+   * must not render them alike: `checked` is a real all-clear, `unreachable`
+   * means OSV could not be reached, and `skipped` means the version was never
+   * resolved so nothing was asked.
+   */
+  vulnLookup: "checked" | "unreachable" | "skipped";
+
+  /** The specifier as written in the manifest, e.g. ">=2.0". Empty if none. */
+  constraint: string;
+
+  /** How `version` was arrived at (Phase H / S7). */
+  versionSource: "pinned" | "lockfile" | "unpinned" | "unspecified";
 }
 
 /**

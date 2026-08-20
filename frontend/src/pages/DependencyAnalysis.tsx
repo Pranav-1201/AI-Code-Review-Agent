@@ -3,7 +3,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SeverityBadge } from "@/components/SeverityBadge";
 import { Badge } from "@/components/ui/badge";
-import { GitBranch, AlertTriangle, CheckCircle } from "lucide-react";
+import { GitBranch, AlertTriangle, CheckCircle, HelpCircle } from "lucide-react";
 
 export default function DependencyAnalysis() {
   const { currentReport } = useScan();
@@ -52,10 +52,26 @@ export default function DependencyAnalysis() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
+                  {/*
+                    Phase H / S5: a green tick is a CLAIM that this dependency
+                    was checked and is clean. It may only be shown when the
+                    lookup actually ran. An empty vulnerability list from an
+                    unreachable OSV, or from a version that was never resolved,
+                    gets the neutral "unknown" mark instead.
+                  */}
                   {dep.vulnerabilities.length > 0 ? (
                     <AlertTriangle className="w-5 h-5 text-destructive" />
-                  ) : (
+                  ) : dep.vulnLookup === "checked" ? (
                     <CheckCircle className="w-5 h-5 text-primary" />
+                  ) : (
+                    <HelpCircle
+                      className="w-5 h-5 text-muted-foreground"
+                      aria-label={
+                        dep.vulnLookup === "unreachable"
+                          ? "Vulnerability lookup unavailable"
+                          : "Not checked for vulnerabilities"
+                      }
+                    />
                   )}
                   <div>
                     <h3 className="font-mono font-semibold">{dep.name}</h3>

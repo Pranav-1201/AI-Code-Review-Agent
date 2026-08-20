@@ -125,37 +125,58 @@ def _osv_severity(vuln: dict) -> str:
     return "Unknown"
 
 
-def _query_osv(name: str, version: str, ecosystem: str = "PyPI") -> list:
-    """Return [{id, summary, severity}] of known vulns for name@version."""
+def _osv_request(name: str, version: str, ecosystem: str) -> dict:
+    """POST one query to OSV and return the decoded response.
+
+    Split out from _query_osv so the network boundary is one seam: failures
+    raise here and are classified there, and a test can drive both paths
+    without reaching the network.
+    """
+    payload = json.dumps({
+        "version": version,
+        "package": {"name": name, "ecosystem": ecosystem},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.osv.dev/v1/query", data=payload,
+        headers={"Content-Type": "application/json",
+                 "User-Agent": "et-code-analyzer/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _query_osv(name: str, version: str, ecosystem: str = "PyPI") -> tuple:
+    """Return ([{id, summary, severity}], status) for name@version.
+
+    PHASE H / S5: the status is the point. This used to swallow every failure
+    into an empty list, which the report then rendered exactly like a genuine
+    all-clear — so an OSV outage read as "no known vulnerabilities" on every
+    dependency in the project.
+
+    A failed lookup is also NOT cached. It used to be, under a 24-hour TTL, so
+    a single timeout would keep reporting the package clean for the rest of the
+    day.
+    """
     key = (ecosystem, name.lower().strip(), version.strip())
     cached = _OSV_CACHE.get(key)
     if cached and (time.time() - cached["fetched_at"]) < _OSV_TTL_SECONDS:
-        return cached["vulns"]
+        return cached["vulns"], "checked"
 
     vulns: list = []
     try:
-        payload = json.dumps({
-            "version": version,
-            "package": {"name": name, "ecosystem": ecosystem},
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            "https://api.osv.dev/v1/query", data=payload,
-            headers={"Content-Type": "application/json",
-                     "User-Agent": "et-code-analyzer/1.0"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as response:
-            data = json.loads(response.read().decode("utf-8"))
-            for v in data.get("vulns", []) or []:
-                vulns.append({
-                    "id": v.get("id", ""),
-                    "summary": v.get("summary") or (v.get("details", "") or "")[:160],
-                    "severity": _osv_severity(v),
-                })
+        data = _osv_request(name, version, ecosystem)
     except Exception:
-        vulns = []
+        return [], "unreachable"
+
+    for v in data.get("vulns", []) or []:
+        vulns.append({
+            "id": v.get("id", ""),
+            "summary": v.get("summary") or (v.get("details", "") or "")[:160],
+            "severity": _osv_severity(v),
+        })
 
     _OSV_CACHE[key] = {"vulns": vulns, "fetched_at": time.time()}
-    return vulns
+    return vulns, "checked"
 
 
 def _risk_from_vulns(vulns: list, current: str = "Low") -> str:
@@ -412,6 +433,10 @@ def analyze_dependencies(repo_path):
             "version": version,
             "constraint": constraint,
             "version_source": source,
+            # PHASE H / S5: how the vulnerability lookup went — "checked",
+            # "unreachable" or "skipped". Defaults to skipped so a dependency
+            # the enrichment loop never reaches cannot read as clean.
+            "vuln_lookup": "skipped",
             "latest_version": "unknown",   # enriched below
             "is_outdated": False,           # enriched below
             "risk_level": "Low",
@@ -689,7 +714,9 @@ def analyze_dependencies(repo_path):
 
         if dep["type"] == "python":
 
-            # Skip unpinned or placeholder versions
+            # Skip unpinned or placeholder versions. PHASE H / S5: `skipped`
+            # is already the default, and it is the honest answer — nothing was
+            # asked, so nothing about this package's safety may be implied.
             if dep["version"] in ("unknown", "latest", "*", ""):
                 continue
 
@@ -706,7 +733,8 @@ def analyze_dependencies(repo_path):
 
             # OSV.dev CVE lookup — known vulnerabilities for the PINNED version
             # take precedence over the outdated-only heuristic above.
-            vulns = _query_osv(dep["name"], dep["version"], ecosystem="PyPI")
+            vulns, dep["vuln_lookup"] = _query_osv(
+                dep["name"], dep["version"], ecosystem="PyPI")
 
         elif dep["type"] in ("node", "node-dev"):
 
@@ -721,7 +749,8 @@ def analyze_dependencies(repo_path):
             # a CVE looked up for the installed 4.17.21.
             dep["version"] = installed
 
-            vulns = _query_osv(dep["name"], installed, ecosystem="npm")
+            vulns, dep["vuln_lookup"] = _query_osv(
+                dep["name"], installed, ecosystem="npm")
 
         else:
             continue

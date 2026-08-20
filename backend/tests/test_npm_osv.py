@@ -140,7 +140,9 @@ def osv_calls(monkeypatch):
 
     def fake_query(name, version, ecosystem="PyPI"):
         calls.append((ecosystem, name, version))
-        return calls.answers.get((ecosystem, name, version), [])
+        # Phase H / S5 changed the contract to (vulns, status); a stub that
+        # returns only the list makes the caller unpack an empty list.
+        return calls.answers.get((ecosystem, name, version), []), "checked"
 
     monkeypatch.setattr(da, "_query_osv", fake_query)
     monkeypatch.setattr(da, "_fetch_latest_pypi_version", lambda name: None)
