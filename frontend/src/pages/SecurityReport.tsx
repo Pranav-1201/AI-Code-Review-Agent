@@ -1,9 +1,9 @@
 import { useScan } from "@/context/ScanContext";
 import { EmptyState } from "@/components/EmptyState";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { SeverityBadge } from "@/components/SeverityBadge";
-import { TrustBoundaryBadge } from "@/components/TrustBoundaryBadge";
-import { Shield, AlertTriangle } from "lucide-react";
+import { FindingCard } from "@/components/FindingCard";
+import { fromSecurityVulnerability } from "@/lib/findings";
+import { Shield } from "lucide-react";
 
 export default function SecurityReport() {
   const { currentReport } = useScan();
@@ -62,28 +62,7 @@ export default function SecurityReport() {
           </Card>
         ) : (
           allVulnerabilities.map((vuln, i) => (
-            <Card key={i} className="bg-card border-border/50">
-              <CardContent className="pt-6">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className={`w-5 h-5 mt-0.5 shrink-0 ${vuln.severity === "Critical" ? "text-destructive" : "text-warning"}`} />
-                    <div>
-                      <h3 className="font-semibold">{vuln.type}</h3>
-                      <p className="text-sm text-muted-foreground mt-1">{vuln.description}</p>
-                      <p className="text-xs font-mono text-muted-foreground mt-2">{vuln.file}{vuln.line ? `:${vuln.line}` : ""}</p>
-                      <div className="mt-3 p-3 rounded-lg bg-primary/5 border border-primary/20">
-                        <p className="text-xs text-muted-foreground mb-1">Recommendation</p>
-                        <p className="text-sm text-primary">{vuln.recommendation}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <TrustBoundaryBadge trustBoundary={vuln.trust_boundary} />
-                    <SeverityBadge severity={vuln.severity} />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <FindingCard key={i} finding={fromSecurityVulnerability(vuln)} />
           ))
         )}
       </div>
