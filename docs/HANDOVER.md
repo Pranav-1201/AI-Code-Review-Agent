@@ -8,14 +8,23 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `cc9e8871` · **Branch at handover:** `phase-j/j1-explanation-parity`, **unpushed**,
 5 commits ahead of `main` at `f1cedf7`.
 
-> **Phase J is underway — J1 is mid-flight.** Everything on `main` is pushed
-> (the earlier note claiming F2 was unpushed was stale; `git rev-list --count
-> origin/main..main` returns 0). Resume from
-> `.superpowers/sdd/2026-08-20-j1-explanation-parity/progress.md` — that ledger
-> is the recovery map and names every commit. **Tasks 1-3 complete and
-> review-clean; Task 4 implemented and fixed but its scoped re-review was never
-> run — do not mark it complete until that happens.** Tasks 5-7 not started.
-> Frontend suite is **56 passed / 10 files** (was 42/6 when J1 started).
+> **J1 is COMPLETE and reviewed, on an unpushed branch awaiting your merge
+> decision.** All 7 tasks done, every one review-clean; the final whole-branch
+> review (Opus) returned **spec PASS, quality PASS** and recommended merge.
+> Everything on `main` is pushed (an earlier note claiming F2 was unpushed was
+> stale — `git rev-list --count origin/main..main` returns 0).
+>
+> **Verified this session:** vitest **59 passed / 11 files** (baseline 42/6),
+> `npm run typecheck` exit 0, `npm run build` succeeds, Playwright **17 passed**.
+> Rationale is in `DECISIONS.md` **D17**; the full task-by-task record, including
+> every ruling made, is in
+> `.superpowers/sdd/2026-08-20-j1-explanation-parity/progress.md`.
+>
+> **Next:** merge `phase-j/j1-explanation-parity` into `main` (nothing is pushed,
+> so this is still fully reversible), then **J2** — F6 clickable severity tiers,
+> F9's expand/collapse detail, the unused `snippet` field, and F16's a11y pass
+> over the interactive elements those add. **J3** (F4/F5, the code panes) has its
+> two design decisions already settled in D17.
 
 ---
 
@@ -108,7 +117,7 @@ Full detail, including acceptance criteria and idea IDs, is in
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
 | **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
-| **J** | Explanation UX — F4, F5, F6, F7, F8, F9, F15 | — |
+| **J** | Explanation UX — **J1 DONE** (F7, F8, F9-detail, F15). J2 = F6 + F9 expand + snippet + F16. J3 = F4, F5 | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |
