@@ -714,16 +714,26 @@ def analyze_dependencies(repo_path):
 
         if dep["type"] == "python":
 
-            # Skip unpinned or placeholder versions. PHASE H / S5: `skipped`
-            # is already the default, and it is the honest answer — nothing was
-            # asked, so nothing about this package's safety may be implied.
-            if dep["version"] in ("unknown", "latest", "*", ""):
-                continue
-
+            # PHASE H: "what is the newest release of this package" is
+            # answerable whether or not the installed version is known, so the
+            # PyPI lookup runs unconditionally. It used to sit behind the
+            # unknown-version guard below, which meant an honestly-unpinned
+            # dependency lost its latest_version too — flask pins nothing and
+            # ships no lockfile, so all 8 of its dependencies showed no upgrade
+            # target at all.
             latest = _fetch_latest_pypi_version(dep["name"])
-
             if latest:
                 dep["latest_version"] = latest
+
+            # Everything past here needs a concrete version to compare or query.
+            # PHASE H / S5: "skipped" is already the default and is the honest
+            # answer — nothing was asked, so nothing about this package's
+            # safety may be implied.
+            known_version = dep["version"] not in ("unknown", "latest", "*", "")
+            if not known_version:
+                continue
+
+            if latest:
                 dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
 
                 # Upgrade risk level for outdated packages so the

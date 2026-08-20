@@ -128,6 +128,46 @@ def test_a_down_lookup_is_reported_as_unreachable_not_clean():
     assert deps["flask"]["vuln_lookup"] == "unreachable"
 
 
+# ----------------------------------------------------------
+# "what is the newest release" does not depend on which version is installed
+# ----------------------------------------------------------
+
+def test_an_unpinned_dependency_still_reports_the_latest_version():
+    """Phase H acceptance: flask pins nothing and ships no lockfile, yet the
+    report must still show a latest version for all 8 of its dependencies.
+
+    The enrichment loop used to `continue` on an unknown version, which skipped
+    the PyPI lookup along with the OSV one. Only OSV needs a concrete version;
+    asking PyPI for the newest Werkzeug does not.
+    """
+    with patch.object(da, "_osv_request", return_value={"vulns": []}), \
+         patch.object(da, "_fetch_latest_pypi_version", return_value="3.1.8"):
+        deps = _analyze({"requirements.txt": "werkzeug>=3.0\n"})
+
+    assert deps["werkzeug"]["latest_version"] == "3.1.8"
+    assert deps["werkzeug"]["version"] == "unknown"
+    assert deps["werkzeug"]["vuln_lookup"] == "skipped"
+
+
+def test_an_unpinned_dependency_is_not_claimed_to_be_outdated():
+    """With no known installed version there is nothing to compare against."""
+    with patch.object(da, "_osv_request", return_value={"vulns": []}), \
+         patch.object(da, "_fetch_latest_pypi_version", return_value="3.1.8"):
+        deps = _analyze({"requirements.txt": "werkzeug>=3.0\n"})
+
+    assert deps["werkzeug"]["is_outdated"] is False
+    assert deps["werkzeug"]["risk_level"] == "Low"
+
+
+def test_a_pinned_dependency_is_still_compared_against_the_latest():
+    with patch.object(da, "_osv_request", return_value={"vulns": []}), \
+         patch.object(da, "_fetch_latest_pypi_version", return_value="3.1.8"):
+        deps = _analyze({"requirements.txt": "werkzeug==3.0.3\n"})
+
+    assert deps["werkzeug"]["is_outdated"] is True
+    assert deps["werkzeug"]["risk_level"] == "Medium"
+
+
 def test_node_dependencies_carry_the_status_too():
     with patch.object(da, "_osv_request", side_effect=OSError("timeout")):
         deps = _analyze({
