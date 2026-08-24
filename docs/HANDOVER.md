@@ -29,7 +29,14 @@ and unmerged, 8 commits. `main` is at `e857e0e` and **is pushed**.
 >
 > The full task-by-task record — every ruling, every deferred minor, and three
 > reviewer seats that died without reporting — is in
-> `.superpowers/sdd/2026-08-20-j2-finding-detail/progress.md`.
+> `docs/superpowers/records/2026-08-24-j2-execution-record.md`.
+>
+> **Note for future phases:** that record lives under `docs/` on purpose.
+> Execution ledgers are written to `.superpowers/sdd/<plan>/progress.md`, which
+> `.superpowers/sdd/.gitignore` ignores with a bare `*` — so they never enter
+> git and vanish on a clean. J1's handover pointed at its ledger and the file
+> was already gone by the next session. Copy the ledger into
+> `docs/superpowers/records/` before deleting the workspace.
 >
 > **Next:** merge `phase-j/j2-finding-detail` into `main` and push (nothing on
 > the branch is pushed, so it is still fully reversible), then **J3** — F4/F5,
