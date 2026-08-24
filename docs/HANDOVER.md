@@ -5,8 +5,8 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-08-24 · **Updated by:** Claude Opus 5 session
-`b5a36f9d` · **Branch at handover:** `phase-j/j2-finding-detail` — J2 complete
-and unmerged, 8 commits. `main` is at `e857e0e` and **is pushed**.
+`b5a36f9d` · **Branch at handover:** `main` — J2 **merged** (`568bf4e`), branch
+deleted, pushed, **CI green on the merge commit** (run `32699574335`).
 
 > **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** Branch
 > deleted. `main` = `origin/main` = `e857e0e`, and **CI is green on it** (run
@@ -14,11 +14,11 @@ and unmerged, 8 commits. `main` is at `e857e0e` and **is pushed**.
 > ahead of `origin/main` with CI never run — both halves were false by the time
 > anyone read them, and the correction cost a session's first ten minutes.
 >
-> **J2 is COMPLETE on `phase-j/j2-finding-detail` (`e74f41e..e88f255`, 8
-> commits) and NOT yet merged.** All 6 tasks landed, each individually
-> review-clean; the final whole-branch review (Opus) returned **SHIP WITH
-> FIXES**, and the two Important findings plus three minors were closed in one
-> fix wave at `e88f255`.
+> **J2 is COMPLETE and MERGED into `main` at `568bf4e`** (PR #3, 10 commits,
+> branch deleted). All 6 tasks landed, each individually review-clean; the final
+> whole-branch review (Opus) returned **SHIP WITH FIXES**, and the two Important
+> findings plus three minors were closed in one fix wave at `e88f255`. CI is
+> green on the merge commit (run `32699574335`), and `main` = `origin/main`.
 >
 > **Verified in that session, every command run fresh:** pytest **432 passed /
 > 0 failed**, vitest **70 passed / 11 files**, `tsc -b` exit 0, `npm run build`
@@ -38,9 +38,8 @@ and unmerged, 8 commits. `main` is at `e857e0e` and **is pushed**.
 > was already gone by the next session. Copy the ledger into
 > `docs/superpowers/records/` before deleting the workspace.
 >
-> **Next:** merge `phase-j/j2-finding-detail` into `main` and push (nothing on
-> the branch is pushed, so it is still fully reversible), then **J3** — F4/F5,
-> the code panes, whose two design decisions are already settled in **D17**.
+> **Next: J3** — F4/F5, the code panes, whose two design decisions are already
+> settled in **D17**.
 
 ---
 
@@ -49,8 +48,8 @@ and unmerged, 8 commits. `main` is at `e857e0e` and **is pushed**.
 The project is an AI code review agent: you give it a public repository URL, it
 clones it, runs a deterministic AST analysis, and returns a health report.
 
-**Status: strong MVP, Phases G and H done, F2 (the last open defect) fixed,
-not yet deployed.** Graded
+**Status: strong MVP. Phases G, H, I-partial, J1 and J2 done; F2 (the last open
+defect) fixed; not yet deployed.** Graded
 **6.5/10** in `docs/STAFF_AUDIT_2026-08-19.md`, before either. The engineering
 around the product was already good (security 8, tests 8, docs 8); the
 analyzer's precision was the failing grade (correctness 4), and G fixed the
@@ -75,10 +74,12 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` (J1 merged at `37f0060`, branch deleted) |
-| Pushed? | **NO** — `main` is 16 commits ahead of `origin/main`; CI has not run |
+| Current branch | `main` (J2 merged at `568bf4e` via PR #3, branch deleted) |
+| Pushed? | **YES** — `main` = `origin/main` = `568bf4e`, CI green (run `32699574335`) |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
+| `phase-j/j1-explanation-parity` | merged (`37f0060`) and deleted |
+| `phase-j/j2-finding-detail` | merged (`568bf4e`) and deleted, remote ref pruned |
 
 ---
 
@@ -99,6 +100,12 @@ the session that ran it, and anything older is testimony to re-check.
 | Live API | `OPTIONS /scan` 200, `POST /scan` 200 with a real `scan_id` | `a55eaf1f` |
 | CI on disk | `.github/workflows/ci.yml` (15.9 KB) + `release.yml` | `a55eaf1f` |
 | Deploy files on disk | `Caddyfile`, `docker-compose.prod.yml`, both Dockerfiles | `a55eaf1f` |
+| Backend suite | `432 passed, 0 failed` — **on merged `main`** | `b5a36f9d` |
+| Frontend suite | `70 passed`, 11 files — **on merged `main`** | `b5a36f9d` |
+| Typecheck | `npm run typecheck` (`tsc -b`) exit 0 — **on merged `main`** | `b5a36f9d` |
+| Playwright e2e | `23 passed` across 3 projects | `b5a36f9d` |
+| Production build | built in 5.85s | `b5a36f9d` |
+| Snippets carry real source | swept every first-party `.py` under `backend/`: 14 files with findings, **31 findings, 31 with real source, 0 placeholders** | `b5a36f9d` |
 
 **Phase G shipped in session `0f899c51`** — five commits, merged to `main`:
 
@@ -133,7 +140,7 @@ Full detail, including acceptance criteria and idea IDs, is in
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
 | **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
-| **J** | Explanation UX — **J1 DONE** (F7, F8, F9-detail, F15). **J2 DONE** (F6 tiers navigate + 5th tier, F9 expand/collapse, real `snippet` end to end, F16 keyboard a11y) — on `phase-j/j2-finding-detail`, unmerged. J3 = F4, F5 | — |
+| **J** | Explanation UX — **J1 DONE** (F7, F8, F9-detail, F15). **J2 DONE** (F6 tiers navigate + 5th tier, F9 expand/collapse, real `snippet` end to end, F16 keyboard a11y) — merged at `568bf4e`. J3 = F4, F5 | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |
@@ -145,7 +152,7 @@ half of Phase I. It moves the dark palette off `:root` into `.dark` /
 token architecture in `index.css` that every component reads from, so it is
 not a small edit.
 
-Or jump to **M** (deploy) — nothing blocks it. **J** is the highest-value
+Or jump to **M** (deploy) — nothing blocks it. **J3** is the highest-value
 remaining phase for the product's positioning. There are no open *defects*.
 
 Phase H shipped in the same session as G:
