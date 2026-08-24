@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ScanReport } from "@/lib/types";
 
@@ -13,6 +13,13 @@ function reportWith(files: Partial<ScanReport["files"][number]>[]): ScanReport {
 }
 
 describe("SecurityReport", () => {
+  // setup.ts stubs scrollIntoView once on the prototype for the whole run, so
+  // call counts would otherwise accumulate across tests in this file.
+  beforeEach(() => {
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+  });
+
+
   it("explains why each finding matters and how to fix it", () => {
     mockUseScan.mockReturnValue({
       currentReport: reportWith([
@@ -125,7 +132,7 @@ describe("SecurityReport", () => {
     expect(tier).toBeInTheDocument();
   });
 
-  it("scrolls to a group when its tier is activated", () => {
+  it("scrolls to a group and moves focus to its heading when the tier is activated", () => {
     mockUseScan.mockReturnValue({
       currentReport: reportWith([
         {
@@ -144,6 +151,34 @@ describe("SecurityReport", () => {
     fireEvent.click(screen.getByRole("button", { name: /1 Critical/ }));
 
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    // Scrolling alone leaves a keyboard/screen-reader user where they were —
+    // the heading must actually receive focus for the tier to act as navigation.
+    expect(screen.getByRole("heading", { name: /Critical/ })).toHaveFocus();
+  });
+
+  it("dispatches to the activated tier's own group, not always the first one", () => {
+    mockUseScan.mockReturnValue({
+      currentReport: reportWith([
+        {
+          name: "runner.py",
+          path: "backend/app/runner.py",
+          fileType: "production",
+          security: [
+            { type: "Command Injection", severity: "Critical", description: "d", file: "runner.py", line: 1 },
+            { type: "Weak Hash", severity: "Medium", description: "d", file: "runner.py", line: 2 },
+          ],
+        },
+      ]),
+    });
+
+    render(<SecurityReport />);
+
+    // Activate the second tier, not the first — a hardcoded `jumpTo("severity-critical")`
+    // would still pass the single-tier test above but fail this one.
+    fireEvent.click(screen.getByRole("button", { name: /1 Medium/ }));
+
+    expect(screen.getByRole("heading", { name: /Medium/ })).toHaveFocus();
+    expect(screen.getByRole("heading", { name: /Critical/ })).not.toHaveFocus();
   });
 
   it("renders a zero tier as text, not a control", () => {
