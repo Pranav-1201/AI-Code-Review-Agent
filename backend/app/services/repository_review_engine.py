@@ -319,7 +319,10 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
         if not r:
             continue
         finding_source = (sources.get(f.file) or sources.get(f.file.replace("\\", "/")) or "")
-        finding_lines = finding_source.splitlines()
+        # split("\n"), not splitlines(): see security_analyzer.py's
+        # _source_lines for why splitlines() drifts the snippet out of
+        # alignment with the AST-derived line number.
+        finding_lines = finding_source.split("\n")
         note = (f" Argument is reachable from untrusted input ({f.source_kind}) "
                 f"through a call chain — remote code/command execution risk.")
         risks = r.setdefault("security_risks", [])

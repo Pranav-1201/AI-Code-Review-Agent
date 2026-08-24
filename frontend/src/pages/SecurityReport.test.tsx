@@ -19,7 +19,6 @@ describe("SecurityReport", () => {
     vi.mocked(Element.prototype.scrollIntoView).mockClear();
   });
 
-
   it("explains why each finding matters and how to fix it", () => {
     mockUseScan.mockReturnValue({
       currentReport: reportWith([

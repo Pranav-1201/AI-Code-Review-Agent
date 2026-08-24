@@ -7,6 +7,21 @@ import { cn } from "@/lib/utils";
 import type { Severity } from "@/lib/types";
 import { Shield } from "lucide-react";
 
+// Five, not four. `Severity` has five values and `types.ts` records why Info
+// is distinct: a code-exec sink that taint proved is reachable only from
+// local operator input. The page used to render four tiles, so an Info
+// finding showed in the list below while no tile counted it and the tiles
+// did not sum to the headline.
+const SEVERITY_ORDER: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
+
+const TIER_STYLES: Record<Severity, { border: string; text: string }> = {
+  Critical: { border: "border-destructive/30", text: "text-destructive" },
+  High: { border: "border-destructive/20", text: "text-destructive/80" },
+  Medium: { border: "border-warning/20", text: "text-warning" },
+  Low: { border: "border-info/20", text: "text-info" },
+  Info: { border: "border-border", text: "text-muted-foreground" },
+};
+
 export default function SecurityReport() {
   const { currentReport } = useScan();
 
@@ -25,12 +40,6 @@ export default function SecurityReport() {
   const excludedCount = currentReport.files
     .filter((f) => f.fileType !== "production")
     .reduce((n, f) => n + f.security.length, 0);
-  // Five, not four. `Severity` has five values and `types.ts` records why Info
-  // is distinct: a code-exec sink that taint proved is reachable only from
-  // local operator input. The page used to render four tiles, so an Info
-  // finding showed in the list below while no tile counted it and the tiles
-  // did not sum to the headline.
-  const SEVERITY_ORDER: Severity[] = ["Critical", "High", "Medium", "Low", "Info"];
 
   const groups = SEVERITY_ORDER.map((severity) => ({
     severity,
@@ -50,15 +59,10 @@ export default function SecurityReport() {
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
     target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
-    target.focus();
-  };
-
-  const TIER_STYLES: Record<Severity, { border: string; text: string }> = {
-    Critical: { border: "border-destructive/30", text: "text-destructive" },
-    High: { border: "border-destructive/20", text: "text-destructive/80" },
-    Medium: { border: "border-warning/20", text: "text-warning" },
-    Low: { border: "border-info/20", text: "text-info" },
-    Info: { border: "border-border", text: "text-muted-foreground" },
+    // preventScroll: true — focus() defaults to its own instant scroll,
+    // which would jump the viewport right after the smooth scroll above and
+    // defeat the prefers-reduced-motion branch entirely.
+    target.focus({ preventScroll: true });
   };
 
   return (

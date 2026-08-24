@@ -192,7 +192,11 @@ class SecurityAnalyzer(ast.NodeVisitor):
         self.taint_map = taint_map or {}
 
         # PHASE 1: source lines and parent map
-        self._source_lines: list[str] = source.splitlines() if source else []
+        # split("\n"), not splitlines(): splitlines() also breaks on form
+        # feed, vertical tab, and other exotic separators the AST's tokenizer
+        # does not treat as a line ending, which would drift every lineno
+        # above such a character out of alignment with this array.
+        self._source_lines: list[str] = source.split("\n") if source else []
         self._parent_map: dict = {}
 
         # PHASE G / S1: import bindings, so a call target can be resolved to
