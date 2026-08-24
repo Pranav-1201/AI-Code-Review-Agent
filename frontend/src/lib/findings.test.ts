@@ -98,3 +98,54 @@ describe("fromFileIssue", () => {
     expect(view.line).toBeUndefined();
   });
 });
+
+describe("snippet handling", () => {
+  const vulnFixture = (snippet?: string): SecurityVulnerability => ({
+    type: "Command Injection",
+    severity: "Critical",
+    description: "shell=True with a request value",
+    file: "backend/app/runner.py",
+    line: 42,
+    snippet,
+  });
+
+  const issueFixture = (snippet?: string): FileIssue => ({
+    message: "Function exceeds recommended length",
+    severity: "Medium",
+    category: "maintainability",
+    line: 42,
+    snippet,
+  });
+
+  const fileFixture = { name: "runner.py", path: "backend/app/runner.py" } as FileAnalysis;
+
+  it("carries a real snippet through to the view", () => {
+    const code = "41:     cmd = request.args.get(\"cmd\")\n42:     subprocess.run(cmd, shell=True)";
+
+    expect(fromSecurityVulnerability(vulnFixture(code)).snippet).toBe(code);
+    expect(fromFileIssue(issueFixture(code), fileFixture).snippet).toBe(code);
+  });
+
+  // These are the exact two shapes found across the 523 cached scans in
+  // backend/app/.cache/ — 271 findings carry the field and none carry code.
+  it("drops the legacy placeholder that cached scans still contain", () => {
+    expect(fromSecurityVulnerability(vulnFixture("Line 481 indicates: Command Injection")).snippet)
+      .toBeUndefined();
+    expect(fromSecurityVulnerability(vulnFixture("Line 42")).snippet).toBeUndefined();
+    expect(fromFileIssue(issueFixture("Line 7 indicates: SQL Injection"), fileFixture).snippet)
+      .toBeUndefined();
+  });
+
+  it("treats an empty or whitespace snippet as absent", () => {
+    expect(fromSecurityVulnerability(vulnFixture("")).snippet).toBeUndefined();
+    expect(fromSecurityVulnerability(vulnFixture("   ")).snippet).toBeUndefined();
+    expect(fromSecurityVulnerability(vulnFixture(undefined)).snippet).toBeUndefined();
+  });
+
+  it("keeps code that merely starts with a number", () => {
+    // A real snippet is always line-numbered, so it must not be mistaken for
+    // the placeholder. "42: ..." has a colon and code after it; "Line 42"
+    // does not.
+    expect(fromSecurityVulnerability(vulnFixture("42: return None")).snippet).toBe("42: return None");
+  });
+});

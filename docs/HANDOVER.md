@@ -4,28 +4,43 @@
 short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
-**Last updated:** 2026-08-20 · **Updated by:** Claude Opus 5 session
-`cc9e8871` · **Branch at handover:** `main` — J1 **merged** (`37f0060`),
-branch deleted. **Not pushed** — `main` is 16 commits ahead of `origin/main`.
+**Last updated:** 2026-08-24 · **Updated by:** Claude Opus 5 session
+`b5a36f9d` · **Branch at handover:** `phase-j/j2-finding-detail` — J2 complete
+and unmerged, 8 commits. `main` is at `e857e0e` and **is pushed**.
 
-> **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** All 7 tasks
-> done, every one review-clean; the final whole-branch review (Opus) returned
-> **spec PASS, quality PASS**. The feature branch is deleted.
+> **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** Branch
+> deleted. `main` = `origin/main` = `e857e0e`, and **CI is green on it** (run
+> `32357489001`). An earlier version of this file claimed `main` was 16 commits
+> ahead of `origin/main` with CI never run — both halves were false by the time
+> anyone read them, and the correction cost a session's first ten minutes.
 >
-> **`main` is NOT pushed** — 16 commits ahead of `origin/main`, so CI has not run
-> on any of this. Pushing is the first thing to do next session.
+> **J2 is COMPLETE on `phase-j/j2-finding-detail` (`e74f41e..e88f255`, 8
+> commits) and NOT yet merged.** All 6 tasks landed, each individually
+> review-clean; the final whole-branch review (Opus) returned **SHIP WITH
+> FIXES**, and the two Important findings plus three minors were closed in one
+> fix wave at `e88f255`.
 >
-> **Verified this session:** vitest **59 passed / 11 files** (baseline 42/6),
-> `npm run typecheck` exit 0, `npm run build` succeeds, Playwright **17 passed**.
-> Rationale is in `DECISIONS.md` **D17**; the full task-by-task record, including
-> every ruling made, is in
-> `.superpowers/sdd/2026-08-20-j1-explanation-parity/progress.md`.
+> **Verified in that session, every command run fresh:** pytest **432 passed /
+> 0 failed**, vitest **70 passed / 11 files**, `tsc -b` exit 0, `npm run build`
+> succeeds, Playwright **23 passed**. Plus the acceptance row that actually
+> matters: sweeping every first-party `.py` under `backend/` through the shipped
+> analyzer gave **31 findings across 14 files, 31 carrying real source, 0
+> placeholders**.
 >
-> **Next:** merge `phase-j/j1-explanation-parity` into `main` (nothing is pushed,
-> so this is still fully reversible), then **J2** — F6 clickable severity tiers,
-> F9's expand/collapse detail, the unused `snippet` field, and F16's a11y pass
-> over the interactive elements those add. **J3** (F4/F5, the code panes) has its
-> two design decisions already settled in D17.
+> The full task-by-task record — every ruling, every deferred minor, and three
+> reviewer seats that died without reporting — is in
+> `docs/superpowers/records/2026-08-24-j2-execution-record.md`.
+>
+> **Note for future phases:** that record lives under `docs/` on purpose.
+> Execution ledgers are written to `.superpowers/sdd/<plan>/progress.md`, which
+> `.superpowers/sdd/.gitignore` ignores with a bare `*` — so they never enter
+> git and vanish on a clean. J1's handover pointed at its ledger and the file
+> was already gone by the next session. Copy the ledger into
+> `docs/superpowers/records/` before deleting the workspace.
+>
+> **Next:** merge `phase-j/j2-finding-detail` into `main` and push (nothing on
+> the branch is pushed, so it is still fully reversible), then **J3** — F4/F5,
+> the code panes, whose two design decisions are already settled in **D17**.
 
 ---
 
@@ -118,7 +133,7 @@ Full detail, including acceptance criteria and idea IDs, is in
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
 | **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
-| **J** | Explanation UX — **J1 DONE** (F7, F8, F9-detail, F15). J2 = F6 + F9 expand + snippet + F16. J3 = F4, F5 | — |
+| **J** | Explanation UX — **J1 DONE** (F7, F8, F9-detail, F15). **J2 DONE** (F6 tiers navigate + 5th tier, F9 expand/collapse, real `snippet` end to end, F16 keyboard a11y) — on `phase-j/j2-finding-detail`, unmerged. J3 = F4, F5 | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |

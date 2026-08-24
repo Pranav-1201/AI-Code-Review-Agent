@@ -13,6 +13,7 @@ from backend.app.analysis.dependency_analyzer import analyze_dependencies
 from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.duplicate_detector import detect_duplicates
 from backend.app.services.security_analyzer import detect_security_issues
+from backend.app.services.snippet import extract_snippet
 from backend.app.services.cache_manager import CacheManager
 from backend.app.analysis.cohesion_analyzer import NO_SIZE_FLAG
 from backend.app.analysis.taint_analyzer import propagate_interprocedural_taint
@@ -317,6 +318,11 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
         r = by_path.get(f.file) or by_path.get(f.file.replace("\\", "/"))
         if not r:
             continue
+        finding_source = (sources.get(f.file) or sources.get(f.file.replace("\\", "/")) or "")
+        # split("\n"), not splitlines(): see security_analyzer.py's
+        # _source_lines for why splitlines() drifts the snippet out of
+        # alignment with the AST-derived line number.
+        finding_lines = finding_source.split("\n")
         note = (f" Argument is reachable from untrusted input ({f.source_kind}) "
                 f"through a call chain — remote code/command execution risk.")
         risks = r.setdefault("security_risks", [])
@@ -353,7 +359,7 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
                 "why_it_matters": "Cross-function untrusted data reaching a dangerous "
                                   "sink enables remote exploitation.",
                 "how_to_fix": "Sanitise or parameterise the value at the entry point.",
-                "snippet": f"Line {f.line}",
+                "snippet": extract_snippet(finding_lines, f.line),
             })
             issues.append({
                 "file": f.file, "type": "security", "severity": "critical",
@@ -361,7 +367,7 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
                 "why_it_matters": "Cross-function untrusted data reaching a dangerous "
                                   "sink enables remote exploitation.",
                 "how_to_fix": "Sanitise or parameterise the value at the entry point.",
-                "snippet": f"Line {f.line}", "confidence": f.confidence,
+                "snippet": extract_snippet(finding_lines, f.line), "confidence": f.confidence,
                 "trust_boundary": "untrusted_input",
             })
 

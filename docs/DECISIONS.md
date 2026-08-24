@@ -417,3 +417,87 @@ the old block surfaced as observations rather than as a conflict between
 the closing documentation obligations, and Task 7's brief deferred them to a
 browser step its implementer could not run — a plan-shape issue, not an
 implementer one.
+
+---
+
+## D18 — The `snippet` field is made real rather than rendered as-is
+
+**Date:** 2026-08-24 · **Decided by:** Pranav, on analysis by Claude Opus 5
+(session `b5a36f9d`) · **Phase:** J2
+
+J2's brief said "wire the unused `snippet` field". Before writing any code we
+measured what the field actually contained, across all 523 cached scans in
+`backend/app/.cache/`:
+
+```
+total snippet fields: 271
+163  ''
+  4  'Line 481 indicates: Command Injection'
+  4  'Line 151 indicates: SQL Injection'
+  ... every remaining non-empty value has this same shape
+```
+
+**60% empty; zero contain source code.** The producers were
+`security_analyzer.py:433` emitting `f"Line {line} indicates: {issue_type}"` and
+`repository_review_engine.py:356,364` emitting `f"Line {f.line}"`. Rendering
+that field would have printed the line number a second time beside the existing
+`Line 42` badge and restated the finding's own title.
+
+**Decision: make the field real at both producers rather than render the
+placeholder.** A new stdlib-only `backend/app/services/snippet.py` extracts the
+flagged line ±2, numbered and dedented, returning `""` — never a sentence — when
+there is no source. Both producers already had the source in scope, so no
+plumbing was needed: `SecurityAnalyzer.__init__` already stored `_source_lines`,
+and `apply_interprocedural_taint` already built a `sources` map.
+
+**Consequence that had to be handled:** the 523 cached scans predate this and
+replay through the UI, so `lib/findings.ts` filters `/^Line \d+( indicates: .+)?$/`
+before the snippet reaches a code pane. Without that filter, shipping J2 would
+have given every historical report a code pane full of restated line numbers.
+
+**A real bug this surfaced, caught in final review:** both producers originally
+built their line array with `str.splitlines()`, which breaks on `\x0c`, `\x0b`,
+`\x85` and others that **Python's tokenizer does not treat as line breaks**. A
+form feed above a flagged line shifted the snippet *and* its printed numbers, so
+the evidence pane would confidently show the wrong code under the right number —
+precisely the trust failure this phase exists to remove. Both sites now use
+`.split("\n")`, which is exactly AST-aligned because `repo_analyzer.py:242` reads
+with universal newlines. Regression test uses a form feed.
+
+**Out of scope, recorded not fixed:** the code-quality `issues` path
+(`repository_review_engine.py:195`) has no snippet upstream and still emits `""`.
+Those findings are file- and function-scoped, so there is often no single line to
+show.
+
+---
+
+## D19 — Security Report shows five severity tiers, not four
+
+**Date:** 2026-08-24 · **Decided by:** Pranav, on analysis by Claude Opus 5
+(session `b5a36f9d`) · **Phase:** J2
+
+The audit's F6 says "the 4 severity tiers". `Severity` in `frontend/src/lib/types.ts`
+has **five** values, and its own doc comment records why `Info` is distinct: a
+code-exec sink that taint analysis proved is reachable only from local operator
+input, "kept distinct so the UI does not collapse it to Low".
+
+The page rendered four tiles. An `Info` finding therefore appeared in the list
+below while **no tile counted it**, and the tiles did not sum to the headline —
+the same defect class as audit item F14 (`healthScore` 54 vs `avg_score` 90.3).
+
+**Decision: five tiles, `md:grid-cols-5`, corrected rather than preserved.**
+Deviating from the audit's wording is deliberate and recorded here so it is not
+"fixed" back later.
+
+The tiles also stopped being decoration: each non-zero tier scrolls to its
+severity group **and moves focus to that group's heading**. Scrolling alone
+leaves a keyboard or screen-reader user where they were — moving focus is what
+makes a tier a navigation control. A zero-count tier renders as plain text, not a
+button, and its group renders nothing.
+
+**Why the sum is now safe:** `mapSeverity` (`response-mapper.ts:269-277`) is
+total — every incoming string funnels into one of the five values with `Low` as
+fallback — and it is the only path constructing a `SecurityVulnerability` from
+API data, cached replays included. So no finding can fall outside all five
+buckets. This matters because the grouped list renders a finding **only** if it
+lands in a group, where the old flat list rendered everything unconditionally.

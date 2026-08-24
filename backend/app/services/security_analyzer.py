@@ -12,6 +12,7 @@ from backend.app.analysis.symbol_table import SymbolTable
 from backend.app.analysis.taint_analyzer import (
     build_taint_map, TRUST_UNTRUSTED, TRUST_OPERATOR, TRUST_PARAMETER,
 )
+from backend.app.services.snippet import extract_snippet
 
 # PHASE 1: SHA constants
 SHA_CONTEXT_SIGNALS: dict[str, list[str]] = {
@@ -191,7 +192,11 @@ class SecurityAnalyzer(ast.NodeVisitor):
         self.taint_map = taint_map or {}
 
         # PHASE 1: source lines and parent map
-        self._source_lines: list[str] = source.splitlines() if source else []
+        # split("\n"), not splitlines(): splitlines() also breaks on form
+        # feed, vertical tab, and other exotic separators the AST's tokenizer
+        # does not treat as a line ending, which would drift every lineno
+        # above such a character out of alignment with this array.
+        self._source_lines: list[str] = source.split("\n") if source else []
         self._parent_map: dict = {}
 
         # PHASE G / S1: import bindings, so a call target can be resolved to
@@ -430,7 +435,9 @@ class SecurityAnalyzer(ast.NodeVisitor):
             "how_to_fix": recommendation,
             "confidence": confidence,
             "trust_boundary": trust_boundary,   # PHASE 3: taint provenance
-            "snippet": f"Line {line} indicates: {issue_type}"  # Simplified without full tree mapping
+            # Real evidence, not a restatement of the line number. Empty when
+            # the analyzer was constructed without source (see snippet.py).
+            "snippet": extract_snippet(self._source_lines, line),
         })
 
     # ------------------------------------------------------

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { FindingCard } from "./FindingCard";
@@ -14,39 +14,56 @@ const full: FindingView = {
   line: 42,
   whyItMatters: "Attackers could run unauthorized utilities on the server.",
   howToFix: "Use subprocess.run([...]) with shell=False.",
+  snippet: "41:     cmd = request.args.get(\"cmd\")\n42:     subprocess.run(cmd, shell=True)",
   confidence: 0.9,
   trustBoundary: "untrusted_input",
 };
 
 describe("FindingCard", () => {
-  it("shows why a finding matters and how to fix it", () => {
+  it("is collapsed by default, showing identity but not the explanation", () => {
     render(<FindingCard finding={full} />);
 
+    // Visible while collapsed: what it is, how bad, and where.
     expect(screen.getByText("Command Injection")).toBeInTheDocument();
-    expect(screen.getByText(/Attackers could run unauthorized utilities/)).toBeInTheDocument();
-    expect(screen.getByText(/Use subprocess.run/)).toBeInTheDocument();
     expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText("runner.py")).toBeInTheDocument();
+    expect(screen.getByText("Line 42")).toBeInTheDocument();
     expect(screen.getByText("Untrusted input")).toBeInTheDocument();
     expect(screen.getByText("90% Match")).toBeInTheDocument();
-    expect(screen.getByText("Line 42")).toBeInTheDocument();
+
+    // Hidden until asked for.
+    expect(screen.queryByText(/Attackers could run unauthorized utilities/)).toBeNull();
+    expect(screen.queryByText(/Use subprocess.run/)).toBeNull();
   });
 
-  it("renders no label at all for fields the analyzer did not produce", () => {
-    const bare: FindingView = { title: "Unused import", severity: "Low" };
+  it("exposes an expand control that reports its state", () => {
+    render(<FindingCard finding={full} />);
 
-    render(<FindingCard finding={bare} />);
-
-    expect(screen.getByText("Unused import")).toBeInTheDocument();
-    // The failure this pins: a bare "Context:" or "How to fix" heading with
-    // nothing beside it reads as a broken analyzer, not an absent field.
-    expect(screen.queryByText(/Context:/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/How to fix/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/% Match/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^Line /)).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: /Command Injection/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("renders a zero confidence rather than swallowing it as falsy", () => {
-    render(<FindingCard finding={{ title: "Guess", severity: "Info", confidence: 0 }} />);
+  it("reveals the explanation and the snippet when expanded", () => {
+    render(<FindingCard finding={full} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Command Injection/ }));
+
+    expect(screen.getByRole("button", { name: /Command Injection/ }))
+      .toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/Attackers could run unauthorized utilities/)).toBeInTheDocument();
+    expect(screen.getByText(/Use subprocess.run/)).toBeInTheDocument();
+    expect(screen.getByText(/subprocess.run\(cmd, shell=True\)/)).toBeInTheDocument();
+  });
+
+  it("renders no expand control when there is nothing to expand", () => {
+    render(<FindingCard finding={{ title: "Dead import", severity: "Low" }} />);
+
+    expect(screen.getByText("Dead import")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("shows a confidence of 0 rather than hiding it", () => {
+    render(<FindingCard finding={{ ...full, confidence: 0 }} />);
 
     expect(screen.getByText("0% Match")).toBeInTheDocument();
   });
