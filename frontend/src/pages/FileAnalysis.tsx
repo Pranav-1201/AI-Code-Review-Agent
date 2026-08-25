@@ -14,51 +14,9 @@ import { getDisplayName } from "@/lib/response-mapper";
 import { fromFileIssue } from "@/lib/findings";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
+import { CodeViewer } from "@/components/CodeViewer";
 
 const VISIBLE_FILES = 50; // Virtual limit for sidebar
-
-// Helper to render code with line numbers and optional patch coloring
-const CodeViewer = ({ code, isPatch = false }: { code: string; isPatch?: boolean }) => {
-  if (!code) return <span>Not available</span>;
-
-  const lines = code.split("\n");
-  
-  return (
-    <div className="flex flex-col font-mono text-[13px] leading-snug w-full min-w-max">
-      {lines.map((line, i) => {
-        let bgColor = "transparent";
-        let textColor = "text-foreground/80";
-
-        if (isPatch) {
-          if (line.startsWith("+") && !line.startsWith("+++")) {
-            bgColor = "bg-primary/20";
-            textColor = "text-primary border-l-2 border-primary";
-          } else if (line.startsWith("-") && !line.startsWith("---")) {
-            bgColor = "bg-destructive/20";
-            textColor = "text-destructive border-l-2 border-destructive";
-          } else if (line.startsWith("@@")) {
-            textColor = "text-info font-bold";
-            bgColor = "bg-info/10";
-          } else {
-            textColor = "text-muted-foreground";
-          }
-        }
-
-        return (
-          <div key={i} className={`flex px-2 hover:bg-white/5 ${bgColor}`}>
-            <span className="w-10 shrink-0 text-muted-foreground/50 select-none text-right pr-4 border-r border-border/50 mr-4">
-              {i + 1}
-            </span>
-            <span className={`whitespace-pre ${textColor}`}>
-              {line || " "}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
 
 export default function FileAnalysis() {
   const { currentReport } = useScan();
