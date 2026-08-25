@@ -78,7 +78,7 @@ section for current state.
 |---|---|
 | Current branch | `main` — J3 merged at `2004639` (`--no-ff`), pushed |
 | Pushed? | **YES** — `main` is pushed and level with `origin/main`. Check CI for the newest SHA, not for the merge commit. |
-| `phase-j/j3-code-panes` | merged; kept locally until CI is confirmed green, then delete |
+| `phase-j/j3-code-panes` | merged, CI green (run `32855931620`, all jobs), branch deleted |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 | `phase-j/j1-explanation-parity` | merged (`37f0060`) and deleted |
