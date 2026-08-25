@@ -40,8 +40,24 @@ deleted, pushed, **CI green on the merge commit** (run `32699574335`).
 >
 > **J3 is DONE and merged** at `2004639`. Its execution record — six defects
 > the reviews found in J3's own plan, and the ruling on each — is at
-> `docs/superpowers/records/2026-08-25-j3-execution-record.md`. **Next: F1**
-> (light mode) or **Phase M** (deploy). Phase J is finished.
+> `docs/superpowers/records/2026-08-25-j3-execution-record.md`. Phase J is
+> finished.
+>
+> **J3's last open bar is now CLOSED (2026-08-26).** It read: *nobody has run a
+> real scan and opened the File Analysis page; every J3 number came from
+> fixtures and demo data, so the change-record line numbers are unproven
+> against a real clone.* Done this session, end to end: a real clone of
+> `pypa/sampleproject` through the running backend, then the real page driven
+> in a real browser. All **11 change records across 4 files land on the exact
+> right lines**, including `noxfile.py` with 6 insertions where an off-by-one
+> would accumulate — hand-checked against `improved_code` line by line. The
+> page reported *"21 changed lines highlighted"*, which is 3x6 docstring +
+> 3x1 return-hint, and the highlight band sat on improved lines 24–30 exactly.
+> `ast.parse` accepted all 10 code payloads (5 files x original/improved).
+> Zero console errors. **There is no longer an unproven J3 claim.**
+>
+> **Next: F1** (light mode), **K** (language contract), **L** (S8 dead-code
+> wiring is the substantive one) or **Phase M** (deploy).
 
 ---
 
@@ -113,6 +129,11 @@ the session that ran it, and anything older is testimony to re-check.
 | Playwright e2e | `23 passed` across 3 projects | `b5a36f9d` |
 | Production build | built in 5.85s | `b5a36f9d` |
 | Snippets carry real source | swept every first-party `.py` under `backend/`: 14 files with findings, **31 findings, 31 with real source, 0 placeholders** | `b5a36f9d` |
+| Backend suite | `444 passed, 0 failed` in 39.58s (440 + 4 new) | `d0a60ab7` |
+| **J3 bar: real scan → real page** | real clone of `pypa/sampleproject`, driven in a real browser: **11/11 change records on the exact right lines**, "21 changed lines highlighted" = 3x6+3x1, highlights on improved lines 24–30, 0 console errors | `d0a60ab7` |
+| Improved code is valid Python | `ast.parse` on all 10 payloads (5 files x original/improved): **10 ok, 0 bad** | `d0a60ab7` |
+| Broken-cache fix, real data | flask went from `git fetch` exit 128 to a clean **41s** scan through the browser; its cache came back with `HEAD` + `config` | `d0a60ab7` |
+| `start.bat` wait loop | new loop measured **39s** worst case against dead ports (was 60 iterations at the same 3.25s each) | `d0a60ab7` |
 
 **Phase G shipped in session `0f899c51`** — five commits, merged to `main`:
 
@@ -203,6 +224,23 @@ while every security finding on flask was wrong.
 
 - **Interpreter is `venv\Scripts\python.exe` at the repo root**, not
   `backend/venv`. Global Python 3.13 has no fastapi and dies at collection.
+- **A cached clone can exist and still not be a git repository.** Fixed
+  2026-08-26: an interrupted eviction leaves `.git` holding `objects/`, `refs/`,
+  `logs/` and `index` but no `HEAD` and no `config`. The old gate was
+  `os.path.isdir(.git)`, so the incremental branch ran `git fetch` on it and
+  died with exit 128 — **permanently** for that repo, because nothing ever
+  cleared the directory. Three of twelve cached clones were in that state, one
+  of them flask. `main._usable_cached_clone` now asks git via `rev-parse
+  --git-dir` and a rejected cache falls through to the self-healing full clone.
+  If you see a raw `CalledProcessError` repr reach the UI, this is the shape.
+- **`start.bat` reporting a port clash can hand you a dead end.** It prints
+  `taskkill /F /PID <pid>` from netstat's PID column; on 2026-08-26 that PID had
+  no process (`taskkill` said "not found") while the socket still answered HTTP
+  200. Not diagnosed further — if it recurs, do not trust the suggested command.
+- **A backend can hold port 8000 and never answer HTTP.** Measured 2026-08-26
+  from a `start.bat`-launched backend: connect in 0.02s, no response in 60s.
+  Probing with curl is right to call that not-ready; the old wait loop then held
+  the browser ~3 minutes. Now bounded to 12 iterations (39s measured).
 - **No Docker on this machine.** The GitHub runner has it and `ci.yml` has a
   `deploy-stack` job that boots the compose stack. Container claims get verified
   in CI, never locally.
