@@ -129,3 +129,32 @@ def test_invalid_repository_path():
                                       analyze_repository("this_repo_does_not_exist"))
     assert result is not None
     assert result["file_reports"] == []
+
+
+# ---------------------------------------------------------
+# J3: the change list has to survive the trip to the report
+#
+# The engine producing `changes` is worthless if the report drops them --
+# this is the seam the frontend actually reads.
+# ---------------------------------------------------------
+
+@patch(_PATCH_TARGET, return_value=MOCK_ANALYSIS)
+def test_file_report_carries_the_refactor_change_list(mock_llm):
+    with tempfile.TemporaryDirectory() as repo:
+        with open(os.path.join(repo, "example.py"), "w") as f:
+            f.write('def hello():\n    print("hello world")\n')
+
+        engine = RepositoryReviewEngine()
+        repo_data = analyze_repository(repo)
+        result = engine.review_repository(repo, repo_data)
+
+        report = result["file_reports"][0]
+
+        assert "refactor_changes" in report
+
+        kinds = {c["kind"] for c in report["refactor_changes"]}
+        assert kinds == {"docstring", "return_hint"}
+
+        for change in report["refactor_changes"]:
+            assert change["line"] >= 1
+            assert change["name"] == "hello"

@@ -194,3 +194,117 @@ def large():
     result = engine.generate_refactor(code, MOCK_LLM_RESPONSE, {}, smells)
 
     assert result is not None
+
+
+# ---------------------------------------------------------
+# J3 (F5): the structured change list
+#
+# The old summary counted lines containing `"""` and divided by two, which
+# assumes every docstring spans two such lines. The engine emits a SINGLE-line
+# docstring for classes and for parameterless functions, so that arithmetic
+# reported zero for exactly the files it had just changed. These tests assert
+# the change list, and assert each line number against the improved TEXT --
+# a count assertion cannot see an off-by-one, this can.
+# ---------------------------------------------------------
+
+EMPTY_ANALYSIS = {"analysis": {"explanation": "", "suggestions": []}}
+
+
+def _refactor(code):
+    """Run the engine over `code` with no complexity or smell input."""
+    engine = HeuristicRefactorEngine()
+    return engine.generate_refactor(code, EMPTY_ANALYSIS, {}, {})
+
+
+def test_changes_are_returned_for_a_parameterless_function():
+    result = _refactor('def hello():\n    print("hello world")\n')
+
+    changes = result["changes"]
+    docstrings = [c for c in changes if c["kind"] == "docstring"]
+    hints = [c for c in changes if c["kind"] == "return_hint"]
+
+    assert len(docstrings) == 1
+    assert docstrings[0]["target"] == "function"
+    assert docstrings[0]["name"] == "hello"
+    assert docstrings[0]["line_count"] == 1
+
+    assert len(hints) == 1
+    assert hints[0]["name"] == "hello"
+
+
+def test_change_line_numbers_point_at_the_improved_text():
+    result = _refactor('def hello():\n    print("hello world")\n')
+
+    improved = result["improved_code"].splitlines()
+
+    for change in result["changes"]:
+        line = improved[change["line"] - 1]
+        if change["kind"] == "docstring":
+            assert '"""' in line
+        else:
+            assert "-> None" in line
+
+
+def test_multi_line_docstring_spans_the_lines_it_claims():
+    code = "def add(a, b):\n    total = a + b\n    return total\n"
+
+    result = _refactor(code)
+
+    docstrings = [c for c in result["changes"] if c["kind"] == "docstring"]
+    assert len(docstrings) == 1
+    change = docstrings[0]
+
+    improved = result["improved_code"].splitlines()
+    block = improved[change["line"] - 1 : change["line"] - 1 + change["line_count"]]
+
+    # The claimed span must open and close the docstring and contain nothing else.
+    assert '"""' in block[0]
+    assert '"""' in block[-1]
+    assert "total = a + b" not in "\n".join(block)
+
+
+def test_class_docstrings_are_reported_as_classes():
+    result = _refactor("class Widget:\n    size = 1\n")
+
+    docstrings = [c for c in result["changes"] if c["kind"] == "docstring"]
+    assert len(docstrings) == 1
+    assert docstrings[0]["target"] == "class"
+    assert docstrings[0]["name"] == "Widget"
+
+
+def test_line_numbers_survive_several_insertions_above():
+    code = (
+        "def first():\n    pass\n\n"
+        "def second():\n    pass\n\n"
+        "def third():\n    pass\n"
+    )
+
+    result = _refactor(code)
+    improved = result["improved_code"].splitlines()
+
+    docstrings = [c for c in result["changes"] if c["kind"] == "docstring"]
+    assert len(docstrings) == 3
+
+    # Every docstring's line must still land on a docstring after the two
+    # insertions above it have shifted the file down.
+    for change in docstrings:
+        assert '"""' in improved[change["line"] - 1]
+
+
+def test_a_file_with_no_gaps_reports_no_changes():
+    code = 'def done() -> None:\n    """Already documented."""\n    print("x")\n'
+
+    result = _refactor(code)
+
+    assert result["changes"] == []
+
+
+def test_summary_counts_single_line_docstrings_correctly():
+    """The `// 2` bug: one parameterless function reported 'to 0'."""
+    result = _refactor('def hello():\n    print("hello world")\n')
+
+    explanation = result["explanation"]
+
+    assert "Suggested improvements (unapplied)" in explanation
+    assert "to 0 " not in explanation
+    assert "1 function" in explanation

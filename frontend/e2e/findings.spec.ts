@@ -69,3 +69,24 @@ test("a severity tier moves focus to its group heading", async ({ page }) => {
 
   await expect(heading).toBeFocused();
 });
+
+/**
+ * J3. The panes are the product's explanation surface; a unit test proves the
+ * component renders, only the real app proves the demo reaches it. This also
+ * pins that the two renamed tabs are what a user actually sees — "Improved"
+ * and "Patch" both claimed more than the engine does.
+ */
+test("the suggested-edits pane is reachable and the raw diff survives", async ({ page }) => {
+  await loadDemo(page);
+  await navigateTo(page, "/file-analysis");
+  await expect(page.getByRole("heading", { name: "File Level Analysis" })).toBeVisible();
+
+  await expect(page.getByRole("tab", { name: "Suggested edits" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Improved" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Patch" })).toHaveCount(0);
+
+  await page.getByRole("tab", { name: "What changed" }).click();
+
+  await expect(page.getByText(/Added placeholder docstrings to/)).toBeVisible();
+  await expect(page.getByRole("button", { name: /raw diff/i })).toBeVisible();
+});

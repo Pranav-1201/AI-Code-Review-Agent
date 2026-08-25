@@ -38,8 +38,10 @@ deleted, pushed, **CI green on the merge commit** (run `32699574335`).
 > was already gone by the next session. Copy the ledger into
 > `docs/superpowers/records/` before deleting the workspace.
 >
-> **Next: J3** — F4/F5, the code panes, whose two design decisions are already
-> settled in **D17**.
+> **J3 is DONE** on branch `phase-j/j3-code-panes`, unmerged and unpushed.
+> Its execution record is already copied to
+> `docs/superpowers/records/2026-08-25-j3-execution-record.md`. **Next: merge
+> that branch**, then F1 (light mode) or Phase M (deploy).
 
 ---
 
@@ -74,8 +76,9 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` (J2 merged at `568bf4e` via PR #3, branch deleted) |
-| Pushed? | **YES** — `main` = `origin/main` = `568bf4e`, CI green (run `32699574335`) |
+| Current branch | `phase-j/j3-code-panes` — J3 complete, **unmerged and unpushed** |
+| `main` | `568bf4e` (J2), pushed, CI green (run `32699574335`) — untouched by J3 |
+| Pushed? | **NO** for J3. The branch exists only on this machine. |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 | `phase-j/j1-explanation-parity` | merged (`37f0060`) and deleted |
@@ -90,6 +93,10 @@ the session that ran it, and anything older is testimony to re-check.
 
 | Area | Evidence | Run in |
 |---|---|---|
+| Backend suite | `440 passed`, 0 failed | `e4ebf578` (J3) |
+| Frontend suite | `98 passed`, 15 files | `e4ebf578` (J3) |
+| Typecheck | `npm run typecheck` (`tsc -b`) exit 0 | `e4ebf578` (J3) |
+| End-to-end | `26 passed`, 0 failed, 3 projects | `e4ebf578` (J3) |
 | Backend suite | `417 passed` in 101.64s | `0f899c51` |
 | Fixture gate | `GATE PASSED`, 11/11 types at precision/recall 1.00 | `0f899c51` |
 | Real-repo benchmark | precision 0.60, recall 1.00 (TP 6, FP 4, FN 0) | `0f899c51` |
@@ -140,7 +147,7 @@ Full detail, including acceptance criteria and idea IDs, is in
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
 | **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
-| **J** | Explanation UX — **J1 DONE** (F7, F8, F9-detail, F15). **J2 DONE** (F6 tiers navigate + 5th tier, F9 expand/collapse, real `snippet` end to end, F16 keyboard a11y) — merged at `568bf4e`. J3 = F4, F5 | — |
+| ~~**J**~~ | Explanation UX — **COMPLETE**. J1 (F7, F8, F9-detail, F15), J2 (F6, F9, `snippet`, F16) merged at `568bf4e`. **J3 (F4, F5) DONE 2026-08-25** on `phase-j/j3-code-panes`, unmerged | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |
@@ -152,8 +159,13 @@ half of Phase I. It moves the dark palette off `:root` into `.dark` /
 token architecture in `index.css` that every component reads from, so it is
 not a small edit.
 
-Or jump to **M** (deploy) — nothing blocks it. **J3** is the highest-value
-remaining phase for the product's positioning. There are no open *defects*.
+Or jump to **M** (deploy) — nothing blocks it. There are no open *defects*.
+
+**Before either, merge `phase-j/j3-code-panes`.** J3 is finished and verified
+but lives only on this machine; leaving it unmerged is the one piece of work
+that can still be lost. Its full execution record — including four defects the
+reviews found in J3's own plan, and the rulings made on them — is at
+`docs/superpowers/records/2026-08-25-j3-execution-record.md`.
 
 Phase H shipped in the same session as G:
 

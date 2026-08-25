@@ -31,6 +31,21 @@ export interface SecurityVulnerability {
   trust_boundary?: string;   // Phase 3: untrusted_input | operator_input | parameter | internal | n/a
 }
 
+/**
+ * One mechanical edit the heuristic refactor engine suggests.
+ *
+ * `line` is 1-based **in the improved file**, and `lineCount` is how many of
+ * its lines the edit occupies — a parameterised docstring spans several. The
+ * engine reports these directly; nothing here is derived from a diff.
+ */
+export interface RefactorChange {
+  kind: "docstring" | "return_hint";
+  target: "function" | "class";
+  name: string;
+  line: number;
+  lineCount: number;
+}
+
 export interface FileAnalysis {
   name: string;
   path: string;
@@ -60,6 +75,8 @@ export interface FileAnalysis {
   improved_code: string;
   original_code: string;
   patch: string | null;
+  /** Empty for scans recorded before J3 added change tracking. */
+  refactorChanges?: RefactorChange[];
 
   language: string;
 

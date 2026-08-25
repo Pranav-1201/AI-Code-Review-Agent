@@ -94,6 +94,16 @@ def validate_item(item: dict) -> ValidatedItem:
 +def process_data(items: list[dict]) -> list[dict]:
 +    validated = [validate_item(item) for item in items]
 +    return [transform(v) for v in validated if v.is_valid]`,
+      // Line 2 and line 7 of `improved_code` above are the two inserted
+      // docstrings — counted against that string, not guessed. The demo is the
+      // only place this feature is seen without running a scan, so a highlight
+      // pointing at the wrong line would be worse than no highlight. The file
+      // at the bottom of this list deliberately has no changes, so the demo
+      // carries the empty state too.
+      refactorChanges: [
+        { kind: "docstring", target: "function", name: "process_data", line: 2, lineCount: 1 },
+        { kind: "docstring", target: "function", name: "validate_item", line: 7, lineCount: 1 },
+      ],
       duplicates: [{ file: "src/utils/helpers.py", similarity: 78 }],
     },
     {

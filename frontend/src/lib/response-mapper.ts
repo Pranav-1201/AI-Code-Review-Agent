@@ -1,4 +1,4 @@
-import { ScanReport, FileAnalysis, FileIssue, SecurityVulnerability, Dependency, Severity, Vulnerability } from "./types";
+import { ScanReport, FileAnalysis, FileIssue, SecurityVulnerability, Dependency, Severity, Vulnerability, RefactorChange } from "./types";
 
 /**
  * Maps the backend API response to our frontend ScanReport type.
@@ -238,6 +238,7 @@ function mapFile(f: any): FileAnalysis {
     improved_code: f.improved_code || f.refactor_suggestion || f.refactored_code || "",
     original_code: f.original_code || f.content || f.source_code || "",
     patch: f.patch || f.diff || null,
+    refactorChanges: normalizeRefactorChanges(f.refactor_changes),
     language: f.language || f.lang || "unknown",
     duplicates: (f.duplicates || []).map((d: any) => ({
       file: d.file || d.file2 || d.path || "",
@@ -264,6 +265,54 @@ function normalizeVulnerabilities(raw: any): Vulnerability[] {
       ? { id: v, summary: "", severity: "Unknown" }
       : { id: v?.id || "", summary: v?.summary || "", severity: v?.severity || "Unknown" }
   );
+}
+
+// `line` is 1-based and identifies a real position in a file no editor opens
+// past; anything beyond this is not a plausible line number, so the record
+// carrying it is unusable and gets dropped whole.
+const MAX_LINE = 1_000_000;
+// `lineCount` is a span, not an identity — a bogus span degrades to the safe
+// minimum instead of invalidating the record. Bounded so a corrupt or hostile
+// value (e.g. 1e9) can't blow up the Set of line numbers Task 5 builds from it.
+const MAX_LINE_COUNT = 10_000;
+
+/**
+ * Coerce the backend's change records into `RefactorChange` objects.
+ *
+ * Follows the precedent `normalizeVulnerabilities` set: a bad shape is
+ * neutralised where it enters, so no consumer has to guard. Scans persisted
+ * before J3 carry no `refactor_changes` at all and normalize to `[]`, which is
+ * what the panes read as "this scan predates change tracking".
+ */
+function normalizeRefactorChanges(raw: any): RefactorChange[] {
+  if (!Array.isArray(raw)) return [];
+
+  const changes: RefactorChange[] = [];
+
+  for (const c of raw) {
+    if (!c || typeof c !== "object") continue;
+
+    const { kind, target } = c;
+    if (kind !== "docstring" && kind !== "return_hint") continue;
+    if (target !== "function" && target !== "class") continue;
+
+    const line = Number(c.line);
+    if (!Number.isInteger(line) || line < 1 || line > MAX_LINE) continue;
+
+    const rawCount = Number(c.line_count ?? c.lineCount ?? 1);
+    const lineCount =
+      Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= MAX_LINE_COUNT ? rawCount : 1;
+
+    changes.push({
+      kind,
+      target,
+      name: typeof c.name === "string" ? c.name : "",
+      line,
+      lineCount,
+    });
+  }
+
+  return changes;
 }
 
 function mapSeverity(s: string): Severity {
