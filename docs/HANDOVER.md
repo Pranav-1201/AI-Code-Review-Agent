@@ -38,10 +38,10 @@ deleted, pushed, **CI green on the merge commit** (run `32699574335`).
 > was already gone by the next session. Copy the ledger into
 > `docs/superpowers/records/` before deleting the workspace.
 >
-> **J3 is DONE** on branch `phase-j/j3-code-panes`, unmerged and unpushed.
-> Its execution record is already copied to
-> `docs/superpowers/records/2026-08-25-j3-execution-record.md`. **Next: merge
-> that branch**, then F1 (light mode) or Phase M (deploy).
+> **J3 is DONE and merged** at `2004639`. Its execution record — six defects
+> the reviews found in J3's own plan, and the ruling on each — is at
+> `docs/superpowers/records/2026-08-25-j3-execution-record.md`. **Next: F1**
+> (light mode) or **Phase M** (deploy). Phase J is finished.
 
 ---
 
@@ -76,9 +76,9 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `phase-j/j3-code-panes` — J3 complete, **unmerged and unpushed** |
-| `main` | `568bf4e` (J2), pushed, CI green (run `32699574335`) — untouched by J3 |
-| Pushed? | **NO** for J3. The branch exists only on this machine. |
+| Current branch | `main` — J3 merged at `2004639` (`--no-ff`), pushed |
+| Pushed? | **YES** — `main` = `origin/main` = `2004639`. CI status: see the run for that SHA. |
+| `phase-j/j3-code-panes` | merged; kept locally until CI is confirmed green, then delete |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 | `phase-j/j1-explanation-parity` | merged (`37f0060`) and deleted |
@@ -161,11 +161,11 @@ not a small edit.
 
 Or jump to **M** (deploy) — nothing blocks it. There are no open *defects*.
 
-**Before either, merge `phase-j/j3-code-panes`.** J3 is finished and verified
-but lives only on this machine; leaving it unmerged is the one piece of work
-that can still be lost. Its full execution record — including four defects the
-reviews found in J3's own plan, and the rulings made on them — is at
-`docs/superpowers/records/2026-08-25-j3-execution-record.md`.
+**One J3 bar was never met, and it is not a test.** Nobody has run a real scan
+and opened the File Analysis page. Every J3 number came from fixtures and demo
+data, so the change-record line numbers are not yet proven to survive the whole
+pipeline from a real clone — which is precisely what an off-by-one would break
+invisibly. Do this before trusting the highlights in front of a user.
 
 Phase H shipped in the same session as G:
 
