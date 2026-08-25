@@ -327,7 +327,13 @@ is worse than no result, because it is recorded as evidence.
 
 ---
 
-### D17 — one breakpoint, one query, read from the query itself
+### D16a — one breakpoint, one query, read from the query itself
+
+> **Numbering:** this entry and the J1 record below were both written as "D17"
+> by different sessions. `HANDOVER.md` cites D17 meaning the J1 record, so that
+> one keeps the number and this one takes a letter suffix — renumbering it to
+> D20 instead would have placed a Phase-I ruling after two Phase-J ones in a
+> log that is otherwise chronological.
 **2026-08-20** · Claude Opus 5, session `848e92a5` · root cause of BUG-001
 
 `useIsMobile()` listened to `(max-width: 767px)` and stored
@@ -501,3 +507,64 @@ fallback — and it is the only path constructing a `SecurityVulnerability` from
 API data, cached replays included. So no finding can fall outside all five
 buckets. This matters because the grouped list renders a finding **only** if it
 lands in a group, where the old flat list rendered everything unconditionally.
+
+---
+
+## D20 — The change list is one source for three consumers
+
+**Date:** 2026-08-25 · **Phase:** J3 (F4, F5) · **Model:** Claude Opus 5,
+session `e4ebf578`
+
+The refactor engine applies exactly two AST transforms — a placeholder
+docstring for anything undocumented, and `-> None` on a function that never
+returns a value. It knew precisely what it inserted and threw that away. Three
+things downstream then had to re-derive it, and each got it wrong differently.
+
+The engine now returns a change record per edit — kind, target, symbol name,
+1-based line **in the improved file**, and how many lines it spans — and that
+one list feeds the summary sentence, the highlighting in the suggested-edits
+pane, and the prose in the what-changed pane. The prose and the highlighting
+cannot disagree, because they read the same array.
+
+**What the old summary actually did.** It counted lines containing `"""` in the
+improved file, subtracted the count in the original, and divided by two. That
+assumes every docstring spans two such lines. The engine emits a *single-line*
+docstring for classes and for parameterless functions, so `1 // 2 == 0`: a file
+whose only gaps were parameterless functions reported "Added docstrings to 0
+undocumented function(s)/class(es)" while the pane beside it displayed the
+docstrings it had just inserted. This was observed failing before the fix, not
+argued from reading.
+
+**Why the summary sentence was rebuilt and not deleted.** J1's record called for
+"replacing the string-counting", which reads as *delete that block*. It writes
+into `explanation`, which turned out to have three readers — the Explanation
+card, `AISuggestions`, and `ExportReport` — so deleting it would have silently
+stripped content from two pages J3 was not asked to touch. It is rebuilt from
+the change list instead, which fixes the miscount everywhere it appears.
+
+**Why the pane stopped saying "Improved".** Nothing is measurably improved: a
+placeholder docstring naming the symbol records a gap, it does not describe
+behaviour, and none of it is applied to the repository. The tab is "Suggested
+edits", and when the engine has nothing to add the pane names the two checks
+that ran and states that no other transform was attempted — an unchanged file
+is not a clean bill of health. Same lineage as the J1 copy corrections
+(CONSTRAINTS 18).
+
+**The normalizer is a trust boundary, and its first version was not.** As
+originally specified it accepted `line: 1.5` and an unbounded `line_count`,
+where the pane expands each record into a Set of line numbers — one corrupt or
+hostile record would have frozen the browser. Now `line` must be an integer in
+[1, 1e6] or the record is dropped, and `lineCount` must be an integer in
+[1, 10000] or it degrades to 1 and the record is kept. The two fields are
+treated differently on purpose: `line` says *where*, and a nonsense location
+makes the record unusable; `lineCount` says *how many*, and a nonsense span can
+safely fall back to the minimum.
+
+**Scans recorded before this change** carry a `patch` and no list. The
+what-changed pane says so and shows the diff outright, rather than
+reverse-engineering prose from a rendered artifact.
+
+**Still true, and deliberately not fixed here:** `generate_improved_code` in
+`settings_manager.py` is stored and rendered as a switch in Settings, but no
+code reads it — the transforms run unconditionally. Changing that alters scan
+behaviour and belongs in its own change.
