@@ -26,7 +26,7 @@
 
 import ast
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 from backend.app.analysis.patch_generator import PatchGenerator
 
 
@@ -48,7 +48,7 @@ class HeuristicRefactorEngine:
     # Heuristic Code Improvement
     # ======================================================
 
-    def _add_missing_docstrings(self, code: str) -> str:
+    def _add_missing_docstrings(self, code: str) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Add placeholder docstrings to functions/classes
         that don't have them.
@@ -57,7 +57,7 @@ class HeuristicRefactorEngine:
         try:
             tree = ast.parse(code)
         except SyntaxError:
-            return code
+            return code, []
 
         lines = code.splitlines(True)
         insertions = []  # (line_number, indent, name, kind)
@@ -115,10 +115,18 @@ class HeuristicRefactorEngine:
                     insertions.append((first_body_line, indent, node.name, "class", []))
 
         if not insertions:
-            return code
+            return code, []
 
-        # Sort insertions in reverse order to maintain line numbers
-        insertions.sort(key=lambda x: x[0], reverse=True)
+        # Insert ASCENDING and carry two counters. `elements_added` tracks list
+        # positions (each insertion adds one element, however many lines it
+        # holds); `lines_added` tracks rendered lines, which is what a line
+        # number in the improved file means. Conflating them puts a multi-line
+        # docstring's own body into the next change's line number.
+        insertions.sort(key=lambda x: x[0])
+
+        changes: List[Dict[str, Any]] = []
+        elements_added = 0
+        lines_added = 0
 
         for line_num, indent, name, kind, params in insertions:
             indent_str = " " * indent
@@ -138,11 +146,24 @@ class HeuristicRefactorEngine:
             else:
                 docstring = f'{indent_str}"""{name.replace("_", " ").capitalize()}."""\n'
 
-            lines.insert(line_num, docstring)
+            lines.insert(line_num + elements_added, docstring)
 
-        return "".join(lines)
+            line_count = docstring.count("\n")
 
-    def _add_type_hints_to_simple_functions(self, code: str) -> str:
+            changes.append({
+                "kind": "docstring",
+                "target": "class" if kind == "class" else "function",
+                "name": name,
+                "line": line_num + lines_added + 1,
+                "line_count": line_count,
+            })
+
+            elements_added += 1
+            lines_added += line_count
+
+        return "".join(lines), changes
+
+    def _add_type_hints_to_simple_functions(self, code: str) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Add return type hints to simple functions that lack them.
         Very conservative — only adds -> None for functions
@@ -152,7 +173,7 @@ class HeuristicRefactorEngine:
         try:
             tree = ast.parse(code)
         except SyntaxError:
-            return code
+            return code, []
 
         lines = code.splitlines()
         modifications = []
@@ -179,15 +200,29 @@ class HeuristicRefactorEngine:
                         line = lines[def_line]
                         # Add -> None before the colon
                         if "):" in line and "-> " not in line:
-                            modifications.append((def_line, "):", ") -> None:"))
+                            modifications.append((def_line, node.name, "):", ") -> None:"))
 
-        # Apply modifications in reverse order
+        # This pass re-parses the already-docstringed code, so `def_line` is
+        # already an improved-file coordinate, and replacing in place changes
+        # no line count -- these records need no offset and do not invalidate
+        # the docstring records computed before them.
         modifications.sort(key=lambda x: x[0], reverse=True)
 
-        for line_num, old, new in modifications:
-            lines[line_num] = lines[line_num].replace(old, new, 1)
+        changes: List[Dict[str, Any]] = []
 
-        return "\n".join(lines)
+        for line_num, name, old, new in modifications:
+            lines[line_num] = lines[line_num].replace(old, new, 1)
+            changes.append({
+                "kind": "return_hint",
+                "target": "function",
+                "name": name,
+                "line": line_num + 1,
+                "line_count": 1,
+            })
+
+        changes.sort(key=lambda c: c["line"])
+
+        return "\n".join(lines), changes
 
     # ======================================================
     # Main Refactor Function
@@ -220,10 +255,12 @@ class HeuristicRefactorEngine:
         # --------------------------------------------------
 
         # Add docstrings to undocumented functions
-        improved_code = self._add_missing_docstrings(improved_code)
+        improved_code, docstring_changes = self._add_missing_docstrings(improved_code)
 
         # Add type hints to simple functions
-        improved_code = self._add_type_hints_to_simple_functions(improved_code)
+        improved_code, hint_changes = self._add_type_hints_to_simple_functions(improved_code)
+
+        changes = docstring_changes + hint_changes
 
         # --------------------------------------------------
         # Complexity-based suggestions
@@ -262,22 +299,38 @@ class HeuristicRefactorEngine:
         # Generate explanation about what was improved
         # --------------------------------------------------
 
-        if improved_code != code:
-            changes = []
-            orig_lines = code.splitlines()
-            impr_lines = improved_code.splitlines()
+        # The summary is built from the change list, not by counting `"""`
+        # lines. The old arithmetic divided that count by two, which assumed
+        # every docstring spanned two lines -- but classes and parameterless
+        # functions get a single-line docstring, so a file whose only gaps were
+        # those reported "to 0" while the pane beside it showed the insertions.
+        if changes:
+            doc_functions = sum(
+                1 for c in changes if c["kind"] == "docstring" and c["target"] == "function"
+            )
+            doc_classes = sum(
+                1 for c in changes if c["kind"] == "docstring" and c["target"] == "class"
+            )
+            hint_count = sum(1 for c in changes if c["kind"] == "return_hint")
 
-            added_docstrings = sum(1 for l in impr_lines if '"""' in l) - sum(1 for l in orig_lines if '"""' in l)
-            added_hints = sum(1 for l in impr_lines if '-> None:' in l) - sum(1 for l in orig_lines if '-> None:' in l)
+            parts = []
 
-            if added_docstrings > 0:
-                changes.append(f"Added docstrings to {added_docstrings // 2} undocumented function(s)/class(es)")
-            if added_hints > 0:
-                changes.append(f"Added return type hints to {added_hints} function(s)")
+            if doc_functions or doc_classes:
+                targets = []
+                if doc_functions:
+                    targets.append(f"{doc_functions} function" + ("" if doc_functions == 1 else "s"))
+                if doc_classes:
+                    targets.append(f"{doc_classes} class" + ("" if doc_classes == 1 else "es"))
+                parts.append("Added placeholder docstrings to " + " and ".join(targets))
 
-            if changes:
-                improvement_desc = ". ".join(changes) + "."
-                explanation = f"{explanation}\n\n**Suggested improvements (unapplied):** {improvement_desc}"
+            if hint_count:
+                parts.append(
+                    f"Added `-> None` return hints to {hint_count} function"
+                    + ("" if hint_count == 1 else "s")
+                )
+
+            improvement_desc = ". ".join(parts) + "."
+            explanation = f"{explanation}\n\n**Suggested improvements (unapplied):** {improvement_desc}"
 
         # --------------------------------------------------
         # Generate patch only if code changed
@@ -292,5 +345,6 @@ class HeuristicRefactorEngine:
             "explanation": explanation,
             "suggestions": suggestions,
             "improved_code": improved_code,
-            "patch": patch
+            "patch": patch,
+            "changes": changes
         }
