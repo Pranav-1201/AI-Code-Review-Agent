@@ -92,9 +92,10 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` — J3 merged at `2004639` (`--no-ff`), pushed |
-| Pushed? | **YES** — `main` is pushed and level with `origin/main`. Check CI for the newest SHA, not for the merge commit. |
-| `phase-j/j3-code-panes` | merged, CI green (run `32855931620`, all jobs), branch deleted |
+| Current branch | `main` — `33429f8`, the `--no-ff` merge of `fix/broken-clone-cache`, pushed 2026-08-26 |
+| Pushed? | **YES** — `main` is pushed and level with `origin/main`. Check CI for the newest SHA, not for any older merge commit. |
+| `fix/broken-clone-cache` | merged at `33429f8`, branch deleted. CI run `32900636037` |
+| `phase-j/j3-code-panes` | merged (`2004639`), CI green (run `32855931620`, all jobs), branch deleted |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
 | `phase-j/j1-explanation-parity` | merged (`37f0060`) and deleted |
@@ -180,13 +181,29 @@ half of Phase I. It moves the dark palette off `:root` into `.dark` /
 token architecture in `index.css` that every component reads from, so it is
 not a small edit.
 
-Or jump to **M** (deploy) — nothing blocks it. There are no open *defects*.
+Or jump to **M** (deploy) — nothing blocks it.
 
-**One J3 bar was never met, and it is not a test.** Nobody has run a real scan
-and opened the File Analysis page. Every J3 number came from fixtures and demo
-data, so the change-record line numbers are not yet proven to survive the whole
-pipeline from a real clone — which is precisely what an off-by-one would break
-invisibly. Do this before trusting the highlights in front of a user.
+### Known open, none of them blocking
+
+| Item | Where | Note |
+|---|---|---|
+| `generate_improved_code` is a dead switch | `settings_manager.py` | stored and rendered in Settings, read by nothing; the transforms run unconditionally. Changing it alters scan behaviour — its own change. See `DECISIONS.md` D16-area note. |
+| `WhatChangedPane`'s `return null` is unreachable | `frontend/src/components/WhatChangedPane.tsx` | found by J3 review, recorded, judged not worth a change on its own. |
+| "Cannot reach backend … (Failed to fetch)" | `frontend/src/lib/api.ts` `startScan` | **NOT reproduced** on 2026-08-26 across four repos in a real browser. Leading unproven candidate: `API_BASE` is `http://localhost:8000` while uvicorn binds `127.0.0.1` only, so a browser resolving `localhost` → `::1` gets a refusal with exactly that wording. `DECISIONS.md` D18. Needs the failure captured on the machine that shows it — do not "fix" it blind. |
+| Orphan listener on 8000 | — | a socket answering HTTP 200 whose PID `taskkill` cannot find. `start.bat`'s port-clash message will suggest a `taskkill` that fails. Reboot clears it. |
+
+**~~One J3 bar was never met~~ — MET 2026-08-26, session `d0a60ab7`.** It read:
+nobody has run a real scan and opened the File Analysis page, so the
+change-record line numbers are unproven against a real clone. Done: real clone
+of `pypa/sampleproject`, real backend, real browser. 11/11 change records on the
+exact right lines across 4 files, `noxfile.py` (6 insertions) included. See the
+evidence rows in section 2. **Nothing about J3 is unproven any more.**
+
+**The equivalent bar for whatever ships next:** run it against a real clone
+through the real UI before believing it. Two of this session's three findings —
+the exit-128 broken cache and the launcher's three-minute stall — were invisible
+to a fully green 440-test suite and surfaced the moment the app was actually
+driven. The suite is not the acceptance criterion; the running app is.
 
 Phase H shipped in the same session as G:
 
