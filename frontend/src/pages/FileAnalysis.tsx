@@ -15,6 +15,7 @@ import { fromFileIssue } from "@/lib/findings";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import { CodeViewer } from "@/components/CodeViewer";
+import { SuggestedEditsPane } from "@/components/SuggestedEditsPane";
 
 const VISIBLE_FILES = 50; // Virtual limit for sidebar
 
@@ -234,7 +235,7 @@ export default function FileAnalysis() {
                 <Tabs defaultValue="original">
                   <TabsList className="bg-secondary/30">
                     <TabsTrigger value="original">Original</TabsTrigger>
-                    <TabsTrigger value="improved">Improved</TabsTrigger>
+                    <TabsTrigger value="suggested">Suggested edits</TabsTrigger>
                     {file.patch && <TabsTrigger value="patch">Patch</TabsTrigger>}
                   </TabsList>
                   <TabsContent value="original" className="min-w-0">
@@ -242,10 +243,12 @@ export default function FileAnalysis() {
                       <CodeViewer code={file.original_code} />
                     </div>
                   </TabsContent>
-                  <TabsContent value="improved" className="min-w-0">
-                    <div className="bg-background border border-border/50 rounded-lg overflow-x-auto overflow-y-auto max-h-[600px] py-4 shadow-inner">
-                       <CodeViewer code={file.improved_code} />
-                    </div>
+                  <TabsContent value="suggested" className="min-w-0">
+                    <SuggestedEditsPane
+                      improvedCode={file.improved_code}
+                      originalCode={file.original_code}
+                      changes={file.refactorChanges ?? []}
+                    />
                   </TabsContent>
                   {file.patch && (
                     <TabsContent value="patch" className="min-w-0">
