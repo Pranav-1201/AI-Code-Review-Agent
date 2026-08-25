@@ -96,32 +96,55 @@ REM  So poll both ports, and open the browser only when the API that
 REM  the page depends on is genuinely answering.
 echo  [3/3] Waiting for backend (8000) and frontend (8080) ...
 
+REM  THE WORST CASE IS THE ONE THE OPERATOR SEES.
+REM
+REM  A backend can sit with its port bound and accepting while never answering
+REM  HTTP at all - measured on this machine 2026-08-26, connect in 0.02s and no
+REM  response in 60s, from a backend this script had launched. The probe below
+REM  correctly refuses to call that ready. The problem was what happened next:
+REM  at 60 iterations of two one-second probes plus a sleep, the browser was
+REM  held back for roughly three minutes behind one unchanging "Waiting..."
+REM  line. That reads as "the launcher did nothing", so the page gets opened by
+REM  hand - exactly what this step exists to prevent.
+REM
+REM  So: 12 iterations, about 35 seconds worst case, a dot per iteration so it
+REM  is visibly alive, and the browser opens either way. A backend that is
+REM  genuinely down is reported below rather than waited on in silence.
+REM
+REM  Probe 127.0.0.1, not localhost: uvicorn binds IPv4 loopback only, while
+REM  "localhost" can resolve to ::1 first and make a healthy backend look dead.
+REM  /health rather than / because it is the route that reports real readiness,
+REM  and -f so an error status is not mistaken for an answer.
 set "BACK="
 set "FRONT="
-for /l %%i in (1,1,60) do (
+for /l %%i in (1,1,12) do (
     if not defined BACK (
-        curl.exe -s -o NUL --max-time 1 http://localhost:8000/ >NUL 2>&1
+        curl.exe -sf -o NUL --max-time 1 http://127.0.0.1:8000/health >NUL 2>&1
         if not errorlevel 1 (
             set "BACK=1"
+            echo.
             echo      backend  ready
         )
     )
     if not defined FRONT (
-        curl.exe -s -o NUL --max-time 1 http://localhost:8080/ >NUL 2>&1
+        curl.exe -sf -o NUL --max-time 1 http://127.0.0.1:8080/ >NUL 2>&1
         if not errorlevel 1 (
             set "FRONT=1"
+            echo.
             echo      frontend ready
         )
     )
 
     REM  Leave the moment both answer. A batch FOR cannot break, so this is a
-    REM  GOTO out of the loop - and without it the loop ran all 60 iterations
+    REM  GOTO out of the loop - and without it the loop ran every iteration
     REM  no matter what, which is why the browser used to appear minutes after
     REM  the servers were already up and the script looked like it did nothing.
     if defined BACK if defined FRONT goto :ready
 
+    <nul set /p "=."
     ping -n 2 127.0.0.1 >NUL
 )
+echo.
 
 :ready
 if not defined BACK (

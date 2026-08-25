@@ -234,6 +234,35 @@ def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "
 CLONE_CACHE = os.path.join(tempfile.gettempdir(), "etproject_clones")
 
 
+def _usable_cached_clone(repo_dir: str) -> bool:
+    """True only if git itself will accept repo_dir as a repository.
+
+    `os.path.isdir(repo_dir/".git")` is a question about the filesystem, not
+    about git, and the two disagree in exactly the case that bites: an eviction
+    (disk_guard.force_rmtree) that deletes part of the tree and then stops
+    leaves a .git holding objects/, refs/, logs/ and index but no HEAD and no
+    config. That passes an isdir check; `git fetch` on it exits 128.
+
+    The failure was permanent rather than transient — nothing cleared the
+    broken directory, so every later scan of that repo took the same branch
+    and died the same way, surfacing a raw CalledProcessError repr to the user.
+    Asking git instead sends a broken cache down the full-clone branch, which
+    already clears a stale directory before cloning.
+    """
+    if not os.path.isdir(os.path.join(repo_dir, ".git")):
+        return False
+    try:
+        probe = subprocess.run(
+            ["git", "-C", repo_dir, "rev-parse", "--git-dir"],
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # An unreadable or locked directory is not a cache worth trusting.
+        return False
+    return probe.returncode == 0
+
+
 def run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str = "senior"):
 
     with observability.scan_context(scan_id):
@@ -270,7 +299,7 @@ def _run_scan_pipeline(scan_id: str, repo_url: str, explanation_depth: str):
 
         prior = incremental.load_prior(repo_url)
 
-        if prior and os.path.isdir(os.path.join(repo_dir, ".git")):
+        if prior and _usable_cached_clone(repo_dir):
             # Re-scan: refresh the cached clone and diff against the last scan.
             update_scan(scan_id, "cloning", 5, stage="cloning",
                         stage_detail="Refreshing repository (incremental)...")

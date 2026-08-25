@@ -568,3 +568,58 @@ reverse-engineering prose from a rendered artifact.
 `settings_manager.py` is stored and rendered as a switch in Settings, but no
 code reads it — the transforms run unconditionally. Changing that alters scan
 behaviour and belongs in its own change.
+
+---
+
+## D17 — A cache is trusted only if the tool that will use it accepts it
+
+Decided 2026-08-26 (Claude Opus 5 session `d0a60ab7`).
+
+The re-scan branch gated on `os.path.isdir(repo_dir/".git")`. That asks the
+filesystem a question only git can answer, and the two disagree in exactly the
+case that bites: an interrupted eviction leaves `.git` with `objects/`, `refs/`,
+`logs/` and `index` but no `HEAD` and no `config`. `git fetch` then exits 128
+and the raw `CalledProcessError` repr reaches the user.
+
+**Why it mattered more than a normal bug:** the failure was permanent, not
+transient. Nothing cleared the broken directory, so every later scan of that
+repo took the same branch and died the same way. Three of twelve cached clones
+on the dev machine were in that state.
+
+**The rule taken from it:** when a cheap, self-healing path already exists,
+validate the fast path with the real tool and fall through on any doubt. The
+full-clone branch already cleared a stale directory before cloning, so the fix
+was to route a rejected cache into it rather than to add repair logic.
+
+Rejected: deleting the corrupt directories by hand. That fixes three repos on
+one machine and leaves the defect in place.
+
+## D18 — A launcher's worst case is a user-facing feature
+
+Decided 2026-08-26, same session.
+
+`start.bat` opened the browser only after its readiness loop finished, and the
+loop ran 60 iterations at a measured 3.25s each. A backend that never answered
+therefore held the browser for around three minutes behind one unchanging
+"Waiting..." line, and the operator opened the page by hand — the exact outcome
+the step exists to prevent.
+
+The probe was not wrong to refuse: a backend was observed with its port bound
+and accepting (connect 0.02s) and no HTTP response in 60s. What was wrong was
+spending minutes in silence on that refusal. Now 12 iterations (39s measured), a
+dot per iteration, and the browser opens either way with the backend warning
+still printed.
+
+Probes now use `127.0.0.1` rather than `localhost`: uvicorn binds IPv4 loopback
+only, and `localhost` can resolve to `::1` first, which would make a healthy
+backend look dead.
+
+**Not fixed, and named so it is not mistaken for done:** the reported "Cannot
+reach backend at http://localhost:8000 (Failed to fetch)" was NOT reproduced
+this session. Scans of `pypa/sampleproject`, `pallets/click`, `pallets/flask`
+and `Pranav-1201/churnlens-dashboard` all succeeded through a real browser. The
+leading unproven candidate is the same IPv4/IPv6 split — the page's `API_BASE`
+is `http://localhost:8000` while uvicorn listens only on `127.0.0.1`, so a
+browser that resolves `localhost` to `::1` gets a refusal that surfaces with
+exactly that wording. Proving it needs the failure captured on the machine that
+shows it.
