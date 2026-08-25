@@ -252,3 +252,59 @@ describe("getDisplayName", () => {
     expect(getDisplayName(files[0], files)).toBe("api/models.py");
   });
 });
+
+describe("mapApiResponse — refactor changes", () => {
+  it("maps the backend's snake_case change records", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          {
+            file_path: "src/main.py",
+            refactor_changes: [
+              { kind: "docstring", target: "function", name: "hello", line: 2, line_count: 1 },
+              { kind: "return_hint", target: "function", name: "hello", line: 1, line_count: 1 },
+            ],
+          },
+        ],
+      },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([
+      { kind: "docstring", target: "function", name: "hello", line: 2, lineCount: 1 },
+      { kind: "return_hint", target: "function", name: "hello", line: 1, lineCount: 1 },
+    ]);
+  });
+
+  it("drops malformed records at the boundary rather than rendering them", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          {
+            file_path: "src/main.py",
+            refactor_changes: [
+              { kind: "wat", target: "function", name: "x", line: 1, line_count: 1 },
+              { kind: "docstring", target: "module", name: "x", line: 1, line_count: 1 },
+              { kind: "docstring", target: "function", name: "x", line: 0, line_count: 1 },
+              { kind: "docstring", target: "function", name: "ok", line: 3, line_count: 2 },
+            ],
+          },
+        ],
+      },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([
+      { kind: "docstring", target: "function", name: "ok", line: 3, lineCount: 2 },
+    ]);
+  });
+
+  it("gives a scan recorded before change tracking an empty list, not undefined", () => {
+    const report = mapApiResponse(
+      { file_reports: [{ file_path: "src/main.py", patch: "--- a/x" }] },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([]);
+  });
+});
