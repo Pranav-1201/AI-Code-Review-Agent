@@ -16,6 +16,7 @@ import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import { CodeViewer } from "@/components/CodeViewer";
 import { SuggestedEditsPane } from "@/components/SuggestedEditsPane";
+import { WhatChangedPane } from "@/components/WhatChangedPane";
 
 const VISIBLE_FILES = 50; // Virtual limit for sidebar
 
@@ -236,7 +237,9 @@ export default function FileAnalysis() {
                   <TabsList className="bg-secondary/30">
                     <TabsTrigger value="original">Original</TabsTrigger>
                     <TabsTrigger value="suggested">Suggested edits</TabsTrigger>
-                    {file.patch && <TabsTrigger value="patch">Patch</TabsTrigger>}
+                    {((file.refactorChanges?.length ?? 0) > 0 || file.patch) && (
+                      <TabsTrigger value="changed">What changed</TabsTrigger>
+                    )}
                   </TabsList>
                   <TabsContent value="original" className="min-w-0">
                     <div className="bg-background border border-border/50 rounded-lg overflow-x-auto overflow-y-auto max-h-[600px] py-4 shadow-inner">
@@ -250,11 +253,9 @@ export default function FileAnalysis() {
                       changes={file.refactorChanges ?? []}
                     />
                   </TabsContent>
-                  {file.patch && (
-                    <TabsContent value="patch" className="min-w-0">
-                      <div className="bg-background border border-border/50 rounded-lg overflow-x-auto overflow-y-auto max-h-[600px] py-4 shadow-inner">
-                         <CodeViewer code={file.patch} isPatch />
-                      </div>
+                  {((file.refactorChanges?.length ?? 0) > 0 || file.patch) && (
+                    <TabsContent value="changed" className="min-w-0">
+                      <WhatChangedPane changes={file.refactorChanges ?? []} patch={file.patch} />
                     </TabsContent>
                   )}
                 </Tabs>
