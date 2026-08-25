@@ -46,7 +46,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
     #   v3.3  Phase 2 - cohesion-gated size flagging changes issue output
     #   v3.4  Phase 3 - taint trust_boundary + reachability confidence on issues
     #   v3.5  Phase 5 - explanation_source label surfaced on the file report
-    cached_result = _cache_manager.get(code, imports, version="v3.5")
+    #   v3.6  Phase J3 - refactor_changes structured edits list added
+    cached_result = _cache_manager.get(code, imports, version="v3.6")
     if cached_result:
         return cached_result
 
@@ -139,7 +140,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
             "improved_code": "",
             "explanation": "",
             "suggestions": [],
-            "patch": None
+            "patch": None,
+            "changes": []
         }
 
     score = analysis_result.get("code_quality_score", 0)
@@ -255,6 +257,10 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
         "refactor_summary": refactor_result.get("explanation", ""),
         "refactor_suggestion": refactor_result.get("improved_code", ""),
         "patch": refactor_result.get("patch", None),
+        # J3 (F4/F5): the structured edits behind `refactor_suggestion`, so the
+        # UI can highlight exactly what changed and say so in prose instead of
+        # re-deriving it from a rendered diff.
+        "refactor_changes": refactor_result.get("changes", []),
         "suggestions": refactor_result.get("suggestions", []),
         "explanation": refactor_result.get("explanation", ""),
         # PHASE 5: label whether `explanation` was produced by the LLM layer or
@@ -275,7 +281,7 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
         "cohesion": file_cohesion,
     }
 
-    _cache_manager.set(code, imports, final_output, version="v3.5")
+    _cache_manager.set(code, imports, final_output, version="v3.6")
     return final_output
 
 
@@ -485,6 +491,8 @@ class RepositoryReviewEngine:
                 "improved_code": result.get("refactor_suggestion"),
                 "refactor_summary": result.get("refactor_summary"),
                 "patch": result.get("patch"),
+                # J3 (F4/F5): the structured edits behind refactor_suggestion
+                "refactor_changes": result.get("refactor_changes", []),
 
                 "content": result.get("content", ""),
                 "original_code": result.get("content", ""),
