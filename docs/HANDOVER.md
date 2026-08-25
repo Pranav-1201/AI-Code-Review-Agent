@@ -4,9 +4,10 @@
 short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
-**Last updated:** 2026-08-24 · **Updated by:** Claude Opus 5 session
-`b5a36f9d` · **Branch at handover:** `main` — J2 **merged** (`568bf4e`), branch
-deleted, pushed, **CI green on the merge commit** (run `32699574335`).
+**Last updated:** 2026-08-26 · **Updated by:** Claude Opus 5 session
+`d0a60ab7` · **Branch at handover:** `main` — head `6ca9ae9`, pushed, **CI
+green** (run `32900870668`, all 3 jobs). J3's last unproven claim is closed and
+two real launcher defects are fixed; see section 3 for what is knowingly open.
 
 > **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** Branch
 > deleted. `main` = `origin/main` = `e857e0e`, and **CI is green on it** (run
@@ -92,9 +93,11 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` — `33429f8`, the `--no-ff` merge of `fix/broken-clone-cache`, pushed 2026-08-26 |
-| Pushed? | **YES** — `main` is pushed and level with `origin/main`. Check CI for the newest SHA, not for any older merge commit. |
-| `fix/broken-clone-cache` | merged at `33429f8`, branch deleted. CI run `32900636037` |
+| Current branch | `main` — head `6ca9ae9`, pushed 2026-08-26 |
+| Pushed? | **YES** — `main` is pushed and level with `origin/main`. |
+| CI | **GREEN on `6ca9ae9`**, run `32900870668`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). Playwright 26 passed. `6ca9ae9` is **the last commit on this branch carrying code** — anything after it is documentation only. |
+| `fix/broken-clone-cache` | merged at `33429f8` (`--no-ff`), branch deleted |
+| Careful | the CI run for the merge commit `33429f8` shows **cancelled**, not failed — the docs push superseded it via the concurrency group. `6ca9ae9` is the run that matters and it contains all the code. |
 | `phase-j/j3-code-panes` | merged (`2004639`), CI green (run `32855931620`, all jobs), branch deleted |
 | Working tree | Clean |
 | `fix/dev-launcher-cors` | merged and deleted |
