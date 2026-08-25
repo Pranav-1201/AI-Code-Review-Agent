@@ -141,3 +141,60 @@ Task 4: review ARRIVED after the chase — Spec ✅, quality approved, NO findin
   (data-changed attribute, "+" gutter char, sr-only "Changed line."). No BOM, no attribution.
 Task 4: complete (commits c81c52a..e430f80, review clean)
 STATE: Tasks 1-4 complete and gated. Tasks 5-7 not started. HEAD d15d02e (ledger preservation commit).
+EXECUTION MODE CHANGED: Pranav directed tasks 5-7 be done in this session. Controller implemented them inline
+  rather than by dispatch. Deviation from subagent-driven-development, recorded deliberately: no per-task
+  reviewer gate on T5-T7, so the final whole-branch review is the ONLY gate those three get. It must be run.
+Task 5: complete (commit 1e624a1). vitest 88 passed / 13 files, typecheck exit 0. Tests failed first (0 tests ran).
+Task 6: complete (commit 5a5ad33). vitest 94 passed / 14 files, typecheck exit 0. Tests failed first.
+  PLAN DEFECT (fifth): the brief's test imported `@testing-library/user-event`, which is NOT installed here
+  (only /dom, /jest-dom, /react are). Ruling: rewrite the test with fireEvent, the idiom IssueExplorer.test.tsx
+  already uses. Did NOT add the dependency — changing dependency resolution to make one test compile would
+  invalidate every other result in the suite. Cost if wrong: fireEvent dispatches a bare click rather than a
+  full pointer sequence, so it exercises slightly less than a real user gesture.
+  The pre-flight scan's carried risk (Radix keeping CollapsibleContent mounted while closed) did NOT materialise.
+Task 7: complete (commit 092d8cf). Demo line numbers 2 and 7 VERIFIED against the demo's own improved_code
+  string, not assumed. DECISIONS D20 added; the duplicate D17 resolved by renaming the earlier one to D16a
+  (HANDOVER cites D17 = the J1 record; renumbering that would put a Phase-I ruling after two Phase-J ones).
+  PLAN DEFECT (sixth): the page test used fireEvent.click on a Radix tab. Radix activates on mousedown/focus
+  and ignores synthetic click, so the test asserted against the previously mounted panel and failed. Root-caused
+  by reading @radix-ui/react-tabs (onMouseDown/onFocus handlers, no onClick), not by guessing. Fixed to mouseDown.
+FINAL MEASURED COUNTS (this session, fresh): vitest 98 passed / 15 files; typecheck (tsc -b) exit 0;
+  npm run build succeeded; playwright 26 passed / 0 failed across 3 projects (baseline was 23).
+  Junk files deleted across the session: None`, Tuple[str, assert, MAX_LINE), {,+, console.log((i+1)+', log, that.
+FINAL WHOLE-BRANCH REVIEW (opus, over 85ce769..092d8cf): verdict NOT READY. Reviewer went idle without
+  reporting; chased once; verdict then arrived. Traced the line-number chain end to end and counted the demo's
+  improved_code itself — both CORRECT, no off-by-one. Two IMPORTANT findings, BOTH in the ungated T5/T6 code:
+  (1) The empty state claimed "Two checks ran... This file has neither gap" for ANY file with no records.
+      Both transforms go through ast.parse, so a .ts file or a README returns nothing WITHOUT looking, and
+      non-code files skip the engine entirely. This is the exact false-assurance class J3 exists to remove,
+      reintroduced by the pane meant to remove it.
+  (2) A pre-J3 scan (patch + improved_code, no records) got "nothing to suggest" while the What changed tab
+      beside it rendered the diff of those very edits — a direct contradiction — and the improved-code view
+      those scans always had silently disappeared.
+  Ruling: both are real and both are load-bearing for the branch's whole purpose. FIXED, not parked.
+  Fix (commit 926d145): wording gated on file.language (case-insensitive, handles "unknown"/absent); pane now
+  renders whenever improved text differs and marks lines only when it has records; highlight count clamped to
+  the file's line count. All 3 new tests were run against the PREVIOUS component and all 3 FAILED there while
+  the 6 existing ones passed — evidence they catch the real defects.
+  Minor 3 (unreachable null-return in WhatChangedPane): PARKED. Ruling: the page gates the tab on the identical
+  condition, so the branch cannot fire from this app — but a component that returns null for empty input is a
+  sane standalone contract and the test documents it. Cost if wrong: one dead branch and one test that guards
+  a contract rather than a behaviour.
+  Minor 4: my earlier ruling (record line 114) that the `?? []` guards would be dead was WRONG — mock-data sets
+  refactorChanges on one demo file only, so they fire on every other. Corrected here; nothing to change in code.
+  Minor 5 (count could exceed visible marks): FIXED as part of 926d145.
+  Reviewer confirmed clean: tab wiring well-formed with no constructible orphan trigger/panel; normalizer
+  asymmetry ruling holds; patch_generator cannot manufacture a spurious diff so `changes == []` really does
+  imply legacy-only; tests behavioral; all 11 commits free of attribution and BOM.
+POST-FIX MEASURED: vitest 101 passed / 15 files; tsc -b exit 0; playwright 26 passed; pytest 440 passed.
+SCOPED RE-REVIEW of the fix wave (092d8cf..926d145): BOTH Important findings ADDRESSED, Minor ADDRESSED,
+  no new breakage, merge verdict clean. Confirmed specifically: the language gate is case-safe and handles
+  "unknown"/undefined; the pre-J3 branch passes highlightedLines as `undefined` rather than an empty Set, so
+  CodeViewer is not put into marking mode for nothing; the ORDINARY case (Python + records) is unchanged; the
+  clamp includes a record ending exactly on the last line; and none of the 6 pre-existing tests had an
+  assertion loosened (two gained a prop only).
+J3 COMPLETE. All 7 tasks implemented, final review clean after one fix wave.
+OPEN, NOT DONE: the plan's non-test acceptance criterion — run a REAL scan and open the File Analysis page to
+  confirm highlights land on the lines the engine actually changed end to end. Unit tests use hand-built
+  fixtures and the e2e uses demo data; neither proves the line numbers survive the whole pipeline from a real
+  clone. This is the one bar in the plan's Definition of Done that has NOT been met.
