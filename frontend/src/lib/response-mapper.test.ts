@@ -307,4 +307,80 @@ describe("mapApiResponse — refactor changes", () => {
 
     expect(report.files[0].refactorChanges).toEqual([]);
   });
+
+  it("drops a record whose line is not an integer", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          {
+            file_path: "src/main.py",
+            refactor_changes: [
+              { kind: "docstring", target: "function", name: "x", line: 1.5, line_count: 1 },
+            ],
+          },
+        ],
+      },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([]);
+  });
+
+  it("drops a record whose line exceeds the upper bound", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          {
+            file_path: "src/main.py",
+            refactor_changes: [
+              { kind: "docstring", target: "function", name: "x", line: 2_000_000, line_count: 1 },
+            ],
+          },
+        ],
+      },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([]);
+  });
+
+  it("keeps a record but clamps lineCount to 1 when line_count exceeds the upper bound", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          {
+            file_path: "src/main.py",
+            refactor_changes: [
+              { kind: "docstring", target: "function", name: "x", line: 3, line_count: 1e9 },
+            ],
+          },
+        ],
+      },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([
+      { kind: "docstring", target: "function", name: "x", line: 3, lineCount: 1 },
+    ]);
+  });
+
+  it("keeps a record but clamps lineCount to 1 when line_count is not an integer", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          {
+            file_path: "src/main.py",
+            refactor_changes: [
+              { kind: "docstring", target: "function", name: "x", line: 3, line_count: 2.5 },
+            ],
+          },
+        ],
+      },
+      REPO
+    );
+
+    expect(report.files[0].refactorChanges).toEqual([
+      { kind: "docstring", target: "function", name: "x", line: 3, lineCount: 1 },
+    ]);
+  });
 });

@@ -267,6 +267,15 @@ function normalizeVulnerabilities(raw: any): Vulnerability[] {
   );
 }
 
+// `line` is 1-based and identifies a real position in a file no editor opens
+// past; anything beyond this is not a plausible line number, so the record
+// carrying it is unusable and gets dropped whole.
+const MAX_LINE = 1_000_000;
+// `lineCount` is a span, not an identity — a bogus span degrades to the safe
+// minimum instead of invalidating the record. Bounded so a corrupt or hostile
+// value (e.g. 1e9) can't blow up the Set of line numbers Task 5 builds from it.
+const MAX_LINE_COUNT = 10_000;
+
 /**
  * Coerce the backend's change records into `RefactorChange` objects.
  *
@@ -288,10 +297,11 @@ function normalizeRefactorChanges(raw: any): RefactorChange[] {
     if (target !== "function" && target !== "class") continue;
 
     const line = Number(c.line);
-    if (!Number.isFinite(line) || line < 1) continue;
+    if (!Number.isInteger(line) || line < 1 || line > MAX_LINE) continue;
 
     const rawCount = Number(c.line_count ?? c.lineCount ?? 1);
-    const lineCount = Number.isFinite(rawCount) && rawCount >= 1 ? rawCount : 1;
+    const lineCount =
+      Number.isInteger(rawCount) && rawCount >= 1 && rawCount <= MAX_LINE_COUNT ? rawCount : 1;
 
     changes.push({
       kind,
