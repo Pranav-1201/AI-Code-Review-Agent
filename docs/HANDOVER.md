@@ -147,7 +147,7 @@ Full detail, including acceptance criteria and idea IDs, is in
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
 | **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
-| ~~**J**~~ | Explanation UX — **COMPLETE**. J1 (F7, F8, F9-detail, F15), J2 (F6, F9, `snippet`, F16) merged at `568bf4e`. **J3 (F4, F5) DONE 2026-08-25** on `phase-j/j3-code-panes`, unmerged | — |
+| ~~**J**~~ | Explanation UX — **COMPLETE and merged**. J1 (F7, F8, F9-detail, F15), J2 (F6, F9, `snippet`, F16) at `568bf4e`; **J3 (F4, F5) merged 2026-08-25 at `2004639`**, CI green | — |
 | **K** | Language contract — B6, F10 | — |
 | **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
 | **M** | Deploy | now unblocked |
