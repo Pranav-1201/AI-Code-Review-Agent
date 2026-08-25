@@ -251,6 +251,7 @@ export default function FileAnalysis() {
                       improvedCode={file.improved_code}
                       originalCode={file.original_code}
                       changes={file.refactorChanges ?? []}
+                      language={file.language}
                     />
                   </TabsContent>
                   {((file.refactorChanges?.length ?? 0) > 0 || file.patch) && (
