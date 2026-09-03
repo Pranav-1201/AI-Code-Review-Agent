@@ -88,3 +88,17 @@ models/
 # These are database copies — never commit them.
 /backups/
 /ci-backups/
+
+# Zero-byte junk from shell redirection accidents (HANDOVER.md, section 4).
+# Named individually and deliberately NOT a wildcard for extensionless files
+# — that would also hide real ones such as Caddyfile and Dockerfile.
+/390.52
+/1
+/1.0
+/bool
+/str
+/dict
+/exact
+/analyzer
+/full
+/l.name
