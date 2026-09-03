@@ -3,6 +3,7 @@
 # Purpose: Orchestrates repository-level AI code review
 # ==========================================================
 
+import ast
 from typing import Dict, List
 
 from backend.app.services.repo_analyzer import analyze_repository
@@ -21,6 +22,46 @@ from backend.app.analysis.framework_detector import summarize_frameworks
 from backend.app.analysis.architecture_analyzer import analyze_architecture
 
 _cache_manager = CacheManager()
+
+
+# ----------------------------------------------------------
+# S8: resolve dead-code names to locations
+# ----------------------------------------------------------
+# The detector returns bare names — `unused_imports` is a list of dotted
+# import paths, `unused_functions` a list of simple names. Widening its
+# contract to carry line numbers would break six assertions across the test
+# suite and phase4_validation for no gain here, because this layer already
+# holds the source. So the names are resolved back to lines here, once per
+# file, and every dead-code finding ships with a real snippet rather than the
+# `line: 0` placeholder J2 was built to eliminate.
+# ----------------------------------------------------------
+
+def _dead_code_locations(code: str):
+    """Return ({importee: lineno}, {func_name: lineno}) for `code`.
+
+    Import keys are rebuilt exactly as call_graph.build_import_graph builds
+    `ImportEdge.importee`, so they match the names the detector reported.
+    Returns two empty dicts for unparsable source; never raises.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return {}, {}
+
+    imports: Dict[str, int] = {}
+    functions: Dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.setdefault(alias.name, node.lineno)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                key = f"{module}.{alias.name}" if module else alias.name
+                imports.setdefault(key, node.lineno)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(node.name, node.lineno)
+    return imports, functions
 
 
 # ----------------------------------------------------------
@@ -47,7 +88,17 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
     #   v3.4  Phase 3 - taint trust_boundary + reachability confidence on issues
     #   v3.5  Phase 5 - explanation_source label surfaced on the file report
     #   v3.6  Phase J3 - refactor_changes structured edits list added
-    cached_result = _cache_manager.get(code, imports, version="v3.6")
+    #   v3.7  Phase L  - dead_import/dead_function findings + file_type label
+    #
+    # The cache key is (version, content, imports) — the file's ROLE was never
+    # part of it, so two files with identical content and different roles
+    # collided and whichever was analysed first won. That was already wrong
+    # (the role drives is_test, which drives the security pass) and S9 makes
+    # it unsound: a fixture whose content matches a production file would
+    # serve the production result and leak its planted findings. Folding the
+    # role into the version string fixes it without changing CacheManager.
+    _cache_version = f"v3.7|{file_role}|{file_data.get('file_type', 'production')}"
+    cached_result = _cache_manager.get(code, imports, version=_cache_version)
     if cached_result:
         return cached_result
 
@@ -226,6 +277,65 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
             "trust_boundary": sec.get("trust_boundary", "n/a"),
         })
 
+    # --------------------------------------------------
+    # S8: dead code, which the detector has always found and the report has
+    # always discarded. Scope is deliberate: dead imports everywhere, dead
+    # functions in production files only — 374 of the 462 dead functions
+    # measured against this repo are pytest tests, and reporting them would
+    # turn this into the false-positive generator CONSTRAINTS.md 21 forbids.
+    # --------------------------------------------------
+    dead_code = file_data.get("dead_code") or {}
+    dead_imports = dead_code.get("unused_imports") or []
+    dead_functions = (dead_code.get("unused_functions") or []
+                      if file_data.get("file_type") == "production" else [])
+
+    if dead_imports or dead_functions:
+        import_lines, function_lines = _dead_code_locations(code)
+        source_lines = code.splitlines()
+
+        for name in dead_imports:
+            dead_line = import_lines.get(str(name), 0)
+            formatted_issues.append({
+                "file": file_path,
+                "type": "dead_import",
+                "severity": "low",
+                "message": f"Unused import: {name}",
+                "why_it_matters": (
+                    "An import that is never used still costs load time, and "
+                    "it misleads the next reader about what this module "
+                    "actually depends on."
+                ),
+                "how_to_fix": f"Delete the `{name}` import.",
+                "snippet": extract_snippet(source_lines, dead_line, context=1),
+                # Alias-aware, with a single source of truth in call_graph,
+                # so this is close to certain when it fires.
+                "confidence": 0.9,
+                "line": dead_line,
+            })
+
+        for name in dead_functions:
+            dead_line = function_lines.get(str(name), 0)
+            formatted_issues.append({
+                "file": file_path,
+                "type": "dead_function",
+                "severity": "low",
+                "message": f"Function `{name}` is never called",
+                "why_it_matters": (
+                    "Unreachable code is still read, still maintained and "
+                    "still reviewed. It is the cheapest thing in a codebase "
+                    "to delete."
+                ),
+                "how_to_fix": (
+                    f"Confirm nothing outside this repository calls `{name}`, "
+                    "then delete it."
+                ),
+                "snippet": extract_snippet(source_lines, dead_line, context=2),
+                # Interprocedural, but deliberately conservative: dynamic
+                # dispatch and reflection are not fully modelled.
+                "confidence": 0.7,
+                "line": dead_line,
+            })
+
     # S9: a fixture corpus is planted, not found. Reporting our own bait as a
     # real finding is the defect. The file still appears in file_reports with
     # its real line count and language, so repository totals stay honest —
@@ -296,7 +406,7 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
         "cohesion": file_cohesion,
     }
 
-    _cache_manager.set(code, imports, final_output, version="v3.6")
+    _cache_manager.set(code, imports, final_output, version=_cache_version)
     return final_output
 
 
