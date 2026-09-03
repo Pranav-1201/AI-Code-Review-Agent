@@ -180,7 +180,7 @@ export default function RepositoryOverview() {
               <div key={lang.name} className="flex items-center gap-3">
                 <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: lang.color }} />
                 <span className="flex-1 text-sm">{lang.name}</span>
-                <Badge variant="outline" className="font-mono">{lang.percentage}%</Badge>
+                <Badge variant="outline" className="font-mono">{lang.label}</Badge>
               </div>
             ))}
           </CardContent>

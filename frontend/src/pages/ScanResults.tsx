@@ -125,7 +125,7 @@ export default function ScanResults() {
                     <div key={lang.name} className="flex items-center gap-1.5 text-xs">
                       <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: lang.color }} />
                       <span className="text-muted-foreground">{lang.name}</span>
-                      <span className="font-mono text-muted-foreground/70">{lang.percentage}%</span>
+                      <span className="font-mono text-muted-foreground/70">{lang.label}</span>
                     </div>
                   ))}
                 </div>

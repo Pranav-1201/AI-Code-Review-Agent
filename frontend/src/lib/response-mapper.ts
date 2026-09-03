@@ -74,11 +74,19 @@ export function mapApiResponse(data: any, repoUrl: string): ScanReport {
 
   const languages = Array.from(langMap.entries())
     .sort((a, b) => b[1] - a[1])
-    .map(([name, lines]) => ({
-      name: name.charAt(0).toUpperCase() + name.slice(1),
-      percentage: totalLines > 0 ? Math.round((lines / totalLines) * 100) : 0,
-      color: langColors[name.toLowerCase()] || "hsl(0, 0%, 60%)",
-    }));
+    .map(([name, lines]) => {
+      const share = totalLines > 0 ? (lines / totalLines) * 100 : 0;
+      const rounded = Math.round(share);
+      return {
+        name: name.charAt(0).toUpperCase() + name.slice(1),
+        percentage: rounded,
+        // A language that is present but rounds to zero must not render as
+        // absent. `percentage` stays numeric so bar widths keep working;
+        // `label` is what the UI prints.
+        label: share > 0 && rounded === 0 ? "<1%" : `${rounded}%`,
+        color: langColors[name.toLowerCase()] || "hsl(0, 0%, 60%)",
+      };
+    });
 
   const dependencies: Dependency[] = (data.dependencies || []).map((d: any) => ({
     name: d.name || d.package || "unknown",

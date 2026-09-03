@@ -384,3 +384,40 @@ describe("mapApiResponse — refactor changes", () => {
     ]);
   });
 });
+
+describe("mapApiResponse — language shares", () => {
+  it("renders a non-zero share below 1% as <1%, not 0%", () => {
+    // 3 lines of TypeScript in a 1000-line repo is 0.3%. Math.round made
+    // that read as 0%, so a language that is genuinely present rendered as
+    // absent.
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          { file_path: "a.py", language: "Python", lines: 997 },
+          { file_path: "b.ts", language: "TypeScript", lines: 3 },
+        ],
+      },
+      REPO
+    );
+
+    const ts = report.summary.languages.find((l) => l.name === "TypeScript");
+    expect(ts?.label).toBe("<1%");
+    expect(ts?.percentage).toBe(0);
+  });
+
+  it("still renders an ordinary share as a whole percentage", () => {
+    const report = mapApiResponse(
+      {
+        file_reports: [
+          { file_path: "a.py", language: "Python", lines: 750 },
+          { file_path: "b.ts", language: "TypeScript", lines: 250 },
+        ],
+      },
+      REPO
+    );
+
+    expect(
+      report.summary.languages.find((l) => l.name === "TypeScript")?.label
+    ).toBe("25%");
+  });
+});

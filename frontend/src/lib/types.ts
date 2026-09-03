@@ -169,6 +169,8 @@ export interface ScanReport {
     languages: {
       name: string;
       percentage: number;
+      /** Printed share. "<1%" when the language is present but rounds to 0. */
+      label: string;
       color: string;
     }[];
 
