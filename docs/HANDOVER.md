@@ -4,10 +4,10 @@
 short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
-**Last updated:** 2026-08-26 · **Updated by:** Claude Opus 5 session
-`d0a60ab7` · **Branch at handover:** `main` — head `6ca9ae9`, pushed, **CI
-green** (run `32900870668`, all 3 jobs). J3's last unproven claim is closed and
-two real launcher defects are fixed; see section 3 for what is knowingly open.
+**Last updated:** 2026-09-04 · **Updated by:** Claude Opus 5 session
+`3d35d767` · **Branch at handover:** `main` — head `e6503ee`, **NOT PUSHED**
+(10 commits ahead of `origin/main`, CI has not run on any of them). **Phase L
+is complete** — all eight IDs. See section 1a.
 
 > **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** Branch
 > deleted. `main` = `origin/main` = `e857e0e`, and **CI is green on it** (run
@@ -57,8 +57,82 @@ two real launcher defects are fixed; see section 3 for what is knowingly open.
 > `ast.parse` accepted all 10 code payloads (5 files x original/improved).
 > Zero console errors. **There is no longer an unproven J3 claim.**
 >
-> **Next: F1** (light mode), **K** (language contract), **L** (S8 dead-code
-> wiring is the substantive one) or **Phase M** (deploy).
+> **Phase L is DONE (2026-09-04)** — S8, S9, F11, F12, F13, F14, H1, H2, in
+> eight code commits on `main` (plus spec and plan), **unpushed**. Details in section 1a.
+>
+> **Next: F1** (light mode), **K** (language contract, B6+F10), the
+> **unassigned backlog** (B1–B5, F3, S10 — see section 3) or **Phase M**
+> (deploy).
+
+---
+
+## 1a. Phase L — done 2026-09-04, unpushed
+
+All eight Phase L IDs are closed. Design at
+`docs/superpowers/specs/2026-09-04-phase-l-design.md`, plan at
+`docs/superpowers/plans/2026-09-04-phase-l.md`.
+
+**The finding that shaped the whole phase:** S8 was a *wiring* defect, not a
+detector defect. The analyzer found 30 dead imports and 462 dead functions in
+this repository and the report layer discarded every one. But the 462 broke
+down as 374 in `backend/tests` (372 named `test_*`), 53 `backend/validation`,
+25 `backend/benchmark`, 7 `backend/app`, 2 `backend/database`, 1 `rag/data` —
+only 10 production, and one of those 10 was a false positive. Wiring naively
+would have injected ~452 known-noise findings, which is exactly the
+false-positive generator `CONSTRAINTS.md` section 21 forbids. **That made S9 a
+prerequisite for S8, not hygiene beside it.**
+
+| ID | Commit | What landed |
+|---|---|---|
+| S9 | `4ebeede` | New fine role `fixture`, assigned by path, mapping to coarse `test`. Fixture files emit no findings. Every finding now carries the `file_type` of its file. |
+| S8a | `e30da45` | Two FP exemptions in `call_graph.py`: pytest's `test_*` naming, and methods overriding a base class not defined in the scanned sources. |
+| S8b | `910d6fd` | `dead_import` / `dead_function` wired into `formatted_issues`, with lines and snippets resolved at the report layer. Cache bumped to v3.7. |
+| F12 | `a2e1a8a` | Deleted the unrouted `Index.tsx` placeholder. |
+| F13 | `97a3e61` | A language under 1% renders `<1%`, not `0%`. |
+| H1 | `adf52d7` | Untracked `390.52`, deleted the junk, added named `.gitignore` entries. |
+| F11 | `e9129be` | `Visualizations` route chunk **432.04 kB → 4.43 kB** via `React.lazy` on the chart panel. |
+| F14 | `e6503ee` | Health Score page states the composite's weights; fourth dimension renamed Performance → Simplicity. |
+
+### Measured acceptance, this session, on a real scan of this repository
+
+| | Before | After |
+|---|---|---|
+| `dead_import` records in the report | 0 | **28** |
+| `dead_function` records in the report | 0 | **62** (naive wiring: 462) |
+| Records sourced from `benchmark/corpus/fixtures/` | 35 | **0** |
+| `security` records | 55 | 14 |
+| `complex_function` records | 27 | 25 |
+| Dead-code findings carrying `line: 0` | — | **0** |
+| `observability.py::format` reported dead | yes | **no** |
+
+The security and complex_function drops are exactly the 33 + 2 fixture records
+S9 removed. **pytest 468 passed**, benchmark **GATE PASSED** with
+`dead_function` and `dead_import` both 1.00/1.00, **vitest 106 passed**,
+`tsc -b` exit 0, `npm run build` succeeds, working tree clean.
+
+### Two defects found along the way that were not in the plan
+
+1. **The analysis cache ignored the file's role.** The key was
+   `(version, content, imports)`, so two files with identical content and
+   different roles collided and whichever was analysed first won. Already wrong
+   — the role drives `is_test`, which drives the security pass — and it made
+   S9's suppression unsound, because a fixture whose content matched a
+   production file would have been served the production result and leaked its
+   planted findings. Fixed in `910d6fd` by folding the role into the version
+   string.
+2. **`F11`'s audit criterion measures the wrong thing.** `Visualizations` was
+   *already* a lazy route chunk, so a `manualChunks` vendor split would have
+   satisfied the literal wording ("Visualizations chunk < 250 kB") while making
+   the page no faster to open. Deferring recharts *within* the page is what
+   shortens time to first paint. Recorded in `DECISIONS.md`.
+
+### Still not done for Phase L
+
+**Nothing is outstanding, but nothing has been driven through the real UI.**
+Per section 3 the bar for shipping is a real clone through the running app, and
+that has not been done for these changes. The 28/62/0 numbers above come from
+the shipped analyzer and engine invoked directly, which is stronger than the
+suite but weaker than the app.
 
 ---
 
@@ -93,8 +167,8 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` — head `6ca9ae9`, pushed 2026-08-26 |
-| Pushed? | **YES** — `main` is pushed and level with `origin/main`. |
+| Current branch | `main` — head `e6503ee`, **NOT pushed** |
+| Pushed? | **NO.** 10 commits ahead of `origin/main` as of 2026-09-04. CI has not run on any of them. The last CI-verified commit is `6ca9ae9`. Push was not requested; `CONSTRAINTS.md` section 3 forbids pushing unasked. |
 | CI | **GREEN on `6ca9ae9`**, run `32900870668`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). Playwright 26 passed. `6ca9ae9` is **the last commit on this branch carrying code** — anything after it is documentation only. |
 | `fix/broken-clone-cache` | merged at `33429f8` (`--no-ff`), branch deleted |
 | Careful | the CI run for the merge commit `33429f8` shows **cancelled**, not failed — the docs push superseded it via the concurrency group. `6ca9ae9` is the run that matters and it contains all the code. |
@@ -174,8 +248,24 @@ Full detail, including acceptance criteria and idea IDs, is in
 | **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
 | ~~**J**~~ | Explanation UX — **COMPLETE and merged**. J1 (F7, F8, F9-detail, F15), J2 (F6, F9, `snippet`, F16) at `568bf4e`; **J3 (F4, F5) merged 2026-08-25 at `2004639`**, CI green | — |
 | **K** | Language contract — B6, F10 | — |
-| **L** | Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11) | now unblocked |
+| ~~**L**~~ | ~~Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11), F12-F14, H1-H2~~ — **DONE 2026-09-04**, section 1a | — |
 | **M** | Deploy | now unblocked |
+
+**Not claimed by any phase in the audit's plan table.** These fall out of the
+roadmap entirely and will be missed if nobody looks for them:
+
+| ID | What | Effort |
+|---|---|---|
+| S10 | Rate limiting → Redis. The in-process limiter breaks at more than one replica, so this is deploy-adjacent. | M x M |
+| B1 | Decompose `analyze_dependencies` (CC 59) and `review_repository` (CC 58) | M x H |
+| B2 | The CC algorithm reports 34 where radon reports 58 — investigate | M x M |
+| B3 | Declare whether test files count in the complexity ranking | L x L |
+| B4 | Exclude stdlib and the package's own modules from `most_reused_module` | L x L |
+| B5 | Raise or justify the 35% duplicate-similarity threshold | L x L |
+| F3 | Sort the file list by score and alphabetically | M x L |
+
+None has been re-verified since the audit was written on 2026-08-19, and four
+phases have shipped since. Re-measure before believing any of them is still open.
 
 **The next unstarted item is F1** — light mode plus a toggle, the remaining
 half of Phase I. It moves the dark palette off `:root` into `.dark` /

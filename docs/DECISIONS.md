@@ -623,3 +623,119 @@ is `http://localhost:8000` while uvicorn listens only on `127.0.0.1`, so a
 browser that resolves `localhost` to `::1` gets a refusal that surfaces with
 exactly that wording. Proving it needs the failure captured on the machine that
 shows it.
+
+---
+
+## D21 — S9 is a prerequisite for S8, not hygiene beside it
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+The audit lists S8 (wire dead-code findings into the report) and S9 (stop
+reporting fixture corpora) as two independent Phase L items. Measured against
+this repository they are not independent.
+
+The analyzer finds 462 dead functions. 374 of them are in `backend/tests`, 372
+of those named `test_*`. 25 more are in `backend/benchmark`. Only 10 are
+production code, and one of those 10 is a false positive. Wiring S8 without
+first excluding the noise would have put roughly 452 known-bad findings into
+the report — precisely the false-positive generator `CONSTRAINTS.md` section 21
+forbids, and the same failure the audit graded the analyzer 4/10 for.
+
+So S9 landed first, and S8's scope was narrowed: dead imports everywhere, dead
+functions in production files only. Result on a real scan: 28 dead imports and
+62 dead functions, 0 findings from fixtures, down from 35.
+
+## D22 — The dead-function false-positive guard lives in the detector
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+Two exemptions were missing from `call_graph.find_dead_functions`: pytest
+collects `test_*` by name with no decorator to key off, and a method overriding
+a base class defined outside the scanned sources is called by whatever owns
+that base (`JsonFormatter(logging.Formatter).format` is the measured case).
+
+Both could have been filtered at the report layer instead, which would have
+been a smaller change. Rejected: the benchmark gate measures the detector, so a
+downstream filter would leave the gate reading precision 1.00 on an analyzer
+that still calls `Formatter.format` dead. That is a gate ratifying a known
+defect, which is the failure mode section 11 exists to prevent.
+
+Recall was checked before the change, not after: the `f6_dead_functions`
+fixture's two true positives are `_never_called` in `main.py` and `orphan` in
+`helpers.py`. Neither is named `test_*` and neither is a method of any class,
+so neither guard can reach them. Gate re-run confirms 1.00/1.00.
+
+## D23 — Dead-code locations are resolved at the report layer
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+`dead_code_detector` returns bare names with no line numbers, and J2's
+acceptance bar was "every finding carries real source, zero placeholders".
+Three options:
+
+- **Chosen:** resolve names back to lines in `analyze_single_file`, which
+  already holds the file's source. No detector contract change.
+- **Rejected:** widen the detector to return `{name, lineno}` dicts. The
+  benchmark already tolerates that shape, but it breaks six assertions across
+  `backend/tests/test_dead_code.py` and `backend/validation/phase4_validation.py`
+  for nothing the chosen option does not deliver.
+- **Rejected:** emit `line: 0` with an empty snippet. Cheapest, and it regresses
+  the placeholder-free property J2 was built to establish.
+
+## D24 — The analysis cache key must include the file's role
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+Found by a test written for S8b, not by review. `CacheManager`'s key is
+`(version, content, imports)`. The file's role was never part of it, so two
+files with identical content and different roles collided and whichever was
+analysed first won.
+
+This was already wrong before Phase L — the role drives `is_test`, which drives
+the security pass — but S9 made it unsound rather than merely inaccurate: a
+fixture whose content matched a production file would have been served the
+production result and leaked its planted findings straight through the
+suppression.
+
+Fixed by folding the role and coarse type into the version string rather than
+changing `CacheManager`'s signature, which two other call sites depend on.
+
+## D25 — F11's audit criterion measures the wrong thing
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+The audit's F11 criterion is "Visualizations chunk < 250 kB". `Visualizations`
+was already a lazy route chunk, so its 432 kB downloaded only when that page
+was opened — and a `manualChunks` rule moving recharts into a vendor chunk
+would have satisfied the criterion literally while making the application no
+faster at all.
+
+The cost worth removing is time to first paint on that route. So the charts
+were moved into their own component and loaded with `React.lazy` inside the
+page: the shell and the dependency graph now render from a 4.43 kB chunk while
+the 428 kB chart bundle streams in behind a skeleton sized to the chart grid.
+
+Recorded because the next person to read the audit will read the criterion, not
+this reasoning.
+
+## D26 — F14 is answered by explanation, not by reconciliation
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+A scan reports `health_score` 53 and `average_quality_score` 90.56 in the same
+summary. Investigating them showed no bug: the average is a mean of per-file
+quality scores, and the composite weights that average at 35% alongside
+security 25%, documentation 20% and simplicity 20%. The frontend's apparent
+third computation is a fallback that mirrors the backend formula exactly and
+runs only when the field is absent.
+
+Reconciling them would have destroyed information — they answer different
+questions. What was actually missing was any statement of the relationship, so
+the Health Score page now shows each dimension's weight and says the ring is
+their blend.
+
+The fourth dimension was also renamed from "Performance" to "Simplicity". Its
+value is `100 - min(avgCC * 3, 80)`, which measures complexity and says nothing
+about runtime performance; the backend already calls the same number
+`simplicity_score`. A label that misstates what was measured is a correctness
+problem, not a cosmetic one.
