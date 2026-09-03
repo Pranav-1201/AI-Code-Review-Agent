@@ -4,6 +4,7 @@
 # ==========================================================
 
 import ast
+import sys
 from typing import Dict, List
 
 from backend.app.services.repo_analyzer import analyze_repository
@@ -62,6 +63,84 @@ def _dead_code_locations(code: str):
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions.setdefault(node.name, node.lineno)
     return imports, functions
+
+
+# ----------------------------------------------------------
+# B4: "most reused module" must mean the user's own module
+# ----------------------------------------------------------
+# The insight was a raw max() over dependency-graph in-degree, so the
+# standard library always won it. Measured on this repository the answer was
+# `os` (50), then `sys` (38) and `typing` (31) — true, and useless. The
+# genuinely reusable module here is the first-party one at 14.
+#
+# `sys.stdlib_module_names` is the authoritative list and needs no
+# dependency. A third-party package is excluded by a different signal: it is
+# a bare top-level name that no file in this repository provides.
+# ----------------------------------------------------------
+
+def first_party_prefixes(file_paths) -> "set":
+    """Every module prefix the scanned repository itself provides.
+
+    "backend/app/services/x.py" contributes backend, backend.app,
+    backend.app.services and backend.app.services.x, plus the bare basename
+    so that a flat `import helpers` next to helpers.py resolves too.
+    """
+    prefixes = set()
+    for raw in file_paths or ():
+        path = str(raw).replace("\\", "/")
+        if path.endswith(".py"):
+            path = path[:-3]
+        segments = [seg for seg in path.split("/") if seg and seg != "."]
+        if not segments:
+            continue
+        prefixes.add(segments[-1])
+        for i in range(1, len(segments) + 1):
+            prefixes.add(".".join(segments[:i]))
+    return prefixes
+
+
+def most_reused_first_party(dependency_graph: Dict, file_paths=None) -> str:
+    """The most-imported module that belongs to the repository being scanned.
+
+    `file_paths` is what makes "first party" decidable: a target is the
+    user's own only if the repository actually provides that module. Without
+    it, a third-party package is indistinguishable from a local one, because
+    both appear in the graph purely as import targets.
+
+    Returns "None" when the repository imports nothing of its own — an honest
+    answer, and the same sentinel the field used before.
+    """
+    if not dependency_graph:
+        return "None"
+    links = dependency_graph.get("links") or []
+    if not links:
+        return "None"
+
+    provided = first_party_prefixes(file_paths)
+    # A link's SOURCE is definitionally a file in this repository, so it is a
+    # sound fallback when no file list was supplied. A link's TARGET is not:
+    # `requests` appears there exactly as a local module would.
+    provided |= first_party_prefixes(
+        str(link.get("source", "")) for link in links
+    )
+
+    in_degrees: Dict[str, int] = {}
+    for link in links:
+        target = str(link.get("target", ""))
+        if not target:
+            continue
+        head = target.split(".")[0].split("/")[0]
+        if head in sys.stdlib_module_names:
+            continue
+        stem = target[:-3] if target.endswith(".py") else target
+        if stem in provided or head in provided:
+            in_degrees[target] = in_degrees.get(target, 0) + 1
+
+    if not in_degrees:
+        return "None"
+    # Sort by count desc then name asc, so a tie is stable across runs rather
+    # than dependent on dict insertion order.
+    return sorted(in_degrees.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
 
 # ----------------------------------------------------------
@@ -758,8 +837,11 @@ class RepositoryReviewEngine:
                 out_degrees[src] = out_degrees.get(src, 0) + 1
                 in_degrees[tgt] = in_degrees.get(tgt, 0) + 1
                 
-            if in_degrees:
-                most_reused_module = max(in_degrees.items(), key=lambda x: x[1])[0]
+            # B4: the raw max() here always returned a stdlib module.
+            most_reused_module = most_reused_first_party(
+                dependency_graph,
+                [f.get("file_path", "") for f in repo_data],
+            )
             if out_degrees:
                 most_central_file = max(out_degrees.items(), key=lambda x: x[1])[0]
 
