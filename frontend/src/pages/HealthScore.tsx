@@ -32,16 +32,22 @@ export default function HealthScore() {
   const docScore = summary.avg_documentation_coverage
     ?? Math.round(prodFiles.reduce((s, f) => s + f.documentationCoverage, 0) / prodCount);
 
-  // Performance sub-score: based on avg CC of production files
+  // Simplicity sub-score: based on avg CC of production files. Named for what
+  // it measures — this is complexity, not runtime performance, and the backend
+  // already calls it simplicity_score.
   const avgCC = summary.avg_cyclomatic_complexity
     ?? Math.round(prodFiles.reduce((s, f) => s + f.cyclomaticComplexity, 0) / prodCount);
-  const performanceScore = Math.max(0, Math.round(100 - Math.min(avgCC * 3, 80)));
+  const simplicityScore = Math.max(0, Math.round(100 - Math.min(avgCC * 3, 80)));
 
+  // F14: the weights are the ones the backend applies in health_score. They
+  // are shown because the report surfaces both the composite and its largest
+  // input (Maintainability is average_quality_score), and 91 alongside 53
+  // reads as a contradiction until you can see that 91 carries 35% of it.
   const categories = [
-    { name: "Security", score: securityScore, icon: Shield, color: "text-destructive" },
-    { name: "Maintainability", score: maintainabilityScore, icon: BarChart3, color: "text-warning" },
-    { name: "Documentation", score: docScore, icon: BookOpen, color: "text-info" },
-    { name: "Performance", score: performanceScore, icon: FileCode, color: "text-primary" },
+    { name: "Security", score: securityScore, weight: 25, icon: Shield, color: "text-destructive" },
+    { name: "Maintainability", score: maintainabilityScore, weight: 35, icon: BarChart3, color: "text-warning" },
+    { name: "Documentation", score: docScore, weight: 20, icon: BookOpen, color: "text-info" },
+    { name: "Simplicity", score: simplicityScore, weight: 20, icon: FileCode, color: "text-primary" },
   ];
 
   return (
@@ -51,18 +57,29 @@ export default function HealthScore() {
         <p className="text-muted-foreground mt-1">Overall assessment based on multiple quality dimensions</p>
       </div>
 
-      <div className="flex justify-center">
+      <div className="flex flex-col items-center gap-3">
         <ScoreRing score={summary.healthScore} size={200} label="Overall Health" />
+        <p className="text-sm text-muted-foreground text-center max-w-xl">
+          Overall Health is a weighted blend of the four dimensions below — not
+          an average of file scores. A repository can hold a high
+          Maintainability score and still rate lower overall when documentation
+          or complexity drags on it.
+        </p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
         {categories.map((cat) => (
           <Card key={cat.name} className="bg-card border-border/50">
             <CardContent className="pt-6">
-              <div className="flex items-center gap-3 mb-3">
+              <div className="flex items-center gap-3 mb-1">
                 <cat.icon className={`w-5 h-5 ${cat.color}`} />
                 <span className="font-semibold">{cat.name}</span>
                 <span className="ml-auto font-mono font-bold">{cat.score}/100</span>
+              </div>
+              <div className="flex justify-end mb-2">
+                <span className="text-xs text-muted-foreground font-mono">
+                  {cat.weight}% of overall
+                </span>
               </div>
               <Progress value={cat.score} className="h-2" />
             </CardContent>
