@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Search, GitBranch, Loader2, Terminal, AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { useNavigate } from "react-router-dom";
+import { SUPPORTED_LANGUAGES } from "@/lib/languages";
 
 export default function RepositoryScanner() {
   const [repoUrl, setRepoUrl] = useState("");
@@ -91,6 +92,22 @@ export default function RepositoryScanner() {
               {isScanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               {isScanning ? "Scanning..." : "Scan"}
             </Button>
+          </div>
+
+          {/* F10: state the boundary before the clone, not after it. A user
+              who points this at a MATLAB repository should learn that here,
+              not from the rejection two minutes later. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>Analyses</span>
+            {SUPPORTED_LANGUAGES.map((language) => (
+              <span
+                key={language}
+                className="font-mono px-1.5 py-0.5 rounded bg-muted/60 text-foreground/80"
+              >
+                {language}
+              </span>
+            ))}
+            <span>— other languages are skipped.</span>
           </div>
 
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
