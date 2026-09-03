@@ -90,6 +90,22 @@ def count_lines(code: str) -> int:
 # Test File Detection
 # ----------------------------------------------------------
 
+# ----------------------------------------------------------
+# S9: fixture corpora are not production code
+# ----------------------------------------------------------
+# A planted-vulnerability corpus exists to be scanned, not to be
+# reported on. Ours lives under benchmark/corpus/fixtures/, but the
+# rule is written generically: a scanned third-party repo's own
+# fixture corpus is not its production code either.
+# ----------------------------------------------------------
+_FIXTURE_PATH_MARKERS = (
+    "/benchmark/corpus/",
+    "/fixtures/",
+    "/corpus/",
+    "/testdata/",
+)
+
+
 def classify_file_type(file_path: str, content: str = "") -> str: # PHASE 1: added content
     """
     Classify file as production, test, example, or docs based on path.
@@ -99,6 +115,10 @@ def classify_file_type(file_path: str, content: str = "") -> str: # PHASE 1: add
     path_lower = file_path.replace("\\", "/").lower()
     filename = os.path.basename(path_lower)
 
+    # The leading "/" lets a repo-relative path such as "fixtures/a.py" match
+    # the same rule as "pkg/fixtures/a.py".
+    if any(marker in f"/{path_lower}" for marker in _FIXTURE_PATH_MARKERS):
+        return 'fixture'
     if any(seg in path_lower for seg in ('/test/', '/tests/', '/spec/')):
         return 'test'
     if filename.startswith('test_') or filename.endswith('_test.py') or filename == 'conftest.py':
@@ -157,13 +177,19 @@ def classify_file_type(file_path: str, content: str = "") -> str: # PHASE 1: add
 # the health score collapsed to a constant.
 # ----------------------------------------------------------
 
-_NON_PRODUCTION_ROLES = frozenset({"test", "non_code"})
+_NON_PRODUCTION_ROLES = frozenset({"test", "non_code", "fixture"})
+
+# S9: `fixture` is a sixth FINE role but must not become a fourth COARSE
+# value — the scoring layer and the frontend understand exactly three.
+# Fixtures are scored and displayed as test files; only their findings are
+# suppressed, at the report layer.
+_COARSE_OVERRIDES = {"fixture": "test"}
 
 
 def coarse_file_type(file_role: str) -> str:
-    """Map a fine 5-tier role to the coarse scoring/frontend type."""
+    """Map a fine role to the coarse scoring/frontend type."""
     if file_role in _NON_PRODUCTION_ROLES:
-        return file_role
+        return _COARSE_OVERRIDES.get(file_role, file_role)
     return "production"
 
 

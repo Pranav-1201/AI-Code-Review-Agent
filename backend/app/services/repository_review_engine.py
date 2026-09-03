@@ -226,6 +226,21 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
             "trust_boundary": sec.get("trust_boundary", "n/a"),
         })
 
+    # S9: a fixture corpus is planted, not found. Reporting our own bait as a
+    # real finding is the defect. The file still appears in file_reports with
+    # its real line count and language, so repository totals stay honest —
+    # only its findings are suppressed.
+    if file_role == "fixture":
+        formatted_issues = []
+        merged_security = []
+
+    # S9: label every finding with the coarse type of the file it came from,
+    # so findings in test files stay visible and filterable in the UI rather
+    # than being silently dropped.
+    coarse_type = file_data.get("file_type", "production")
+    for _issue in formatted_issues:
+        _issue["file_type"] = coarse_type
+
     lines = len(code.splitlines())
     language = file_data.get("language", "unknown")
 
