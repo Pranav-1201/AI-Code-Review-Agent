@@ -6,6 +6,7 @@
 import os
 import ast
 from pathlib import Path
+from collections import Counter
 from typing import List, Dict
 from concurrent.futures import ProcessPoolExecutor
 
@@ -35,6 +36,42 @@ JS_TS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx")
 NON_CODE_EXTENSIONS = ()
 
 ALL_EXTENSIONS = CODE_EXTENSIONS
+
+# ----------------------------------------------------------
+# B6: what this tool can and cannot analyse, said out loud
+# ----------------------------------------------------------
+# Ordered for reading, not for lookup. Everything here maps to at least one
+# entry in CODE_EXTENSIONS; the frontend states the same list up front so a
+# user learns the boundary before waiting for a clone (F10).
+SUPPORTED_LANGUAGES = (
+    "Python", "JavaScript", "TypeScript", "Java", "C", "C++",
+)
+
+# Extensions we deliberately do NOT analyse, named so the rejection message can
+# say what the repository actually appears to contain rather than "0 files".
+# Absence from this map is fine — the message falls back to the extension.
+_UNSUPPORTED_LANGUAGE_HINTS = {
+    ".m": "MATLAB", ".mat": "MATLAB",
+    ".r": "R", ".rmd": "R",
+    ".go": "Go", ".rs": "Rust", ".rb": "Ruby", ".php": "PHP",
+    ".swift": "Swift", ".kt": "Kotlin", ".kts": "Kotlin",
+    ".scala": "Scala", ".cs": "C#", ".fs": "F#", ".vb": "Visual Basic",
+    ".pl": "Perl", ".pm": "Perl", ".lua": "Lua", ".jl": "Julia",
+    ".dart": "Dart", ".ex": "Elixir", ".exs": "Elixir", ".erl": "Erlang",
+    ".hs": "Haskell", ".clj": "Clojure", ".sh": "Shell", ".ps1": "PowerShell",
+    ".sql": "SQL", ".f90": "Fortran", ".f": "Fortran", ".asm": "Assembly",
+    ".vue": "Vue", ".svelte": "Svelte",
+}
+
+
+class UnsupportedRepositoryError(Exception):
+    """Raised when a repository holds nothing this tool can analyse.
+
+    Carried to the user verbatim, so the message is part of the contract: it
+    must name what was found and what is supported, and must never read like
+    a stack trace.
+    """
+
 
 IGNORED_DIRECTORIES = {
     ".git", "__pycache__", "node_modules",
@@ -80,6 +117,67 @@ LANGUAGE_MAP = {
 def detect_language(filename: str) -> str:
     ext = os.path.splitext(filename.lower())[1]
     return LANGUAGE_MAP.get(ext, "Unknown")
+
+
+def survey_extensions(repo_path: str) -> "Counter":
+    """Count file extensions across `repo_path`, honouring IGNORED_DIRECTORIES.
+
+    Deliberately separate from analyze_repository: that function prunes
+    everything it cannot analyse, which is exactly the information needed to
+    tell a user what their repository actually contains (B6).
+    """
+    counts: "Counter" = Counter()
+    for root, dirs, filenames in os.walk(repo_path):
+        dirs[:] = [d for d in dirs if d not in IGNORED_DIRECTORIES]
+        for name in filenames:
+            ext = os.path.splitext(name)[1].lower()
+            if ext:
+                counts[ext] += 1
+    return counts
+
+
+def describe_unsupported(repo_path: str) -> str:
+    """Build the message shown when a repository yields no analysable files.
+
+    Names what was found, then what this tool supports. Never a stack trace.
+    """
+    supported = ", ".join(SUPPORTED_LANGUAGES)
+    counts = survey_extensions(repo_path)
+
+    if not counts:
+        return (
+            "This repository contains no files to analyse. "
+            f"ETPROJECT analyses {supported}."
+        )
+
+    # Name the languages behind the most common extensions, ignoring the
+    # documentation and config files that every repository carries.
+    NOISE = {".md", ".txt", ".rst", ".json", ".yml", ".yaml", ".toml",
+             ".cfg", ".ini", ".lock", ".gitignore", ".xml", ".csv",
+             ".png", ".jpg", ".svg", ".gif", ".ico", ".pdf"}
+
+    named: List[str] = []
+    for ext, n in counts.most_common():
+        if ext in NOISE:
+            continue
+        label = _UNSUPPORTED_LANGUAGE_HINTS.get(ext, f"{ext} files")
+        if label not in named:
+            named.append(label)
+        if len(named) == 3:
+            break
+
+    if not named:
+        return (
+            "This repository contains no source files this tool can analyse. "
+            f"ETPROJECT analyses {supported}."
+        )
+
+    found = ", ".join(named)
+    return (
+        f"No analysable source files found. This repository appears to "
+        f"contain {found}, which ETPROJECT does not analyse. "
+        f"ETPROJECT analyses {supported}."
+    )
 
 
 def count_lines(code: str) -> int:

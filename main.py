@@ -36,7 +36,11 @@ from backend.app.services.scan_manager import (
 from backend.app.services.repository_review_engine import RepositoryReviewEngine
 from backend.app.analysis.dependency_graph import build_dependency_graph
 from backend.app.analysis.call_graph import build_call_graph
-from backend.app.services.repo_analyzer import analyze_repository
+from backend.app.services.repo_analyzer import (
+    analyze_repository,
+    describe_unsupported,
+    UnsupportedRepositoryError,
+)
 from backend.app.services import incremental
 from backend.app.services.settings_manager import load_settings, save_settings, reset_settings
 from backend.database.review_repository import record_feedback, get_precision_estimate
@@ -179,6 +183,15 @@ def run_pipeline(repo_path: str, scan_id: str = None, explanation_depth: str = "
 
     print("Scanning repository at:", repo_path)
     print("Files found:", len(files))
+
+    # B6: a repository we cannot read must say so, not score itself.
+    # Without this the pipeline ran to completion on zero files and reported
+    # health_score 45 — the composite defaults security and simplicity to 100
+    # when there is nothing to measure, so an unanalysable repository came
+    # back looking like a mediocre one. A confident wrong number is worse
+    # than the generic error B6 asked to replace.
+    if not files:
+        raise UnsupportedRepositoryError(describe_unsupported(repo_path))
 
     if scan_id:
         update_scan(scan_id, "analyzing", 30,
