@@ -474,6 +474,10 @@ def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
     name_index: Dict[str, _Set[str]] = defaultdict(set)
     # (tree, module) for the import-time pass
     module_trees: List[tuple] = []
+    # class simple names defined anywhere in the scanned sources
+    defined_classes: _Set[str] = set()
+    # "module::Class.Nested" -> [base simple names]
+    class_bases: Dict[str, List[str]] = {}
 
     # -------- Pass 1: definitions --------
     for path, source in sources.items():
@@ -488,6 +492,10 @@ def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
                 if isinstance(child, ast.ClassDef):
                     dyn = dynamic_ctx or _class_is_dynamic(child)
                     new_ctx = (class_ctx + "." if class_ctx else "") + child.name
+                    defined_classes.add(child.name)
+                    class_bases[f"{module}::{new_ctx}"] = [
+                        _dotted_name(b).split(".")[-1] for b in child.bases
+                    ]
                     visit(child, new_ctx, dyn)
                 elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     decos = [_dotted_name(d) for d in child.decorator_list]
@@ -497,6 +505,10 @@ def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
                         qual = f"{module}::{child.name}"
                     entry = (_decorator_is_entrypoint(decos)
                              or _is_dunder(child.name)
+                             # pytest collects by NAME, with no decorator to
+                             # key off. Without this, every test in the repo
+                             # reports dead — 372 of them, measured.
+                             or child.name.startswith("test_")
                              or (class_ctx is None and child.name == "main"))
                     nodes[qual] = FuncNode(
                         qualname=qual, module=module, name=child.name,
@@ -517,6 +529,21 @@ def build_interprocedural_graph(sources: Dict[str, str]) -> CallGraph:
 
         visit(tree, None, False)
         module_trees.append((tree, module))
+
+    # -------- Pass 1c: overrides of an external base --------
+    #
+    # A method overriding a base class we cannot see is called by whatever
+    # owns that base — the standard library, a framework — and never by name
+    # in this repository. `JsonFormatter(logging.Formatter).format` is the
+    # measured case. This must run AFTER the whole Pass 1 loop: a base
+    # defined in a file parsed later is still local, not external.
+    for _node in nodes.values():
+        if _node.is_entrypoint or _node.class_name is None:
+            continue
+        for _base in class_bases.get(f"{_node.module}::{_node.class_name}", ()):
+            if _base and _base != "object" and _base not in defined_classes:
+                _node.is_entrypoint = True
+                break
 
     # -------- Pass 2: resolve calls --------
     edges: Dict[str, _Set[str]] = {q: set() for q in nodes}
