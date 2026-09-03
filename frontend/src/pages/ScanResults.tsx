@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useScan } from "@/context/ScanContext";
+import { sortFiles, FILE_SORT_MODES, type FileSortMode } from "@/lib/file-sort";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScoreRing } from "@/components/ScoreRing";
 import { SeverityBadge } from "@/components/SeverityBadge";
@@ -51,6 +53,7 @@ export default function ScanResults() {
 
   const { summary, files } = currentReport;
   const totalIssues = files.reduce((s, f) => s + f.issues.length, 0);
+  const [fileSort, setFileSort] = useState<FileSortMode>("score");
   const verdict = healthVerdict(summary.healthScore);
 
   // Risk-weighted production files (security counts double). Top 3 lead the
@@ -69,9 +72,15 @@ export default function ScanResults() {
 
   // The full per-file table (all files worth showing) — heavy detail, so it
   // lives behind progressive disclosure.
-  const scoredFiles = files
-    .filter((f) => f.cyclomaticComplexity > 0 || f.issues.length > 0 || f.score < 100)
-    .sort((a, b) => a.score - b.score);
+  // F3: score-only ordering left every file sharing a score in whatever
+  // order the backend emitted, and on a healthy repository that is most of
+  // the table. sortFiles breaks ties on path in both modes.
+  const scoredFiles = sortFiles(
+    files.filter(
+      (f) => f.cyclomaticComplexity > 0 || f.issues.length > 0 || f.score < 100
+    ),
+    fileSort
+  );
 
   const metrics = [
     { label: "Files", value: summary.files, icon: FileCode, color: "text-info" },
@@ -198,6 +207,12 @@ export default function ScanResults() {
               <Zap className="w-5 h-5 text-warning" />
               Most Complex Files
             </CardTitle>
+            {/* B3: this ranking has always excluded test files. Saying so
+                is the whole fix — a reader could not tell whether a missing
+                test file was uncomplicated or simply not counted. */}
+            <p className="text-xs text-muted-foreground">
+              Production files only — test files are excluded from this ranking.
+            </p>
           </CardHeader>
           <CardContent className="space-y-2">
             {mostComplexFiles.map((file, idx) => (
@@ -226,6 +241,21 @@ export default function ScanResults() {
               <CardHeader className="flex-row items-center justify-between hover:bg-secondary/10 rounded-t-lg transition-colors">
                 <CardTitle className="text-lg">All File Scores</CardTitle>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  {/* Inside a CollapsibleTrigger, so the click must not also
+                      toggle the panel shut under the reader. */}
+                  <select
+                    aria-label="Sort files by"
+                    value={fileSort}
+                    onChange={(e) => setFileSort(e.target.value as FileSortMode)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="bg-background border border-border/50 rounded px-2 py-1 text-xs font-mono"
+                  >
+                    {FILE_SORT_MODES.map((mode) => (
+                      <option key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </option>
+                    ))}
+                  </select>
                   <span>{scoredFiles.length} files</span>
                   <ChevronDown className="w-4 h-4 transition-transform group-data-[state=open]:rotate-180" />
                 </div>
