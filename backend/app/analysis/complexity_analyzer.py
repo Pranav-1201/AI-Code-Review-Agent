@@ -67,6 +67,11 @@ class ComplexityAnalyzer(ast.NodeVisitor):
         self.recursive_calls = 0
         self.divide_and_conquer = False
 
+        # The function currently being measured. visit_FunctionDef descends
+        # into this one and stops at any other, so a nested def is scored on
+        # its own body rather than folded into its parent (B2).
+        self._root = None
+
     # ======================================================
     # Decision Nodes
     # ======================================================
@@ -104,6 +109,46 @@ class ComplexityAnalyzer(ast.NodeVisitor):
     # operations and should not inflate nesting depth. Counting them
     # caused false O(n²) for files like logging.py where a list
     # comprehension inside a while loop was reported as depth-2.
+    #
+    # B2: that reasoning is about DEPTH, and it was silently applied to
+    # CYCLOMATIC COMPLEXITY too, because both metrics share this visitor.
+    # They are different questions. A comprehension is a loop and its
+    # filter is a branch, so both are decision points under McCabe — and
+    # skipping them was the whole of the measured 25-point shortfall
+    # against radon on review_repository. The handlers below add to
+    # complexity WITHOUT touching loop_depth, so the O(n^2) fix stands.
+
+    def _visit_comprehension(self, node):
+        for generator in node.generators:
+            self.cyclomatic_complexity += 1 + len(generator.ifs)
+            self.branches += len(generator.ifs)
+        self.generic_visit(node)
+
+    visit_ListComp = _visit_comprehension
+    visit_SetComp = _visit_comprehension
+    visit_DictComp = _visit_comprehension
+    visit_GeneratorExp = _visit_comprehension
+
+    def visit_IfExp(self, node):
+        """A ternary is an `if` that happens to be an expression."""
+        self.cyclomatic_complexity += 1
+        self.branches += 1
+        self.generic_visit(node)
+
+    # B2: a nested def is its own function and is measured as one. Folding
+    # its branches into the enclosing function made the enclosing function
+    # read as more complex than its own body is — exactly the 7-point
+    # over-count measured on analyze_dependencies, whose nested _add_dep
+    # carries 7 decision points of its own. A lambda is NOT skipped:
+    # it has no separate entry of its own, so its branches belong to the
+    # function that wrote it, which is what radon does too.
+
+    def _skip_nested_function(self, node):
+        if node is self._root:
+            self.generic_visit(node)
+
+    visit_FunctionDef = _skip_nested_function
+    visit_AsyncFunctionDef = _skip_nested_function
 
     def _enter_loop(self, node):
 
@@ -160,6 +205,7 @@ class ComplexityAnalyzer(ast.NodeVisitor):
         self.reset_state()
 
         self.current_function = node.name
+        self._root = node
 
         self.visit(node)
 

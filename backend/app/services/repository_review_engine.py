@@ -168,6 +168,8 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
     #   v3.5  Phase 5 - explanation_source label surfaced on the file report
     #   v3.6  Phase J3 - refactor_changes structured edits list added
     #   v3.7  Phase L  - dead_import/dead_function findings + file_type label
+    #   v3.8  B2      - cyclomatic complexity counts comprehensions and
+    #                   ternaries, and stops absorbing nested functions
     #
     # The cache key is (version, content, imports) — the file's ROLE was never
     # part of it, so two files with identical content and different roles
@@ -176,7 +178,7 @@ def analyze_single_file(file_data: Dict, refactor_engine: HeuristicRefactorEngin
     # it unsound: a fixture whose content matches a production file would
     # serve the production result and leak its planted findings. Folding the
     # role into the version string fixes it without changing CacheManager.
-    _cache_version = f"v3.7|{file_role}|{file_data.get('file_type', 'production')}"
+    _cache_version = f"v3.8|{file_role}|{file_data.get('file_type', 'production')}"
     cached_result = _cache_manager.get(code, imports, version=_cache_version)
     if cached_result:
         return cached_result
