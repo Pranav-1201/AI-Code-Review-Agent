@@ -5,9 +5,10 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-09-04 · **Updated by:** Claude Opus 5 session
-`3d35d767` · **Branch at handover:** `main` — head `e6503ee`, **NOT PUSHED**
-(10 commits ahead of `origin/main`, CI has not run on any of them). **Phase L
-is complete** — all eight IDs. See section 1a.
+`3d35d767` · **Branch at handover:** `main` — head `590c980`, **NOT PUSHED**
+(19 commits ahead of `origin/main`, CI has not run on any of them).
+**Phases L and K are complete, F1 is complete, and five of the seven
+unassigned backlog items are closed.** See sections 1a and 1b.
 
 > **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** Branch
 > deleted. `main` = `origin/main` = `e857e0e`, and **CI is green on it** (run
@@ -57,12 +58,12 @@ is complete** — all eight IDs. See section 1a.
 > `ast.parse` accepted all 10 code payloads (5 files x original/improved).
 > Zero console errors. **There is no longer an unproven J3 claim.**
 >
-> **Phase L is DONE (2026-09-04)** — S8, S9, F11, F12, F13, F14, H1, H2, in
-> eight code commits on `main` (plus spec and plan), **unpushed**. Details in section 1a.
+> **Phase L is DONE (2026-09-04)** — S8, S9, F11, F12, F13, F14, H1, H2.
+> **Phase K is DONE** — B6, F10. **F1 is DONE** — light mode, closing Phase I.
+> **Backlog B2, B3, B4, B5 and F3 are DONE.** All unpushed. Sections 1a, 1b.
 >
-> **Next: F1** (light mode), **K** (language contract, B6+F10), the
-> **unassigned backlog** (B1–B5, F3, S10 — see section 3) or **Phase M**
-> (deploy).
+> **What is left: B1** (decompose two ~390-line functions), **S10** (Redis
+> rate limiting), and **Phase M** (deploy). Nothing else in the audit is open.
 
 ---
 
@@ -167,8 +168,8 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` — head `e6503ee`, **NOT pushed** |
-| Pushed? | **NO.** 10 commits ahead of `origin/main` as of 2026-09-04. CI has not run on any of them. The last CI-verified commit is `6ca9ae9`. Push was not requested; `CONSTRAINTS.md` section 3 forbids pushing unasked. |
+| Current branch | `main` — head `590c980`, **NOT pushed** |
+| Pushed? | **NO.** 19 commits ahead of `origin/main` as of 2026-09-04. CI has not run on any of them. The last CI-verified commit is `6ca9ae9`. Push was not requested; `CONSTRAINTS.md` section 3 forbids pushing unasked. |
 | CI | **GREEN on `6ca9ae9`**, run `32900870668`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). Playwright 26 passed. `6ca9ae9` is **the last commit on this branch carrying code** — anything after it is documentation only. |
 | `fix/broken-clone-cache` | merged at `33429f8` (`--no-ff`), branch deleted |
 | Careful | the CI run for the merge commit `33429f8` shows **cancelled**, not failed — the docs push superseded it via the concurrency group. `6ca9ae9` is the run that matters and it contains all the code. |
@@ -177,6 +178,87 @@ section for current state.
 | `fix/dev-launcher-cors` | merged and deleted |
 | `phase-j/j1-explanation-parity` | merged (`37f0060`) and deleted |
 | `phase-j/j2-finding-detail` | merged (`568bf4e`) and deleted, remote ref pruned |
+
+---
+
+## 1b. Phase K, F1 and the backlog — done 2026-09-04, unpushed
+
+| ID | Commit | What landed |
+|---|---|---|
+| B6 | `664e9a0` | A repository with nothing analysable is rejected with a readable message naming what it contains and what this tool reads. |
+| F10 | `27d0a22` | The scanner states the six supported languages before the clone. A backend test parses the frontend list and fails on drift. |
+| F1 | `09847ab` | Light mode. `:root` is light, `.dark` is dark, three-state toggle, pre-paint script, and a WCAG audit of both palettes. |
+| B4 | `2bdeccf` | `most_reused_module` reports first-party code instead of `os`. |
+| B3+F3 | `2f8a077` | The file table sorts stably and by name; the complexity ranking says it counts production files only. |
+| B2 | `f7e87cf` | Cyclomatic complexity at exact parity with radon. |
+| B5 | `590c980` | The duplicate-similarity floor calibrated against measured data. |
+
+### What the measurements actually showed
+
+**B6 was worse than the audit described.** A MATLAB-only repository did not
+error. It completed as a *successful* scan reporting **health_score 45** on
+zero files analysed — the composite defaults security and simplicity to 100
+when there is nothing to measure. The tool was telling users their
+unanalysable repository scores 45/100. A confident wrong answer, not a
+generic error.
+
+**B2 disagreed with radon in both directions, and both were defects.**
+Measured with radon 6 in a throwaway venv:
+
+| Function | Ours before | radon | Gap |
+|---|---|---|---|
+| `review_repository` | 33 | 58 | **+25** |
+| `analyze_dependencies` | 75 | 68 | **-7** |
+
+The +25 is 14 comprehension generators + 6 comprehension filters + 5
+ternaries, skipped because a comment justifying it for *nesting depth* was
+being applied to *cyclomatic complexity* too. The -7 is exactly the seven
+decision points of the nested `_add_dep`, whose branches were being charged
+to its parent. Both fixed; both functions now match radon exactly.
+**Cache is at v3.8** because complexity numbers moved.
+
+**B5's premise was backwards.** The audit worried 30% was too low. Measured
+across this repo (246 files) and the one other usable clone (43 files), the
+highest-scoring pair of any two files was **19%** — so at a 30% floor the
+block detector reported **nothing at all, ever**. The 19% pair is a real
+copy-pasted harness (`phase4_validation.py` / `phase5_validation.py`, 29% of
+the smaller file's unique lines). Floor now 15%; this repo reports 1 pair
+where it reported 0. Calibration rests on two repositories and the constant
+is named and documented so the next move needs evidence.
+
+**F1's contrast audit found a shipped accessibility defect.** The new light
+palette passes all 24 checks, and the audit caught the *dark* theme:
+`--destructive-foreground` on `--destructive` was **3.91:1**, below WCAG AA
+for text, on every destructive button in the app. White text alone was not
+enough (4.38:1 at 55% lightness), so the red moved two points darker —
+4.60:1 for the text while holding 3.87:1 against the card, which
+`text-destructive` needs.
+
+### Verified this session, every command run fresh
+
+| Check | Result |
+|---|---|
+| `venv/Scripts/python.exe -m pytest backend/tests -q` | **500 passed** |
+| `venv/Scripts/python.exe backend/benchmark/run_benchmark.py --gate` | **GATE PASSED**, no threshold lowered |
+| `npm run typecheck` (`tsc -b`) | exit 0 |
+| `npx vitest run` | **173 passed**, 20 files |
+| `npm run build` | succeeds |
+| `npx playwright test` | **26 passed** (desktop, tablet-768, mobile-375) |
+| `git status --short` | clean |
+
+### What is genuinely left
+
+| ID | Why it was not done |
+|---|---|
+| **B1** | Decompose `analyze_dependencies` and `review_repository`. Measured at **385 and 398 lines**. A restructure that size needs the additive checkpoints `CONSTRAINTS.md` section 16 requires and a reviewer; these two functions produce the entire report shape, and a subtle regression in them would be invisible to a green suite. Deliberately not started rather than half-done. |
+| **S10** | Rate limiting to Redis. Needs Redis running and is deploy-adjacent — it belongs with M, not before it. |
+| **M** | Deploy. Outward-facing and not reversible by editing a file. Needs explicit go-ahead. |
+
+**And the standing caveat: none of this session's work has been driven
+through the real UI.** The numbers above come from the shipped analyzer and
+engine invoked directly, plus 26 Playwright tests against the real rendered
+app. That is stronger than a unit suite and still weaker than a real clone
+driven by hand — which is the bar section 3 sets.
 
 ---
 
@@ -245,36 +327,32 @@ Full detail, including acceptance criteria and idea IDs, is in
 |---|---|---|
 | ~~**G**~~ | ~~Detector truth~~ — **DONE**, session `0f899c51` | unblocked M, L |
 | ~~**H**~~ | ~~Dependency truth~~ — **DONE**, session `0f899c51` | — |
-| **I** | ~~Sidebar defect (F2)~~ **DONE** `848e92a5` · **F1 light/dark theming still open** | — |
+| ~~**I**~~ | ~~Sidebar defect (F2)~~ `848e92a5` · ~~F1 light/dark theming~~ — **F1 DONE 2026-09-04** (`09847ab`), Phase I complete | — |
 | ~~**J**~~ | Explanation UX — **COMPLETE and merged**. J1 (F7, F8, F9-detail, F15), J2 (F6, F9, `snippet`, F16) at `568bf4e`; **J3 (F4, F5) merged 2026-08-25 at `2004639`**, CI green | — |
-| **K** | Language contract — B6, F10 | — |
+| ~~**K**~~ | ~~Language contract — B6, F10~~ — **DONE 2026-09-04**, section 1b | — |
 | ~~**L**~~ | ~~Dead-code wiring (S8), fixture exclusion (S9), bundle split (F11), F12-F14, H1-H2~~ — **DONE 2026-09-04**, section 1a | — |
 | **M** | Deploy | now unblocked |
 
 **Not claimed by any phase in the audit's plan table.** These fall out of the
 roadmap entirely and will be missed if nobody looks for them:
 
-| ID | What | Effort |
-|---|---|---|
-| S10 | Rate limiting → Redis. The in-process limiter breaks at more than one replica, so this is deploy-adjacent. | M x M |
-| B1 | Decompose `analyze_dependencies` (CC 59) and `review_repository` (CC 58) | M x H |
-| B2 | The CC algorithm reports 34 where radon reports 58 — investigate | M x M |
-| B3 | Declare whether test files count in the complexity ranking | L x L |
-| B4 | Exclude stdlib and the package's own modules from `most_reused_module` | L x L |
-| B5 | Raise or justify the 35% duplicate-similarity threshold | L x L |
-| F3 | Sort the file list by score and alphabetically | M x L |
+| ID | What | Effort | State |
+|---|---|---|---|
+| S10 | Rate limiting → Redis. The in-process limiter breaks at more than one replica, so this is deploy-adjacent. | M x M | **OPEN** |
+| B1 | Decompose `analyze_dependencies` and `review_repository` — measured at 385 and 398 lines | M x H | **OPEN** |
+| ~~B2~~ | ~~CC algorithm vs radon~~ | | DONE `f7e87cf` |
+| ~~B3~~ | ~~Declare what the complexity ranking counts~~ | | DONE `2f8a077` |
+| ~~B4~~ | ~~`most_reused_module` excludes stdlib~~ | | DONE `2bdeccf` |
+| ~~B5~~ | ~~Duplicate-similarity threshold~~ | | DONE `590c980` |
+| ~~F3~~ | ~~Sort the file list~~ | | DONE `2f8a077` |
 
-None has been re-verified since the audit was written on 2026-08-19, and four
-phases have shipped since. Re-measure before believing any of them is still open.
+**The next unstarted item is B1** — decomposing two ~390-line functions. Treat it
+as its own piece of work with additive checkpoints: those two functions
+produce the entire report shape, and a subtle regression in them would be
+invisible to a green suite.
 
-**The next unstarted item is F1** — light mode plus a toggle, the remaining
-half of Phase I. It moves the dark palette off `:root` into `.dark` /
-`[data-theme]`, adds a provider, persists the choice and honours
-`prefers-color-scheme`. Treat it as its own piece of work: it changes the
-token architecture in `index.css` that every component reads from, so it is
-not a small edit.
-
-Or jump to **M** (deploy) — nothing blocks it.
+Or **S10** (Redis rate limiting) and **M** (deploy), which belong together —
+nothing blocks either.
 
 ### Known open, none of them blocking
 

@@ -739,3 +739,132 @@ value is `100 - min(avgCC * 3, 80)`, which measures complexity and says nothing
 about runtime performance; the backend already calls the same number
 `simplicity_score`. A label that misstates what was measured is a correctness
 problem, not a cosmetic one.
+
+---
+
+## D27 — B6 rejects at discovery, not at submit
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+The audit asked for a 422 on an unsupported repository. That is not
+reachable: `POST /scan` returns a scan id and the clone happens in the
+background, so at submit time nothing is known about the repository's
+contents beyond its URL.
+
+So the rejection lives where the knowledge is — discovery, in `run_pipeline`
+— and travels the async failure path that already exists: `complete_scan`
+emits `status='error'` with the message and the frontend poller already
+reads it.
+
+What made this worth doing at all was measuring the current behaviour. A
+MATLAB-only repository did not produce a generic error. It produced a
+*successful* scan reporting health_score 45 on zero files, because the
+composite defaults security and simplicity to 100 when there is nothing to
+measure. Replacing a confident wrong number was the actual win; the error
+message was the easy part.
+
+`survey_extensions` is deliberately separate from `analyze_repository`,
+which prunes everything it cannot read — that pruning discards exactly the
+information needed to tell the user what they have.
+
+## D28 — F10's duplicated language list is guarded, not fetched
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+The scanner states the supported languages before any request is made, so
+fetching them would mean either a request the page does not otherwise need
+or a loading state on static copy. The list is duplicated in
+`frontend/src/lib/languages.ts` instead.
+
+Duplication of a promise drifts, so a backend test parses the TypeScript
+file and fails when the two lists disagree. The guard was verified by making
+them disagree and watching it fail, rather than assumed to work. A second
+test asserts every advertised language maps to an extension the walker
+actually collects, so the promise cannot outrun the scanner.
+
+## D29 — F1 uses the `.dark` class, not a `[data-theme]` attribute
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+The audit left this open and it had to be settled before writing anything,
+because retrofitting the other choice touches every file again.
+
+`.dark` wins on evidence already in the repository: `tailwind.config.ts`
+declares `darkMode: ["class"]`, and every component under `components/ui`
+was generated against that convention. Choosing the attribute would have
+meant changing that config and silently breaking any shadcn snippet copied
+in later.
+
+`:root` is light and `.dark` is dark, the same way round as shadcn, so a
+component pasted from their docs works unmodified.
+
+Two consequences worth recording. The pre-paint script is a same-origin
+file, not an inline `<script>`, because the Caddyfile's CSP is
+`script-src 'self'` and its comment says that directive must not gain an
+`'unsafe-inline'` — a separate file needs no CSP change at all. And every
+`localStorage` access is wrapped, because reading it *throws* in some
+privacy modes and a browser that refuses storage must still render.
+
+## D30 — A contrast audit that reads the stylesheet
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+The dark palette was tuned over months of looking at it. The light palette
+was written in one sitting, which is the exact situation that ships a
+foreground nobody else can read.
+
+So F1 also added a test that parses `index.css` and checks 24 real token
+pairs per theme against WCAG 2.1 — reading the stylesheet rather than
+hardcoding the values, so a token edited without a matching edit to the test
+is still checked against what is actually on screen.
+
+It immediately found a defect in the *shipped* dark theme, not the new one:
+`--destructive-foreground` on `--destructive` was 3.91:1, below AA for text,
+on every destructive button in the app. Fixing it needed both white text and
+two points off the red's lightness — 4.60:1 for the text while holding
+3.87:1 for the red against the card, which `text-destructive` needs.
+Darkening further fixes the button and starts failing the text.
+
+## D31 — B2 and B5 were both investigated before being changed
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+Both backlog items named a number and asked for it to move. Measuring first
+changed what the right move was in both cases.
+
+**B2** asked why the analyzer reported 34 where radon reported 58. The two
+functions the audit named disagreed in *opposite* directions: ours was 25
+low on `review_repository` (comprehensions and ternaries never counted) and
+7 high on `analyze_dependencies` (a nested function's branches charged to
+its parent). Fixing only the first would have made the second worse. Both
+now match radon exactly.
+
+The comprehension omission came from a comment that justified skipping them
+to protect *nesting depth* — a different metric sharing the same visitor.
+The two are now separated, and there is a test pinning the O(n^2) false
+positive that comment was written to fix.
+
+**B5** asked to raise the 35% duplicate threshold. The literal was 30, its
+comment said "> 30%" while the code said ">= 30", and — measured — 30 was
+already too high to ever fire: across two real repositories the highest pair
+of any two files scored 19%, so the detector had never reported a block
+duplicate at all. The floor moved *down*, to 15%, which admits the one real
+copy-pasted pair and excludes the shadcn boilerplate below it.
+
+The general lesson, recorded because it applies to the rest of the backlog:
+an audit item that names a number is a hypothesis, not a finding. Two of the
+five checked this session had their premise backwards.
+
+## D32 — B1 was deliberately not started
+
+**Date:** 2026-09-04 · **Decided by:** Claude Opus 5 (session `3d35d767`)
+
+`analyze_dependencies` and `review_repository` measure 385 and 398 lines.
+Decomposing them is a restructure, which `CONSTRAINTS.md` section 16
+requires additive checkpoints for, and these two functions produce the
+entire report shape — a subtle regression in either would be invisible to a
+green suite, which is exactly the failure mode this project has hit before.
+
+Started-and-abandoned is worse than not started: it leaves the codebase
+mid-restructure with no checkpoint to return to. Left whole, with the
+complexity numbers now accurate enough (D31) to judge the result against.
