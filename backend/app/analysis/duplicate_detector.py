@@ -10,6 +10,30 @@ from collections import defaultdict
 
 import re
 
+# ----------------------------------------------------------
+# B5: the block-similarity floor, calibrated rather than assumed
+# ----------------------------------------------------------
+# Similarity is shared sliding-windows over the SMALLER file's total window
+# count, so the metric is strict: 30% meant nearly a third of a file had to
+# be duplicated verbatim before anything was reported.
+#
+# Measured across this repository (246 files) and the one other real clone
+# available (43 files), the highest-scoring pair of any two files was 19%.
+# At a 30% floor the block detector reported nothing at all on either
+# repository — the floor was not filtering noise, it was sitting above every
+# real finding. The 19% pair is genuine: phase4_validation.py and
+# phase5_validation.py share a copy-pasted result harness worth 29% of the
+# smaller file's unique significant lines.
+#
+# 15% admits that pair and still excludes the 11% shadcn boilerplate pair
+# (sidebar.tsx / toggle.tsx), the nearest thing to a false positive in the
+# measured set.
+#
+# Two repositories is thin calibration. This is a named constant precisely so
+# the next move is made with evidence instead of by editing a bare literal.
+MIN_BLOCK_SIMILARITY_PERCENT = 15
+
+
 def _normalize_line(line: str) -> str:
     """
     Normalize a line of code for structural comparison:
@@ -164,8 +188,7 @@ def detect_duplicates(files: List[Dict], min_block_size: int = 6) -> List[Dict]:
 
         similarity = round(min(shared_count / min_total * 100, 100))
 
-        # Only report significant similarity (> 30%)
-        if similarity >= 30:
+        if similarity >= MIN_BLOCK_SIMILARITY_PERCENT:
             seen_pairs.add(pair_key)
             duplicates.append({
                 "file1": f1,
