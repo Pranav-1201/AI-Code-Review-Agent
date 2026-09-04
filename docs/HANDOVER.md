@@ -5,8 +5,8 @@ short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
 **Last updated:** 2026-09-04 · **Updated by:** Claude Opus 5 session
-`3d35d767` · **Branch at handover:** `main` — head `590c980`, **NOT PUSHED**
-(19 commits ahead of `origin/main`, CI has not run on any of them).
+`3d35d767` · **Branch at handover:** `main` — head `260ead9`, **pushed**,
+**CI GREEN** (run `33836451073`, all 3 jobs).
 **Phases L and K are complete, F1 is complete, and five of the seven
 unassigned backlog items are closed.** See sections 1a and 1b.
 
@@ -168,8 +168,9 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` — head `590c980`, **NOT pushed** |
-| Pushed? | **NO.** 19 commits ahead of `origin/main` as of 2026-09-04. CI has not run on any of them. The last CI-verified commit is `6ca9ae9`. Push was not requested; `CONSTRAINTS.md` section 3 forbids pushing unasked. |
+| Current branch | `main` — head `260ead9`, pushed 2026-09-04 |
+| Pushed? | **YES** — 21 commits pushed 2026-09-04 (`ac8e2db..260ead9`), level with `origin/main`. |
+| CI | **GREEN on `260ead9`**, run `33836451073`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). |
 | CI | **GREEN on `6ca9ae9`**, run `32900870668`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). Playwright 26 passed. `6ca9ae9` is **the last commit on this branch carrying code** — anything after it is documentation only. |
 | `fix/broken-clone-cache` | merged at `33429f8` (`--no-ff`), branch deleted |
 | Careful | the CI run for the merge commit `33429f8` shows **cancelled**, not failed — the docs push superseded it via the concurrency group. `6ca9ae9` is the run that matters and it contains all the code. |
@@ -245,6 +246,13 @@ enough (4.38:1 at 55% lightness), so the red moved two points darker —
 | `npm run build` | succeeds |
 | `npx playwright test` | **26 passed** (desktop, tablet-768, mobile-375) |
 | `git status --short` | clean |
+
+### Pushed and CI-verified
+
+All 21 commits are on `origin/main` at `260ead9`, and CI is **green on the
+pushed head** — run `33836451073`, all three jobs including `deploy-stack`,
+which builds both images and boots the compose stack. No commit carries an
+AI-attribution trailer; authorship is Pranav's alone.
 
 ### What is genuinely left
 
