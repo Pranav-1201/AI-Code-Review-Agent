@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import * as TooltipProvider from "@radix-ui/react-tooltip";
 import { Loader2 } from "lucide-react";
 import { ScanProvider } from "@/context/ScanContext";
+import { ThemeProvider } from "@/context/ThemeContext";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RouteHead } from "@/components/RouteHead";
@@ -60,7 +61,8 @@ function RouteFallback() {
 }
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
+  <ThemeProvider>
+    <QueryClientProvider client={queryClient}>
     <TooltipProvider.Provider>
       <Toaster richColors position="top-right" />
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -91,7 +93,8 @@ const App = () => (
         </ScanProvider>
       </BrowserRouter>
     </TooltipProvider.Provider>
-  </QueryClientProvider>
+    </QueryClientProvider>
+  </ThemeProvider>
 );
 
 export default App;

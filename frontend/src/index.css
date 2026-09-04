@@ -5,7 +5,77 @@
 @tailwind utilities;
 
 @layer base {
+  /* ------------------------------------------------------------------
+   * F1 — two themes.
+   *
+   * `:root` is LIGHT and `.dark` is DARK, which is the shadcn/Tailwind
+   * convention every component under components/ui was already written
+   * against. Before this the dark palette sat on `:root`, so there was
+   * exactly one theme and nowhere to put another.
+   *
+   * The hues are shared: green primary, purple accent. Only lightness and
+   * saturation move, so the product looks like itself in both themes.
+   * Light-theme foreground colours are darkened deliberately — 142 72% 50%
+   * is a fine green on near-black and fails contrast on near-white.
+   * ------------------------------------------------------------------ */
   :root {
+    --background: 210 20% 98%;
+    --foreground: 220 26% 14%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 26% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 26% 14%;
+
+    --primary: 142 68% 26%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 16% 93%;
+    --secondary-foreground: 220 26% 20%;
+
+    --muted: 220 16% 94%;
+    --muted-foreground: 220 12% 38%;
+
+    --accent: 262 62% 45%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 70% 42%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 14% 86%;
+    --input: 220 14% 86%;
+    --ring: 142 68% 26%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 220 20% 96%;
+    --sidebar-foreground: 220 20% 26%;
+    --sidebar-primary: 142 68% 26%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 220 16% 91%;
+    --sidebar-accent-foreground: 220 26% 16%;
+    --sidebar-border: 220 14% 87%;
+    --sidebar-ring: 142 68% 26%;
+
+    --warning: 32 90% 33%;
+    --warning-foreground: 0 0% 100%;
+    --info: 205 82% 34%;
+    --info-foreground: 0 0% 100%;
+    --success: 142 68% 26%;
+    --success-foreground: 0 0% 100%;
+
+    /* Chart series are read against the card, not as text, so they keep more
+     * saturation than the foreground tokens — but still darkened enough to
+     * stay legible on white. */
+    --chart-1: 142 68% 30%;
+    --chart-2: 262 62% 48%;
+    --chart-3: 205 82% 38%;
+    --chart-4: 32 90% 38%;
+    --chart-5: 0 70% 45%;
+  }
+
+  .dark {
     --background: 220 20% 7%;
     --foreground: 210 20% 92%;
 
@@ -27,8 +97,16 @@
     --accent: 262 80% 60%;
     --accent-foreground: 210 20% 95%;
 
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 210 20% 95%;
+    /* Was `0 72% 55%` with a `210 20% 95%` foreground: 3.91:1, below WCAG
+     * AA for text, on every destructive button in the app. Found by the
+     * contrast audit added with F1, not by looking at it.
+     *
+     * White text alone was not enough (4.38:1 at 55%). Two points darker
+     * gives 4.60:1 for the text while keeping the red itself at 3.87:1
+     * against the card, which `text-destructive` needs. Darkening further
+     * would fix the button and start failing the text. */
+    --destructive: 0 72% 53%;
+    --destructive-foreground: 0 0% 100%;
 
     --border: 220 14% 18%;
     --input: 220 14% 18%;

@@ -1,6 +1,7 @@
 import React from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -22,6 +23,9 @@ export function DashboardLayout({ children }: { children: React.ReactNode }) {
             <div className="ml-3 flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-primary animate-pulse-glow" aria-hidden="true" />
               <span className="text-xs text-muted-foreground font-mono">SYSTEM ONLINE</span>
+            </div>
+            <div className="ml-auto mr-3">
+              <ThemeToggle />
             </div>
           </header>
           <main
