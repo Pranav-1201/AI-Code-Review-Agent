@@ -835,6 +835,175 @@ def _compute_health_score(averages: _Averages, security_issues: int) -> _HealthS
                         simplicity, composite)
 
 
+# ----------------------------------------------------------
+# B1: the repo-level report sections
+# ----------------------------------------------------------
+
+def _group_issues(all_issues: List[Dict]) -> List[Dict]:
+    """Collapse repeated issues by message, counting the files they hit.
+
+    The first occurrence supplies every other field, so a grouped issue keeps
+    the line and snippet of whichever file reported it first.
+    """
+    issue_groups: Dict[str, Dict] = {}
+
+    for issue in all_issues:
+        msg = issue.get("message", "") if isinstance(issue, dict) else str(issue)
+        # Normalize message for grouping (remove numbers, file-specific parts)
+        key = msg.lower().strip()
+
+        if key in issue_groups:
+            issue_groups[key]["count"] += 1
+            file = issue.get("file", "")
+            if file and file not in issue_groups[key]["affected_files"]:
+                issue_groups[key]["affected_files"].append(file)
+        else:
+            issue_groups[key] = {
+                **issue,
+                "count": 1,
+                "affected_files": [issue.get("file", "")]
+            }
+
+    return list(issue_groups.values())
+
+
+def _graph_centrality(dependency_graph: Dict, repo_data) -> Tuple[str, str]:
+    """(most central file, most reused first-party module).
+
+    Central means most outgoing imports — the file that depends on the most
+    other things, which is where a change is most likely to break something.
+    Both default to the string "None", which is what the UI renders.
+    """
+    if not (dependency_graph
+            and "nodes" in dependency_graph
+            and "links" in dependency_graph):
+        return "None", "None"
+
+    out_degrees: Dict[str, int] = {}
+    for link in dependency_graph["links"]:
+        src = link["source"]
+        out_degrees[src] = out_degrees.get(src, 0) + 1
+
+    # B4: the raw max() here always returned a stdlib module.
+    most_reused_module = most_reused_first_party(
+        dependency_graph,
+        [f.get("file_path", "") for f in repo_data],
+    )
+    most_central_file = (max(out_degrees.items(), key=lambda x: x[1])[0]
+                         if out_degrees else "None")
+    return most_central_file, most_reused_module
+
+
+def _maintainability_warnings(prod_results: List[Dict]) -> List[Dict]:
+    """Long files and complex functions, production code only."""
+    warnings: List[Dict] = []
+
+    for r in prod_results:
+        lines = r.get("lines", 0)
+        fpath = r.get("file_path", "")
+        max_cc = r.get("max_cyclomatic_complexity", 0)
+
+        # PHASE 2: cohesion-gated, reading the SAME should_flag_size decision
+        # the file-level issue used. Previously this applied its own flat
+        # `lines > 300`, so the repo warning and the file issue could disagree.
+        r_cohesion = r.get("cohesion") or NO_SIZE_FLAG
+        if r_cohesion.get("should_flag_size"):
+            warnings.append({
+                "file": fpath,
+                "type": "long_file",
+                "message": r_cohesion.get("flag_reason")
+                           or f"File is {lines} lines long with low cohesion — consider splitting",
+                "severity": "medium"
+            })
+
+        if max_cc > 10:
+            warnings.append({
+                "file": fpath,
+                "type": "complex_function",
+                "message": f"Contains function(s) with cyclomatic complexity {max_cc} — consider refactoring",
+                "severity": "medium" if max_cc <= 20 else "high"
+            })
+
+    return warnings
+
+
+def _build_insights(grouped_issues: List[Dict], prod_results: List[Dict],
+                    most_central_file: str, most_reused_module: str) -> Dict:
+    """The five-item summaries the dashboard leads with."""
+
+    # Top 5 Critical Issues
+    critical_issues = sorted(
+        [i for i in grouped_issues
+         if i.get("type") == "security" or i.get("severity") in ("critical", "high")],
+        key=lambda x: (x.get("confidence", 0), x.get("count", 0)),
+        reverse=True
+    )[:5]
+
+    # Most Complex Files
+    complex_files = sorted(
+        [f for f in prod_results if f.get("cyclomatic_complexity", 0) > 3],
+        key=lambda x: x.get("cyclomatic_complexity", 0),
+        reverse=True
+    )[:5]
+
+    return {
+        "top_critical_issues": critical_issues,
+        "most_complex_files": [{
+            "file_path": f["file_path"],
+            "cyclomatic_complexity": f.get("cyclomatic_complexity", 0),
+            "score": f["score"]
+        } for f in complex_files],
+        "most_central_file": most_central_file,
+        "most_reused_module": most_reused_module
+    }
+
+
+def _attach_duplicates(file_reports: List[Dict], duplicates: List[Dict]) -> None:
+    """Write each file's duplicate partners onto its report row.
+
+    Matched on path first and file name second: the detector reports whichever
+    it has, and a bare name still has to find its row.
+    """
+    duplicate_map: Dict[str, List[Dict]] = {}
+    for dup in duplicates:
+        f1 = dup.get("file1", "")
+        f2 = dup.get("file2", "")
+        sim = dup.get("similarity", 100)
+
+        duplicate_map.setdefault(f1, []).append({"file": f2, "similarity": sim})
+        duplicate_map.setdefault(f2, []).append({"file": f1, "similarity": sim})
+
+    for report in file_reports:
+        fname = report.get("file_name", "")
+        fpath = report.get("file_path", "")
+        report["duplicates"] = (duplicate_map.get(fpath, [])
+                                or duplicate_map.get(fname, []))
+
+
+def _architecture_summary(results: List[Dict]) -> Tuple[Dict, Dict]:
+    """PHASE 4: framework fingerprint + architecture smells.
+
+    Repo-level, from real import-based evidence, replacing the filename
+    substring framework guess.
+
+    Both analyses are fail-soft on purpose: a repository that breaks one of
+    them still gets a report, minus that section. They are informational, and
+    no score depends on them.
+    """
+    code_sources = {r["file_path"]: r.get("content", "")
+                    for r in results if r.get("content")}
+    try:
+        frameworks = summarize_frameworks(code_sources)
+    except Exception:
+        frameworks = {}
+    try:
+        architecture = analyze_architecture(code_sources)
+    except Exception:
+        architecture = {"god_objects": [], "layer_violations": []}
+
+    return frameworks, architecture
+
+
 class RepositoryReviewEngine:
 
     def __init__(self):
@@ -900,117 +1069,16 @@ class RepositoryReviewEngine:
         health_score = _compute_health_score(averages, security_issues).composite
 
         # --------------------------------------------------
-        # Group repeated issues by message pattern
+        # Repo-level sections
         # --------------------------------------------------
 
-        grouped_issues = []
-        issue_groups: Dict[str, Dict] = {}
-
-        for issue in all_issues:
-            msg = issue.get("message", "") if isinstance(issue, dict) else str(issue)
-            # Normalize message for grouping (remove numbers, file-specific parts)
-            key = msg.lower().strip()
-
-            if key in issue_groups:
-                issue_groups[key]["count"] += 1
-                file = issue.get("file", "")
-                if file and file not in issue_groups[key]["affected_files"]:
-                    issue_groups[key]["affected_files"].append(file)
-            else:
-                issue_groups[key] = {
-                    **issue,
-                    "count": 1,
-                    "affected_files": [issue.get("file", "")]
-                }
-
-        grouped_issues = list(issue_groups.values())
-        
-        # --------------------------------------------------
-        # Dependency Graph Analysis (Centrality / Reuse)
-        # --------------------------------------------------
-        most_central_file = "None"
-        most_reused_module = "None"
-        
-        if dependency_graph and "nodes" in dependency_graph and "links" in dependency_graph:
-            in_degrees = {}
-            out_degrees = {}
-            for link in dependency_graph["links"]:
-                src = link["source"]
-                tgt = link["target"]
-                out_degrees[src] = out_degrees.get(src, 0) + 1
-                in_degrees[tgt] = in_degrees.get(tgt, 0) + 1
-                
-            # B4: the raw max() here always returned a stdlib module.
-            most_reused_module = most_reused_first_party(
-                dependency_graph,
-                [f.get("file_path", "") for f in repo_data],
-            )
-            if out_degrees:
-                most_central_file = max(out_degrees.items(), key=lambda x: x[1])[0]
-
-        # --------------------------------------------------
-        # Maintainability warnings
-        # Detect long files and complex functions in prod code
-        # --------------------------------------------------
-
-        maintainability_warnings = []
-
-        for r in prod_results:
-            lines = r.get("lines", 0)
-            fpath = r.get("file_path", "")
-            cc = r.get("cyclomatic_complexity", 0)
-            max_cc = r.get("max_cyclomatic_complexity", 0)
-
-            # PHASE 2: cohesion-gated, reading the SAME should_flag_size
-            # decision the file-level issue used. Previously this applied its
-            # own flat `lines > 300`, so the repo warning and the file issue
-            # could disagree.
-            r_cohesion = r.get("cohesion") or NO_SIZE_FLAG
-            if r_cohesion.get("should_flag_size"):
-                maintainability_warnings.append({
-                    "file": fpath,
-                    "type": "long_file",
-                    "message": r_cohesion.get("flag_reason")
-                               or f"File is {lines} lines long with low cohesion — consider splitting",
-                    "severity": "medium"
-                })
-
-            if max_cc > 10:
-                maintainability_warnings.append({
-                    "file": fpath,
-                    "type": "complex_function",
-                    "message": f"Contains function(s) with cyclomatic complexity {max_cc} — consider refactoring",
-                    "severity": "medium" if max_cc <= 20 else "high"
-                })
-
-        # --------------------------------------------------
-        # Insights Generation (Top Issues, Risks, Strengths)
-        # --------------------------------------------------
-        
-        # Top 5 Critical Issues
-        critical_issues = sorted(
-            [i for i in grouped_issues if i.get("type") == "security" or i.get("severity") in ("critical", "high")],
-            key=lambda x: (x.get("confidence", 0), x.get("count", 0)),
-            reverse=True
-        )[:5]
-        
-        # Most Complex Files
-        complex_files = sorted(
-            [f for f in prod_results if f.get("cyclomatic_complexity", 0) > 3],
-            key=lambda x: x.get("cyclomatic_complexity", 0),
-            reverse=True
-        )[:5]
-
-        insights = {
-            "top_critical_issues": critical_issues,
-            "most_complex_files": [{
-                "file_path": f["file_path"],
-                "cyclomatic_complexity": f.get("cyclomatic_complexity", 0),
-                "score": f["score"]
-            } for f in complex_files],
-            "most_central_file": most_central_file,
-            "most_reused_module": most_reused_module
-        }
+        grouped_issues = _group_issues(all_issues)
+        most_central_file, most_reused_module = _graph_centrality(
+            dependency_graph, repo_data)
+        insights = _build_insights(grouped_issues, prod_results,
+                                   most_central_file, most_reused_module)
+        _attach_duplicates(file_reports, duplicates)
+        frameworks, architecture = _architecture_summary(results)
 
         summary = {
             "files_analyzed": total_file_count,
@@ -1024,7 +1092,10 @@ class RepositoryReviewEngine:
             "avg_documentation_coverage": avg_doc,
             "avg_cyclomatic_complexity": avg_cyclomatic,
             "health_score": health_score,
-            "maintainability_warnings": maintainability_warnings,
+            "maintainability_warnings": _maintainability_warnings(prod_results),
+            "frameworks": frameworks,
+            "god_object_count": len(architecture.get("god_objects", [])),
+            "layer_violation_count": len(architecture.get("layer_violations", [])),
         }
 
         visualizations = {
@@ -1032,49 +1103,6 @@ class RepositoryReviewEngine:
             "complexity": [r.get("cyclomatic_complexity", 0) for r in results],
             "lines": [r["lines"] for r in results]
         }
-
-        # --------------------------------------------------
-        # Map duplicates to file-level
-        # --------------------------------------------------
-
-        duplicate_map = {}
-        for dup in duplicates:
-            f1 = dup.get("file1", "")
-            f2 = dup.get("file2", "")
-            sim = dup.get("similarity", 100)
-
-            if f1 not in duplicate_map:
-                duplicate_map[f1] = []
-            duplicate_map[f1].append({"file": f2, "similarity": sim})
-
-            if f2 not in duplicate_map:
-                duplicate_map[f2] = []
-            duplicate_map[f2].append({"file": f1, "similarity": sim})
-
-        for report in file_reports:
-            fname = report.get("file_name", "")
-            fpath = report.get("file_path", "")
-            report["duplicates"] = duplicate_map.get(fpath, []) or duplicate_map.get(fname, [])
-
-        # --------------------------------------------------
-        # PHASE 4: framework fingerprint + architecture smells
-        # (repo-level; real import-based evidence, replacing the
-        #  filename-substring framework guess)
-        # --------------------------------------------------
-        code_sources = {r["file_path"]: r.get("content", "")
-                        for r in results if r.get("content")}
-        try:
-            frameworks = summarize_frameworks(code_sources)
-        except Exception:
-            frameworks = {}
-        try:
-            architecture = analyze_architecture(code_sources)
-        except Exception:
-            architecture = {"god_objects": [], "layer_violations": []}
-
-        summary["frameworks"] = frameworks
-        summary["god_object_count"] = len(architecture.get("god_objects", []))
-        summary["layer_violation_count"] = len(architecture.get("layer_violations", []))
 
         # --------------------------------------------------
         # Final repository report
