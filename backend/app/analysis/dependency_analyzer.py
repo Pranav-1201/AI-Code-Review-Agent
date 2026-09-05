@@ -681,6 +681,110 @@ def _parse_setup_cfg(path, add):
         pass
 
 
+# ----------------------------------------------------------
+# B1: version + vulnerability enrichment
+# ----------------------------------------------------------
+# Python: fetch the latest version from PyPI to flag outdated pins, then ask
+# OSV about the pinned version.
+#
+# Node: OSV only (no registry "latest" lookup yet). The version asked about is
+# the one actually installed — see _npm_locked_versions/_exact_npm_version for
+# why a bare range is skipped instead of guessed.
+#
+# Packages with version "unknown" / "latest" / "*" have nothing meaningful to
+# compare. Network failures are silent: the dependency is still reported, just
+# without enrichment.
+#
+# Each enricher writes its own vulnerabilities/risk_level rather than handing
+# them back to a shared tail. The inlined version reached that tail via
+# `continue`, so a returned value would have to reproduce the skip exactly;
+# owning the write is simpler and provably equivalent.
+# ----------------------------------------------------------
+
+def _record_vulnerabilities(dep, vulns):
+    """Apply an OSV result to a dependency. No result, no change."""
+    if vulns:
+        dep["vulnerabilities"] = vulns
+        dep["risk_level"] = _risk_from_vulns(vulns, current=dep["risk_level"])
+
+
+def _resolve_python_versions_from_lockfile(dependencies, repo_path):
+    """PHASE H / S6: fill unresolved Python versions from a lockfile.
+
+    Runs before any enrichment, so the PyPI and OSV lookups ask about the
+    version that is actually installed rather than skipping the dependency
+    entirely.
+
+    Unknowns only. A lockfile disagreeing with an exact pin is a conflict
+    between two manifests, and resolving that silently would hide it.
+    """
+    py_locked = _python_locked_versions(repo_path)
+    if not py_locked:
+        return
+
+    for dep in dependencies:
+        if dep["type"] != "python" or dep["version"] != "unknown":
+            continue
+        resolved = py_locked.get(_normalise_project_name(dep["name"]))
+        if resolved:
+            dep["version"] = resolved
+            dep["version_source"] = "lockfile"
+
+
+def _enrich_python_dependency(dep):
+    """Latest release, outdated flag, and the OSV lookup for one package."""
+
+    # PHASE H: "what is the newest release of this package" is answerable
+    # whether or not the installed version is known, so the PyPI lookup runs
+    # unconditionally. It used to sit behind the unknown-version guard below,
+    # which meant an honestly-unpinned dependency lost its latest_version too —
+    # flask pins nothing and ships no lockfile, so all 8 of its dependencies
+    # showed no upgrade target at all.
+    latest = _fetch_latest_pypi_version(dep["name"])
+    if latest:
+        dep["latest_version"] = latest
+
+    # Everything past here needs a concrete version to compare or query.
+    # PHASE H / S5: "skipped" is already the default and is the honest answer —
+    # nothing was asked, so nothing about this package's safety may be implied.
+    known_version = dep["version"] not in ("unknown", "latest", "*", "")
+    if not known_version:
+        return
+
+    if latest:
+        dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
+
+        # Upgrade risk level for outdated packages so the frontend can surface
+        # them with appropriate prominence
+        if dep["is_outdated"]:
+            dep["risk_level"] = "Medium"
+
+    # OSV.dev CVE lookup — known vulnerabilities for the PINNED version take
+    # precedence over the outdated-only heuristic above.
+    vulns, dep["vuln_lookup"] = _query_osv(
+        dep["name"], dep["version"], ecosystem="PyPI")
+    _record_vulnerabilities(dep, vulns)
+
+
+def _enrich_node_dependency(dep, npm_locked, node_specs):
+    """OSV lookup for one npm package, against the version really installed."""
+
+    installed = (npm_locked.get(dep["name"])
+                 or _exact_npm_version(node_specs.get(dep["name"].lower())))
+    if not installed:
+        return
+
+    # Report the version the lookup was actually performed against, so a CVE
+    # the reader is shown can be checked against the version the reader is
+    # shown. Otherwise `^4.17.20` displays as 4.17.20 beside a CVE looked up
+    # for the installed 4.17.21.
+    dep["version"] = installed
+
+    vulns, dep["vuln_lookup"] = _query_osv(
+        dep["name"], installed, ecosystem="npm")
+    _record_vulnerabilities(dep, vulns)
+
+
 def _read_if_present(repo_path, filename, parse, *args):
     """Run `parse` over `filename` if the repository has one."""
     path = os.path.join(repo_path, filename)
@@ -689,6 +793,7 @@ def _read_if_present(repo_path, filename, parse, *args):
 
 
 def analyze_dependencies(repo_path):
+    """Every declared dependency of `repo_path`, enriched and deduplicated."""
 
     collector = _DependencyCollector()
     add = collector.add
@@ -708,97 +813,13 @@ def analyze_dependencies(repo_path):
 
     dependencies = collector.dependencies
 
-    # --------------------------------------------------
-    # Version + vulnerability enrichment
-    # --------------------------------------------------
-    # Python: fetch the latest version from PyPI to flag outdated pins, then
-    # ask OSV about the pinned version.
-    #
-    # Node: OSV only (no registry "latest" lookup yet). The version asked about
-    # is the one actually installed — see _npm_locked_versions/_exact_npm_version
-    # for why a bare range is skipped instead of guessed.
-    #
-    # Packages with version "unknown" / "latest" / "*" have nothing meaningful
-    # to compare. Network failures are silent: the dependency is still reported,
-    # just without enrichment.
-    # --------------------------------------------------
-
     npm_locked = _npm_locked_versions(repo_path)
-
-    # PHASE H / S6: fill unresolved Python versions from a lockfile before any
-    # enrichment runs, so the PyPI and OSV lookups below ask about the version
-    # that is actually installed rather than skipping the dependency entirely.
-    #
-    # Unknowns only. A lockfile disagreeing with an exact pin is a conflict
-    # between two manifests, and resolving that silently would hide it.
-    py_locked = _python_locked_versions(repo_path)
-
-    if py_locked:
-        for dep in dependencies:
-            if dep["type"] != "python" or dep["version"] != "unknown":
-                continue
-            resolved = py_locked.get(_normalise_project_name(dep["name"]))
-            if resolved:
-                dep["version"] = resolved
-                dep["version_source"] = "lockfile"
+    _resolve_python_versions_from_lockfile(dependencies, repo_path)
 
     for dep in dependencies:
-
         if dep["type"] == "python":
-
-            # PHASE H: "what is the newest release of this package" is
-            # answerable whether or not the installed version is known, so the
-            # PyPI lookup runs unconditionally. It used to sit behind the
-            # unknown-version guard below, which meant an honestly-unpinned
-            # dependency lost its latest_version too — flask pins nothing and
-            # ships no lockfile, so all 8 of its dependencies showed no upgrade
-            # target at all.
-            latest = _fetch_latest_pypi_version(dep["name"])
-            if latest:
-                dep["latest_version"] = latest
-
-            # Everything past here needs a concrete version to compare or query.
-            # PHASE H / S5: "skipped" is already the default and is the honest
-            # answer — nothing was asked, so nothing about this package's
-            # safety may be implied.
-            known_version = dep["version"] not in ("unknown", "latest", "*", "")
-            if not known_version:
-                continue
-
-            if latest:
-                dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
-
-                # Upgrade risk level for outdated packages so the
-                # frontend can surface them with appropriate prominence
-                if dep["is_outdated"]:
-                    dep["risk_level"] = "Medium"
-
-            # OSV.dev CVE lookup — known vulnerabilities for the PINNED version
-            # take precedence over the outdated-only heuristic above.
-            vulns, dep["vuln_lookup"] = _query_osv(
-                dep["name"], dep["version"], ecosystem="PyPI")
-
+            _enrich_python_dependency(dep)
         elif dep["type"] in ("node", "node-dev"):
-
-            installed = (npm_locked.get(dep["name"])
-                         or _exact_npm_version(node_specs.get(dep["name"].lower())))
-            if not installed:
-                continue
-
-            # Report the version the lookup was actually performed against, so
-            # a CVE the reader is shown can be checked against the version the
-            # reader is shown. Otherwise `^4.17.20` displays as 4.17.20 beside
-            # a CVE looked up for the installed 4.17.21.
-            dep["version"] = installed
-
-            vulns, dep["vuln_lookup"] = _query_osv(
-                dep["name"], installed, ecosystem="npm")
-
-        else:
-            continue
-
-        if vulns:
-            dep["vulnerabilities"] = vulns
-            dep["risk_level"] = _risk_from_vulns(vulns, current=dep["risk_level"])
+            _enrich_node_dependency(dep, npm_locked, node_specs)
 
     return dependencies
