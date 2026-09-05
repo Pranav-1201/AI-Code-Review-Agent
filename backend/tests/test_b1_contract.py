@@ -177,13 +177,22 @@ def test_non_code_files_get_a_report_but_no_analysis(report):
 
 #: Keys the code-file report carries and the non-code report does not.
 #: Measured, not assumed. Two separate dict literals build these reports and
-#: they have drifted: a non-code row reaches the frontend without
-#: `time_complexity`, so anything reading that field off the file table gets
-#: `undefined` for every README in the repository.
+#: they have drifted, so a non-code row reaches the frontend without
+#: `patch`, `refactor_changes` or `time_complexity`.
 #:
-#: This is a real inconsistency and it is NOT fixed as part of B1 — B1 is a
-#: decomposition gated on byte-identical output, and closing this changes the
-#: bytes. It is closed in its own commit afterwards, with its own test.
+#: This is latent, not a live defect: every consumer in response-mapper.ts
+#: currently defends itself. `complexity` falls back through
+#: `f.complexity || f.time_complexity || "O(1)"` and a non-code row carries
+#: `complexity: "N/A"`, which is truthy, so the missing field is never
+#: reached; `patch` falls back to null; `normalizeRefactorChanges(undefined)`
+#: returns []. Nothing is broken today.
+#:
+#: It is left alone deliberately rather than "fixed". Adding the three keys
+#: would change the report bytes for no user-visible gain, and the analysis
+#: boundaries in `docs/` are explicit that a deliberate shape is not a TODO.
+#: What this constant buys is the trap: the gap is now pinned, so the day a
+#: consumer stops defending itself, or a fourth key drifts, a test fails
+#: instead of a README rendering blank.
 KNOWN_NON_CODE_KEY_GAP = {"patch", "refactor_changes", "time_complexity"}
 
 

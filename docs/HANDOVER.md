@@ -325,11 +325,21 @@ Neither is fixed here — B1 is gated on byte-identical output and closing
 either would change the bytes.
 
 1. **The two file-report builders have drifted.** A non-code row ships without
-   `patch`, `refactor_changes` or `time_complexity`, so anything reading
-   `time_complexity` off the file table gets `undefined` for every README in
-   the repository. Pinned exactly as `KNOWN_NON_CODE_KEY_GAP` in
-   `backend/tests/test_b1_contract.py`, so *new* drift still fails while the
-   existing gap is documented. **This is the one open follow-up from B1.**
+   `patch`, `refactor_changes` or `time_complexity`. Pinned exactly as
+   `KNOWN_NON_CODE_KEY_GAP` in `backend/tests/test_b1_contract.py`, so *new*
+   drift fails while the existing gap stays documented.
+
+   **This is latent, not a live defect, and the first version of this note
+   said otherwise.** Checking the consumer rather than assuming one settled
+   it: `response-mapper.ts` defends all three. `complexity` resolves through
+   `f.complexity || f.time_complexity || "O(1)"` and a non-code row carries
+   `complexity: "N/A"`, which is truthy, so the missing field is never
+   reached; `patch` falls back to `null`; `normalizeRefactorChanges(undefined)`
+   returns `[]`. Nothing renders wrong today.
+
+   So it is **deliberately not fixed**. Adding the three keys would change the
+   report bytes for no user-visible gain. The test is the deliverable: the day
+   a consumer stops defending itself, or a fourth key drifts, it fails.
 2. **An empty repository scores health 45, not 0.** Quality and documentation
    are 0, but security and simplicity have nothing to subtract from and default
    to 100. This is the B6 finding seen at the layer that produces it; B6
