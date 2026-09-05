@@ -1,10 +1,40 @@
 # BUG-002 — three detectors report false positives on ordinary code
 
-**Status:** OPEN, root-caused, fix designed but not written
-**Severity:** P0 — blocks public deployment
+**Status:** **CLOSED 2026-09-05** — all three defects fixed in Phase G and
+re-measured against the shipped detector this session.
+**Severity:** was P0 — blocks public deployment
 **Found:** 2026-08-19 by measurement, not by report
 **Investigated by:** Claude Opus 5, session `a55eaf1f`
-**Fix owner:** Phase G
+**Fix owner:** Phase G — shipped in session `0f899c51`
+**Closed by:** Claude Opus 5, session `81d7c85b`
+
+---
+
+## Closure evidence (2026-09-05, run fresh)
+
+This file sat at "OPEN, P0, blocks public deployment" for weeks after the work
+that fixed it had shipped, which is a worse failure than the bug: anyone
+reading `docs/bugs/` to judge deploy-readiness was told the blocker was live.
+
+Every snippet in the evidence tables below was replayed through
+`detect_security_issues` as it ships today:
+
+| Defect | Cases | Result |
+|---|---|---|
+| A (S1) — `.run()` is Command Injection | all 5 Flask/Celery findings | **0 findings each** |
+| B (S2) — prose f-string is SQL Injection | 2 | **0 findings each** |
+| C (S3) — safe list argv | 1 (`["git", *args]`) | **0 findings** |
+| **Control** — real injections must still fire | 2 (`["sh","-c",user]`, `os.system("ls "+user)`) | **1 Command Injection each** |
+
+The control row is the half that matters: a detector fixed by being switched
+off would pass the first three rows too.
+
+**What is NOT closed by this.** Detector precision overall is still not 1.00.
+The report-only real-repo check in `run_benchmark.py --gate` measured, this
+session, **precision 0.60 / recall 1.00 (TP 6, FP 4, FN 0)** — the 4 false
+positives being `dangerous_function` (3) and `weak_crypto` (1). Those are
+different detectors from A/B/C and were never what this bug described. They
+have no bug file of their own; if they are ever worked, open one.
 
 ---
 
