@@ -5,7 +5,7 @@
 
 import ast
 import sys
-from typing import Dict, List
+from typing import Dict, List, NamedTuple, Tuple
 
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.llm_service import analyze_code
@@ -588,6 +588,167 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
 # Repository Review Engine
 # ==========================================================
 
+# ----------------------------------------------------------
+# B1: the per-file report pipeline
+# ----------------------------------------------------------
+# Two builders produce every row of the file table — one for files the
+# analyzer skipped, one for files it analysed. They must agree on their keys
+# or the frontend reads undefined off half the table; test_b1_contract.py
+# pins the difference between them.
+# ----------------------------------------------------------
+
+def _non_code_file_report(file_data: Dict) -> Dict:
+    """The minimal report for a file the analyzer does not read.
+
+    Scored 100 rather than 0: a README is not a low-quality source file, it is
+    not a source file. It is excluded from every average by `file_type`.
+    """
+    return {
+        "file_path": file_data["file_path"],
+        "file_name": file_data["file_name"],
+        "score": 100,
+        "language": file_data.get("language", "unknown"),
+        "lines": file_data.get("lines", 0),
+        "lines_of_code": file_data.get("lines", 0),
+        "complexity": "N/A",
+        "cyclomatic_complexity": 0,
+        "max_cyclomatic_complexity": 0,
+        "issues": [],
+        "security_risks": [],
+        "suggestions": [],
+        "explanation": "",
+        "explanation_source": "deterministic",
+        "improved_code": "",
+        "refactor_summary": "",
+        "content": file_data.get("content", ""),
+        "original_code": file_data.get("content", ""),
+        "documentation_coverage": 0,
+        "is_test": False,
+        "file_type": "non_code",
+        "file_role": "non_code",
+    }
+
+
+def _file_report_from_result(result: Dict, fpath: str) -> Dict:
+    """The report row for an analysed code file.
+
+    `fpath` is passed in already normalised rather than re-derived, so the
+    path written here and the path written back onto `result` cannot drift.
+    """
+    return {
+        "file_path": fpath,
+        "file_name": result.get("file_name", ""),
+
+        "score": result.get("score", 0),
+        "language": result.get("language", "unknown"),
+
+        "lines": result.get("lines", 0),
+        "lines_of_code": result.get("lines", 0),
+
+        "complexity": result.get("complexity", "O(1)"),
+        "cyclomatic_complexity": result.get("cyclomatic_complexity", 0),
+        "max_cyclomatic_complexity": result.get("max_cyclomatic_complexity", 0),
+
+        "issues": result.get("issues", []),
+
+        "security_risks": result.get("security_risks", []),
+
+        "suggestions": result.get("suggestions", []),
+        "explanation": result.get("explanation", ""),
+        # PHASE 5: "llm" | "deterministic" — carried onto the file report.
+        "explanation_source": result.get("explanation_source", "deterministic"),
+
+        "improved_code": result.get("refactor_suggestion"),
+        "refactor_summary": result.get("refactor_summary"),
+        "patch": result.get("patch"),
+        # J3 (F4/F5): the structured edits behind refactor_suggestion
+        "refactor_changes": result.get("refactor_changes", []),
+
+        "content": result.get("content", ""),
+        "original_code": result.get("content", ""),
+
+        "documentation_coverage": result.get("documentation_coverage", 0),
+        "time_complexity": result.get("complexity", "O(1)"),
+
+        "is_test": result.get("is_test", False),
+        "file_type": result.get("file_type", "production"),   # coarse
+        "file_role": result.get("file_role", "utility"),      # fine (surfaced for UI)
+    }
+
+
+def _is_real_issue(issue) -> bool:
+    """A structural issue, as opposed to the analyzer's "nothing found" note.
+
+    The placeholder is matched on its text because it arrives as an ordinary
+    issue; both counters below have to exclude it or every clean file counts
+    as a file with issues.
+
+    The two inlined filters this replaces disagreed on one detail: the
+    issue-file count coerced the message with `str()`, the all_issues loop did
+    not. Coercing is the safer of the two and changes nothing for the string
+    messages every producer actually emits.
+    """
+    msg = issue.get("message", "") if isinstance(issue, dict) else issue
+    return "no obvious structural issues" not in str(msg).lower()
+
+
+class _Aggregates(NamedTuple):
+    """One pass over the analysed files, in the shape the report needs."""
+    all_issues: List[Dict]
+    prod_results: List[Dict]
+    test_results: List[Dict]
+    issue_files: int
+    security_issues: int
+
+
+def _aggregate_results(results: List[Dict], file_reports: List[Dict]) -> _Aggregates:
+    """Build the code-file report rows and the counters over them.
+
+    Appends into the caller's `file_reports`, which already holds the non-code
+    rows, so the table keeps the order it has always had: non-code first, then
+    code in analysis order.
+    """
+    all_issues: List[Dict] = []
+    prod_results: List[Dict] = []
+    test_results: List[Dict] = []
+    issue_files = 0
+    security_issues = 0
+
+    for result in results:
+
+        # Normalize path
+        fpath = result["file_path"].replace("\\", "/")
+        result["file_path"] = fpath
+
+        print(f"Processed file: {fpath}")
+
+        file_reports.append(_file_report_from_result(result, fpath))
+
+        # Classify into production vs non-production for scoring
+        is_production = result.get("file_type") == "production"
+        if is_production:
+            prod_results.append(result)
+        else:
+            test_results.append(result)
+
+        issues = result.get("issues", [])
+
+        # Count files with real issues (all code files). A security finding is
+        # reported separately and does not make this a "file with issues".
+        if [i for i in issues
+                if i.get("type") != "security" and _is_real_issue(i)]:
+            issue_files += 1
+
+        # Security issues: count only from production files
+        if is_production:
+            security_issues += len(result.get("security_risks", []))
+
+        all_issues.extend(i for i in issues if _is_real_issue(i))
+
+    return _Aggregates(all_issues, prod_results, test_results,
+                       issue_files, security_issues)
+
+
 class RepositoryReviewEngine:
 
     def __init__(self):
@@ -605,11 +766,7 @@ class RepositoryReviewEngine:
         duplicates = detect_duplicates(repo_data)
 
         file_reports: List[Dict] = []
-        results = []
-
-        total_score = 0
-        issue_files = 0
-        security_issues = 0
+        results: List[Dict] = []
 
         # --------------------------------------------------
         # Run file analysis (only on code files)
@@ -619,30 +776,7 @@ class RepositoryReviewEngine:
 
             # Non-code files: add minimal report without AI analysis
             if not file_data.get("is_code", True):
-                file_reports.append({
-                    "file_path": file_data["file_path"],
-                    "file_name": file_data["file_name"],
-                    "score": 100,
-                    "language": file_data.get("language", "unknown"),
-                    "lines": file_data.get("lines", 0),
-                    "lines_of_code": file_data.get("lines", 0),
-                    "complexity": "N/A",
-                    "cyclomatic_complexity": 0,
-                    "max_cyclomatic_complexity": 0,
-                    "issues": [],
-                    "security_risks": [],
-                    "suggestions": [],
-                    "explanation": "",
-                    "explanation_source": "deterministic",
-                    "improved_code": "",
-                    "refactor_summary": "",
-                    "content": file_data.get("content", ""),
-                    "original_code": file_data.get("content", ""),
-                    "documentation_coverage": 0,
-                    "is_test": False,
-                    "file_type": "non_code",
-                    "file_role": "non_code",
-                })
+                file_reports.append(_non_code_file_report(file_data))
                 continue
 
             result = analyze_single_file(file_data, self.refactor_engine,
@@ -657,86 +791,12 @@ class RepositoryReviewEngine:
         # Aggregate results
         # --------------------------------------------------
 
-        all_issues = []
-
-        # Separate production and test results for scoring
-        prod_results = []
-        test_results = []
-
-        for result in results:
-
-            # Normalize path
-            fpath = result["file_path"].replace("\\", "/")
-            result["file_path"] = fpath
-
-            print(f"Processed file: {fpath}")
-
-            file_report = {
-                "file_path": fpath,
-                "file_name": result.get("file_name", ""),
-
-                "score": result.get("score", 0),
-                "language": result.get("language", "unknown"),
-
-                "lines": result.get("lines", 0),
-                "lines_of_code": result.get("lines", 0),
-
-                "complexity": result.get("complexity", "O(1)"),
-                "cyclomatic_complexity": result.get("cyclomatic_complexity", 0),
-                "max_cyclomatic_complexity": result.get("max_cyclomatic_complexity", 0),
-
-                "issues": result.get("issues", []),
-
-                "security_risks": result.get("security_risks", []),
-
-                "suggestions": result.get("suggestions", []),
-                "explanation": result.get("explanation", ""),
-                # PHASE 5: "llm" | "deterministic" — carried onto the file report.
-                "explanation_source": result.get("explanation_source", "deterministic"),
-
-                "improved_code": result.get("refactor_suggestion"),
-                "refactor_summary": result.get("refactor_summary"),
-                "patch": result.get("patch"),
-                # J3 (F4/F5): the structured edits behind refactor_suggestion
-                "refactor_changes": result.get("refactor_changes", []),
-
-                "content": result.get("content", ""),
-                "original_code": result.get("content", ""),
-
-                "documentation_coverage": result.get("documentation_coverage", 0),
-                "time_complexity": result.get("complexity", "O(1)"),
-
-                "is_test": result.get("is_test", False),
-                "file_type": result.get("file_type", "production"),   # coarse
-                "file_role": result.get("file_role", "utility"),      # fine (surfaced for UI)
-            }
-
-            file_reports.append(file_report)
-
-            # Classify into production vs non-production for scoring
-            if result.get("file_type") == "production":
-                prod_results.append(result)
-            else:
-                test_results.append(result)
-
-            # Count files with real issues (all code files)
-            real_issues = [
-                i for i in result.get("issues", [])
-                if i.get("type") != "security"
-                and "no obvious structural issues" not in str(i.get("message", "")).lower()
-            ]
-
-            if real_issues:
-                issue_files += 1
-
-            # Security issues: count only from production files
-            if result.get("file_type") == "production":
-                security_issues += len(result.get("security_risks", []))
-
-            for issue in result.get("issues", []):
-                msg = issue.get("message", "") if isinstance(issue, dict) else str(issue)
-                if "no obvious structural issues" not in msg.lower():
-                    all_issues.append(issue)
+        agg = _aggregate_results(results, file_reports)
+        all_issues = agg.all_issues
+        prod_results = agg.prod_results
+        test_results = agg.test_results
+        issue_files = agg.issue_files
+        security_issues = agg.security_issues
 
         # --------------------------------------------------
         # Compute averages from PRODUCTION files only
