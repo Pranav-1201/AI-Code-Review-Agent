@@ -62,8 +62,8 @@ unassigned backlog items are closed.** See sections 1a and 1b.
 > **Phase K is DONE** — B6, F10. **F1 is DONE** — light mode, closing Phase I.
 > **Backlog B2, B3, B4, B5 and F3 are DONE.** All unpushed. Sections 1a, 1b.
 >
-> **What is left: B1** (decompose two ~390-line functions), **S10** (Redis
-> rate limiting), and **Phase M** (deploy). Nothing else in the audit is open.
+> **B1 is DONE (2026-09-05)** — section 1c. **What is left: S10** (Redis rate
+> limiting) and **Phase M** (deploy). Nothing else in the audit is open.
 
 ---
 
@@ -258,7 +258,7 @@ AI-attribution trailer; authorship is Pranav's alone.
 
 | ID | Why it was not done |
 |---|---|
-| **B1** | Decompose `analyze_dependencies` and `review_repository`. Measured at **385 and 398 lines**. A restructure that size needs the additive checkpoints `CONSTRAINTS.md` section 16 requires and a reviewer; these two functions produce the entire report shape, and a subtle regression in them would be invisible to a green suite. Deliberately not started rather than half-done. |
+| ~~**B1**~~ | **DONE 2026-09-05** — see section 1c. |
 | **S10** | Rate limiting to Redis. Needs Redis running and is deploy-adjacent — it belongs with M, not before it. |
 | **M** | Deploy. Outward-facing and not reversible by editing a file. Needs explicit go-ahead. |
 
@@ -267,6 +267,95 @@ through the real UI.** The numbers above come from the shipped analyzer and
 engine invoked directly, plus 26 Playwright tests against the real rendered
 app. That is stronger than a unit suite and still weaker than a real clone
 driven by hand — which is the bar section 3 sets.
+
+---
+
+## 1c. B1 — done 2026-09-05
+
+Both functions decomposed. Plan at
+`docs/superpowers/plans/2026-09-05-b1-decompose.md`.
+
+| | Before | After |
+|---|---|---|
+| `analyze_dependencies` | 385 lines, **CC 68** | **31 lines, CC 4** |
+| `review_repository` | 398 lines, **CC 58** | **111 lines, CC 7** |
+
+| Commit | What landed |
+|---|---|
+| `f3f97f4` | Characterization tests for both functions (17), watched failing against deliberately broken copies before being kept. |
+| `e394dfe` | Six manifest parsers + `_DependencyCollector` out of `analyze_dependencies`. |
+| `f4e26a6` | Lockfile resolution and version enrichment out of `analyze_dependencies`. |
+| `0374275` | The per-file report pipeline out of `review_repository`. |
+| `9a8394a` | Score averaging and the health composite. |
+| `d9c6e76` | Issue grouping, centrality, warnings, insights, duplicates, architecture. |
+
+### How "no behaviour change" was actually proven
+
+Not by the suite. A harness runs both functions over a **frozen `git archive`
+export of `ff69de2`** — 247 files — with the two network calls stubbed, and
+dumps canonical JSON. Every extraction commit was gated on `cmp` returning
+clean over **5,429,674 bytes**. All six do.
+
+**The harness was wrong at first and the gate caught it.** It originally
+scanned the live working tree, so the moment this branch added a test file
+`file_reports` went 247 → 248 and the comparison failed for a reason that had
+nothing to do with the refactor. A gate whose target moves while the code
+moves proves nothing. It now scans a fixed export.
+
+Two runs of the harness against unchanged code were confirmed byte-identical
+before any of this was trusted.
+
+The byte gate serialises with `sort_keys`, so it cannot see a key **order**
+change. Insertion order for `repository_summary` (15 keys) and the top-level
+report (10 keys) was therefore checked directly and is unchanged.
+
+### Two defects found while writing the characterization tests
+
+Neither is fixed here — B1 is gated on byte-identical output and closing
+either would change the bytes.
+
+1. **The two file-report builders have drifted.** A non-code row ships without
+   `patch`, `refactor_changes` or `time_complexity`, so anything reading
+   `time_complexity` off the file table gets `undefined` for every README in
+   the repository. Pinned exactly as `KNOWN_NON_CODE_KEY_GAP` in
+   `backend/tests/test_b1_contract.py`, so *new* drift still fails while the
+   existing gap is documented. **This is the one open follow-up from B1.**
+2. **An empty repository scores health 45, not 0.** Quality and documentation
+   are 0, but security and simplicity have nothing to subtract from and default
+   to 100. This is the B6 finding seen at the layer that produces it; B6
+   rejects unanalysable repositories upstream, and the test now pins 45 so a
+   bypassed rejection fails loudly here instead of silently in front of a user.
+
+### Verified this session, every command run fresh
+
+| Check | Result |
+|---|---|
+| `venv/Scripts/python.exe -m pytest backend/tests -q` | **517 passed**, 0 failed |
+| Byte gate, frozen 247-file snapshot | **`cmp` clean**, 5,429,674 bytes |
+| `run_benchmark.py --gate` | **GATE PASSED**, no threshold lowered |
+| Real-repo reality check | precision **0.60**, recall **1.00** (TP 6, FP 4, FN 0) — unchanged |
+| `npm run typecheck` (`tsc -b`) | exit 0 |
+| `npx vitest run` | **173 passed**, 20 files |
+| `npm run build` | built in 7.09s |
+
+### What the tool says about its own decomposition
+
+Honest answer: **both files still carry a `complex_function` warning**, because
+a different function now holds the maximum in each.
+
+| File | max_cc before | max_cc after | Severity |
+|---|---|---|---|
+| `dependency_analyzer.py` | 68 (`analyze_dependencies`) | **16** (`_npm_locked_versions`) | high → **medium** |
+| `repository_review_engine.py` | 58 (`review_repository`) | **26** (`analyze_single_file`) | high → high |
+
+B1's two targets are fixed. `analyze_single_file` (342 lines, CC 26) and
+`apply_interprocedural_taint` (CC 20) were never in B1's scope and are the
+obvious next candidates if this is ever revisited.
+
+**Not claimed: none of this was driven through the real UI.** It is a pure
+refactor gated on byte-identical output over a real 247-file repository, which
+is a different and in some ways stronger guarantee — but it is not the bar
+section 3 sets for feature work.
 
 ---
 
@@ -347,20 +436,16 @@ roadmap entirely and will be missed if nobody looks for them:
 | ID | What | Effort | State |
 |---|---|---|---|
 | S10 | Rate limiting → Redis. The in-process limiter breaks at more than one replica, so this is deploy-adjacent. | M x M | **OPEN** |
-| B1 | Decompose `analyze_dependencies` and `review_repository` — measured at 385 and 398 lines | M x H | **OPEN** |
+| ~~B1~~ | ~~Decompose `analyze_dependencies` and `review_repository`~~ | | DONE, section 1c |
 | ~~B2~~ | ~~CC algorithm vs radon~~ | | DONE `f7e87cf` |
 | ~~B3~~ | ~~Declare what the complexity ranking counts~~ | | DONE `2f8a077` |
 | ~~B4~~ | ~~`most_reused_module` excludes stdlib~~ | | DONE `2bdeccf` |
 | ~~B5~~ | ~~Duplicate-similarity threshold~~ | | DONE `590c980` |
 | ~~F3~~ | ~~Sort the file list~~ | | DONE `2f8a077` |
 
-**The next unstarted item is B1** — decomposing two ~390-line functions. Treat it
-as its own piece of work with additive checkpoints: those two functions
-produce the entire report shape, and a subtle regression in them would be
-invisible to a green suite.
-
-Or **S10** (Redis rate limiting) and **M** (deploy), which belong together —
-nothing blocks either.
+**B1 is done (section 1c).** What remains is **S10** (Redis rate limiting) and
+**M** (deploy), which belong together — nothing blocks either, but M is
+outward-facing and needs an explicit go-ahead.
 
 ### Known open, none of them blocking
 
