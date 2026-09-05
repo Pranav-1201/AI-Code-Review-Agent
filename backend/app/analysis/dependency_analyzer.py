@@ -385,25 +385,31 @@ def _npm_locked_versions(repo_path: str) -> dict:
 # Main Analyzer
 # ----------------------------------------------------------
 
-def analyze_dependencies(repo_path):
+# ----------------------------------------------------------
+# B1: one manifest parser per function
+# ----------------------------------------------------------
+# `analyze_dependencies` was 385 lines and CC 68 — six inlined manifest
+# parsers, a nested recorder, and an enrichment pass, all in one body. The
+# parsers never enrich and the enrichers never parse, so they split cleanly.
+#
+# Every parser is fail-soft by contract: a malformed manifest costs you that
+# manifest's dependencies, never the scan. That is why each keeps its own
+# bare `except Exception`, rather than one try wrapping the whole table.
+# ----------------------------------------------------------
 
-    dependencies = []
-    seen = set()  # Deduplicate by (name, type)
+class _DependencyCollector:
+    """Accumulates dependencies, deduplicating by (lowercased name, type).
 
-    # Raw package.json specs, keyed by lowercase name. `_add_dep` stores a
-    # display version with the range operator stripped, which makes "^1.2.3"
-    # indistinguishable from the exact pin "1.2.3" — a distinction the OSV
-    # lookup depends on. Keep the unmangled spec here for that decision.
-    node_specs: dict = {}
+    First write wins, which is why the order parsers run in is part of the
+    contract: whichever manifest is read first owns the version for a package
+    declared in two of them.
+    """
 
-    requirements = os.path.join(repo_path, "requirements.txt")
-    package_json = os.path.join(repo_path, "package.json")
-    pyproject = os.path.join(repo_path, "pyproject.toml")
-    pipfile = os.path.join(repo_path, "Pipfile")
-    setup_py = os.path.join(repo_path, "setup.py")
-    setup_cfg = os.path.join(repo_path, "setup.cfg")
+    def __init__(self):
+        self.dependencies = []
+        self.seen = set()
 
-    def _add_dep(name, version="unknown", dep_type="python", constraint=""):
+    def add(self, name, version="unknown", dep_type="python", constraint=""):
         """Record a dependency.
 
         PHASE H / S7: `version` holds a concrete version or "unknown", never a
@@ -413,10 +419,10 @@ def analyze_dependencies(repo_path):
         arrived at, so a reader can tell a pin from a guess.
         """
         key = (name.strip().lower(), dep_type)
-        if key in seen or not name.strip():
+        if key in self.seen or not name.strip():
             return
 
-        seen.add(key)
+        self.seen.add(key)
 
         constraint = (constraint or "").strip()
         version = (version or "unknown").strip() or "unknown"
@@ -428,7 +434,7 @@ def analyze_dependencies(repo_path):
         else:
             source = "unspecified"
 
-        dependencies.append({
+        self.dependencies.append({
             "name": name.strip(),
             "version": version,
             "constraint": constraint,
@@ -444,237 +450,263 @@ def analyze_dependencies(repo_path):
             "type": dep_type
         })
 
-    # -------------------------------------
-    # Python dependencies (requirements.txt)
-    # -------------------------------------
 
-    if os.path.exists(requirements):
+def _parse_requirements_txt(path, add):
+    """requirements.txt — one specifier per line, flags and comments skipped."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
 
-        try:
-            with open(requirements, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
 
-                for line in f:
+                line = line.strip()
 
-                    line = line.strip()
+                # Skip empty lines, comments, flags
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
 
-                    # Skip empty lines, comments, flags
-                    if not line or line.startswith("#") or line.startswith("-"):
+                # Handle various version specifiers
+                # name==version, name>=version, name~=version, name[extra]==version
+                # PHASE H / S7: capture the WHOLE specifier, not just its
+                # first clause, and resolve it rather than stripping the
+                # operator off and keeping the digits. `flask>=2.0` used to
+                # be recorded as version "2.0".
+                match = re.match(
+                    r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]+\])?)\s*([^;#]*)', line)
+                if match:
+                    name = re.sub(r'\[.*\]', '', match.group(1))  # Remove extras
+                    constraint = (match.group(2) or "").strip()
+                    add(name,
+                        _exact_python_version(constraint) or "unknown",
+                        "python",
+                        constraint)
+    except Exception:
+        pass
+
+
+def _parse_package_json(path, add, node_specs):
+    """package.json — both dependency blocks, typed apart for the report.
+
+    `node_specs` keeps the UNMANGLED spec: `add` stores a display version with
+    the range operator stripped, which makes "^1.2.3" indistinguishable from
+    the exact pin "1.2.3" — a distinction the OSV lookup depends on.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            data = json.load(f)
+
+            # Regular dependencies
+            deps = data.get("dependencies", {})
+            for name, version in deps.items():
+                clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
+                add(name, clean_version, "node")
+                node_specs.setdefault(name.strip().lower(), str(version))
+
+            # Dev dependencies
+            dev_deps = data.get("devDependencies", {})
+            for name, version in dev_deps.items():
+                clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
+                add(name, clean_version, "node-dev")
+                node_specs.setdefault(name.strip().lower(), str(version))
+
+    except Exception:
+        pass
+
+
+def _parse_pyproject_toml(path, add):
+    """pyproject.toml — the [project] dependencies list, then a whole-file
+    fallback for quoted requirements anywhere else (build-system, and the
+    many tools that keep their own lists)."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            content = f.read()
+
+            # Try to find [project] dependencies section
+            # Matches: "package>=1.0", "package==1.0", "package~=1.0", "package"
+            in_deps = False
+            for line in content.splitlines():
+                stripped = line.strip()
+
+                if stripped.startswith("dependencies") and "=" in stripped:
+                    in_deps = True
+                    continue
+
+                if in_deps:
+                    if stripped == "]":
+                        in_deps = False
                         continue
 
-                    # Handle various version specifiers
-                    # name==version, name>=version, name~=version, name[extra]==version
-                    # PHASE H / S7: capture the WHOLE specifier, not just its
-                    # first clause, and resolve it rather than stripping the
-                    # operator off and keeping the digits. `flask>=2.0` used to
-                    # be recorded as version "2.0".
-                    match = re.match(
-                        r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]+\])?)\s*([^;#]*)', line)
+                    # PHASE H / S7: take the whole specifier out of the
+                    # quoted string and resolve it, rather than capturing
+                    # one operator and one run of digits.
+                    dep_match = re.match(
+                        r'''["']([a-zA-Z0-9_\-\.]+)(?:\[[^\]]*\])?\s*([^"';]*)''',
+                        stripped)
+                    if dep_match:
+                        name = dep_match.group(1)
+                        constraint = (dep_match.group(2) or "").strip()
+                        add(name,
+                            _exact_python_version(constraint) or "unknown",
+                            "python",
+                            constraint)
+
+            # Fallback: any quoted "name<specifier>" anywhere in the file.
+            #
+            # This is where `"flit_core==3.11,<4"` became version
+            # "3.11,<4" — the old pattern captured everything up to the
+            # closing quote and stored it verbatim in a version field.
+            for name, constraint in re.findall(
+                    r'"([a-zA-Z0-9_\-\.]+)\s*((?:[><=!~]=?|===)[^"]*)"', content):
+                constraint = constraint.strip()
+                add(name,
+                    _exact_python_version(constraint) or "unknown",
+                    "python",
+                    constraint)
+
+    except Exception:
+        pass
+
+
+def _parse_pipfile(path, add):
+    """Pipfile — [packages] and [dev-packages]; any other section closes both.
+
+    Both land as type "python": the Pipfile dev/prod split is not carried into
+    the report the way package.json's is.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            content = f.read()
+            in_packages = False
+            in_dev = False
+
+            for line in content.splitlines():
+                stripped = line.strip()
+
+                if stripped == "[packages]":
+                    in_packages = True
+                    in_dev = False
+                    continue
+                elif stripped == "[dev-packages]":
+                    in_packages = False
+                    in_dev = True
+                    continue
+                elif stripped.startswith("["):
+                    in_packages = False
+                    in_dev = False
+                    continue
+
+                if in_packages or in_dev:
+                    # Format: package_name = "==1.0.0" or package_name = "*"
+                    match = re.match(r'^([a-zA-Z0-9_\-\.]+)\s*=\s*["\']([^"\']*)["\']', stripped)
                     if match:
-                        name = re.sub(r'\[.*\]', '', match.group(1))  # Remove extras
+                        # PHASE H / S7: the operator carried meaning and
+                        # was being deleted — `">=2.0"` became "2.0".
+                        name = match.group(1)
                         constraint = (match.group(2) or "").strip()
-                        _add_dep(name,
-                                 _exact_python_version(constraint) or "unknown",
-                                 "python",
-                                 constraint)
-        except Exception:
-            pass
+                        add(name,
+                            _exact_python_version(constraint) or "unknown",
+                            "python",
+                            constraint)
 
-    # -------------------------------------
-    # Node dependencies (package.json)
-    # -------------------------------------
+    except Exception:
+        pass
 
-    if os.path.exists(package_json):
 
-        try:
-            with open(package_json, "r", encoding="utf-8", errors="ignore") as f:
+def _parse_setup_py(path, add):
+    """setup.py — names only.
 
-                data = json.load(f)
+    setup.py is executable Python; this reads it as text rather than running
+    it, so a version attached to a name is not reliably recoverable and every
+    dependency here is recorded as unspecified.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
 
-                # Regular dependencies
-                deps = data.get("dependencies", {})
-                for name, version in deps.items():
-                    clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
-                    _add_dep(name, clean_version, "node")
-                    node_specs.setdefault(name.strip().lower(), str(version))
+            content = f.read()
 
-                # Dev dependencies
-                dev_deps = data.get("devDependencies", {})
-                for name, version in dev_deps.items():
-                    clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
-                    _add_dep(name, clean_version, "node-dev")
-                    node_specs.setdefault(name.strip().lower(), str(version))
+            # Match install_requires list items
+            matches = re.findall(r'["\']([a-zA-Z0-9_\-\.]+)(?:[><=!~]+[\d\.]+)?["\']', content)
+            for name in matches:
+                # Skip common non-package strings
+                if name not in ("python", "setup", "find_packages", "setuptools"):
+                    add(name, "unknown", "python")
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # -------------------------------------
-    # Python dependencies (pyproject.toml)
-    # -------------------------------------
 
-    if os.path.exists(pyproject):
+def _parse_setup_cfg(path, add):
+    """setup.cfg — the indented install_requires block."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
 
-        try:
-            with open(pyproject, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            in_install = False
 
-                content = f.read()
+            for line in content.splitlines():
+                stripped = line.strip()
 
-                # Try to find [project] dependencies section
-                # Matches: "package>=1.0", "package==1.0", "package~=1.0", "package"
-                in_deps = False
-                for line in content.splitlines():
-                    stripped = line.strip()
+                if "install_requires" in stripped:
+                    in_install = True
+                    continue
 
-                    if stripped.startswith("dependencies") and "=" in stripped:
-                        in_deps = True
+                if in_install:
+                    if not stripped:
                         continue
 
-                    if in_deps:
-                        if stripped == "]":
-                            in_deps = False
-                            continue
-
-                        # PHASE H / S7: take the whole specifier out of the
-                        # quoted string and resolve it, rather than capturing
-                        # one operator and one run of digits.
-                        dep_match = re.match(
-                            r'''["']([a-zA-Z0-9_\-\.]+)(?:\[[^\]]*\])?\s*([^"';]*)''',
-                            stripped)
-                        if dep_match:
-                            name = dep_match.group(1)
-                            constraint = (dep_match.group(2) or "").strip()
-                            _add_dep(name,
-                                     _exact_python_version(constraint) or "unknown",
-                                     "python",
-                                     constraint)
-
-                # Fallback: any quoted "name<specifier>" anywhere in the file.
-                #
-                # This is where `"flit_core==3.11,<4"` became version
-                # "3.11,<4" — the old pattern captured everything up to the
-                # closing quote and stored it verbatim in a version field.
-                for name, constraint in re.findall(
-                        r'"([a-zA-Z0-9_\-\.]+)\s*((?:[><=!~]=?|===)[^"]*)"', content):
-                    constraint = constraint.strip()
-                    _add_dep(name,
-                             _exact_python_version(constraint) or "unknown",
-                             "python",
-                             constraint)
-
-        except Exception:
-            pass
-
-    # -------------------------------------
-    # Python dependencies (Pipfile)
-    # -------------------------------------
-
-    if os.path.exists(pipfile):
-
-        try:
-            with open(pipfile, "r", encoding="utf-8", errors="ignore") as f:
-
-                content = f.read()
-                in_packages = False
-                in_dev = False
-
-                for line in content.splitlines():
-                    stripped = line.strip()
-
-                    if stripped == "[packages]":
-                        in_packages = True
-                        in_dev = False
-                        continue
-                    elif stripped == "[dev-packages]":
-                        in_packages = False
-                        in_dev = True
-                        continue
-                    elif stripped.startswith("["):
-                        in_packages = False
-                        in_dev = False
+                    # PHASE H / S7: the continuation test has to look at
+                    # the ORIGINAL line's indentation. `stripped` has
+                    # already had it removed, so `stripped[0].isspace()`
+                    # was always False — and since every versioned
+                    # requirement contains "=", `flask>=2.0` closed the
+                    # section on its own first line and no setup.cfg
+                    # dependency with a version was ever recorded.
+                    if stripped.startswith("[") or not line[:1].isspace():
+                        in_install = False
                         continue
 
-                    if in_packages or in_dev:
-                        # Format: package_name = "==1.0.0" or package_name = "*"
-                        match = re.match(r'^([a-zA-Z0-9_\-\.]+)\s*=\s*["\']([^"\']*)["\']', stripped)
-                        if match:
-                            # PHASE H / S7: the operator carried meaning and
-                            # was being deleted — `">=2.0"` became "2.0".
-                            name = match.group(1)
-                            constraint = (match.group(2) or "").strip()
-                            _add_dep(name,
-                                     _exact_python_version(constraint) or "unknown",
-                                     "python",
-                                     constraint)
+                    match = re.match(
+                        r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]*\])?)\s*([^;#]*)', stripped)
+                    if match and match.group(1):
+                        name = re.sub(r'\[.*\]', '', match.group(1))
+                        constraint = (match.group(2) or "").strip()
+                        add(name,
+                            _exact_python_version(constraint) or "unknown",
+                            "python",
+                            constraint)
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # -------------------------------------
-    # Python dependencies (setup.py)
-    # -------------------------------------
 
-    if os.path.exists(setup_py):
+def _read_if_present(repo_path, filename, parse, *args):
+    """Run `parse` over `filename` if the repository has one."""
+    path = os.path.join(repo_path, filename)
+    if os.path.exists(path):
+        parse(path, *args)
 
-        try:
-            with open(setup_py, "r", encoding="utf-8", errors="ignore") as f:
 
-                content = f.read()
+def analyze_dependencies(repo_path):
 
-                # Match install_requires list items
-                matches = re.findall(r'["\']([a-zA-Z0-9_\-\.]+)(?:[><=!~]+[\d\.]+)?["\']', content)
-                for name in matches:
-                    # Skip common non-package strings
-                    if name not in ("python", "setup", "find_packages", "setuptools"):
-                        _add_dep(name, "unknown", "python")
+    collector = _DependencyCollector()
+    add = collector.add
 
-        except Exception:
-            pass
+    # Raw package.json specs, keyed by lowercase name — see _parse_package_json.
+    node_specs: dict = {}
 
-    # -------------------------------------
-    # Python dependencies (setup.cfg)
-    # -------------------------------------
+    # ORDER IS PART OF THE CONTRACT. `add` dedupes on first write, so this
+    # decides which manifest owns a package declared in two of them. This is
+    # the order the inlined blocks ran in; do not sort or regroup it.
+    _read_if_present(repo_path, "requirements.txt", _parse_requirements_txt, add)
+    _read_if_present(repo_path, "package.json", _parse_package_json, add, node_specs)
+    _read_if_present(repo_path, "pyproject.toml", _parse_pyproject_toml, add)
+    _read_if_present(repo_path, "Pipfile", _parse_pipfile, add)
+    _read_if_present(repo_path, "setup.py", _parse_setup_py, add)
+    _read_if_present(repo_path, "setup.cfg", _parse_setup_cfg, add)
 
-    if os.path.exists(setup_cfg):
-
-        try:
-            with open(setup_cfg, "r", encoding="utf-8", errors="ignore") as f:
-
-                content = f.read()
-                in_install = False
-
-                for line in content.splitlines():
-                    stripped = line.strip()
-
-                    if "install_requires" in stripped:
-                        in_install = True
-                        continue
-
-                    if in_install:
-                        if not stripped:
-                            continue
-
-                        # PHASE H / S7: the continuation test has to look at
-                        # the ORIGINAL line's indentation. `stripped` has
-                        # already had it removed, so `stripped[0].isspace()`
-                        # was always False — and since every versioned
-                        # requirement contains "=", `flask>=2.0` closed the
-                        # section on its own first line and no setup.cfg
-                        # dependency with a version was ever recorded.
-                        if stripped.startswith("[") or not line[:1].isspace():
-                            in_install = False
-                            continue
-
-                        match = re.match(
-                            r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]*\])?)\s*([^;#]*)', stripped)
-                        if match and match.group(1):
-                            name = re.sub(r'\[.*\]', '', match.group(1))
-                            constraint = (match.group(2) or "").strip()
-                            _add_dep(name,
-                                     _exact_python_version(constraint) or "unknown",
-                                     "python",
-                                     constraint)
-
-        except Exception:
-            pass
+    dependencies = collector.dependencies
 
     # --------------------------------------------------
     # Version + vulnerability enrichment
