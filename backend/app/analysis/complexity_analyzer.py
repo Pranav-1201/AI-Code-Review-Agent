@@ -138,8 +138,10 @@ class ComplexityAnalyzer(ast.NodeVisitor):
     # B2: a nested def is its own function and is measured as one. Folding
     # its branches into the enclosing function made the enclosing function
     # read as more complex than its own body is — exactly the 7-point
-    # over-count measured on analyze_dependencies, whose nested _add_dep
-    # carries 7 decision points of its own. A lambda is NOT skipped:
+    # over-count measured on analyze_dependencies, whose nested `_add_dep`
+    # carried 7 decision points of its own. (B1 has since extracted that
+    # closure to `_DependencyCollector.add`, so the example is history; the
+    # rule it justifies is not.) A lambda is NOT skipped:
     # it has no separate entry of its own, so its branches belong to the
     # function that wrote it, which is what radon does too.
 

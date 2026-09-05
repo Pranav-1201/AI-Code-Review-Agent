@@ -15,7 +15,9 @@ Both gaps resolved exactly, in opposite directions:
     this visitor. Complexity and depth are now separated.
 
   * -7 = exactly the seven decision points of the nested `_add_dep`
-    function. We folded a nested function's complexity into its parent;
+    function (extracted to `_DependencyCollector.add` by B1; this docstring
+    records the measurement as it stood).
+    We folded a nested function's complexity into its parent;
     radon scores each function on its own body. Attributing a helper's
     branches to its enclosing function makes the enclosing function look
     worse than it reads.

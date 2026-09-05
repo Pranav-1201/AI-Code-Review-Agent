@@ -5,7 +5,7 @@
 
 import ast
 import sys
-from typing import Dict, List
+from typing import Dict, List, NamedTuple, Tuple
 
 from backend.app.services.repo_analyzer import analyze_repository
 from backend.app.services.llm_service import analyze_code
@@ -588,6 +588,422 @@ def apply_interprocedural_taint(results: List[Dict]) -> None:
 # Repository Review Engine
 # ==========================================================
 
+# ----------------------------------------------------------
+# B1: the per-file report pipeline
+# ----------------------------------------------------------
+# Two builders produce every row of the file table — one for files the
+# analyzer skipped, one for files it analysed. They must agree on their keys
+# or the frontend reads undefined off half the table; test_b1_contract.py
+# pins the difference between them.
+# ----------------------------------------------------------
+
+def _non_code_file_report(file_data: Dict) -> Dict:
+    """The minimal report for a file the analyzer does not read.
+
+    Scored 100 rather than 0: a README is not a low-quality source file, it is
+    not a source file. It is excluded from every average by `file_type`.
+    """
+    return {
+        "file_path": file_data["file_path"],
+        "file_name": file_data["file_name"],
+        "score": 100,
+        "language": file_data.get("language", "unknown"),
+        "lines": file_data.get("lines", 0),
+        "lines_of_code": file_data.get("lines", 0),
+        "complexity": "N/A",
+        "cyclomatic_complexity": 0,
+        "max_cyclomatic_complexity": 0,
+        "issues": [],
+        "security_risks": [],
+        "suggestions": [],
+        "explanation": "",
+        "explanation_source": "deterministic",
+        "improved_code": "",
+        "refactor_summary": "",
+        "content": file_data.get("content", ""),
+        "original_code": file_data.get("content", ""),
+        "documentation_coverage": 0,
+        "is_test": False,
+        "file_type": "non_code",
+        "file_role": "non_code",
+    }
+
+
+def _file_report_from_result(result: Dict, fpath: str) -> Dict:
+    """The report row for an analysed code file.
+
+    `fpath` is passed in already normalised rather than re-derived, so the
+    path written here and the path written back onto `result` cannot drift.
+    """
+    return {
+        "file_path": fpath,
+        "file_name": result.get("file_name", ""),
+
+        "score": result.get("score", 0),
+        "language": result.get("language", "unknown"),
+
+        "lines": result.get("lines", 0),
+        "lines_of_code": result.get("lines", 0),
+
+        "complexity": result.get("complexity", "O(1)"),
+        "cyclomatic_complexity": result.get("cyclomatic_complexity", 0),
+        "max_cyclomatic_complexity": result.get("max_cyclomatic_complexity", 0),
+
+        "issues": result.get("issues", []),
+
+        "security_risks": result.get("security_risks", []),
+
+        "suggestions": result.get("suggestions", []),
+        "explanation": result.get("explanation", ""),
+        # PHASE 5: "llm" | "deterministic" — carried onto the file report.
+        "explanation_source": result.get("explanation_source", "deterministic"),
+
+        "improved_code": result.get("refactor_suggestion"),
+        "refactor_summary": result.get("refactor_summary"),
+        "patch": result.get("patch"),
+        # J3 (F4/F5): the structured edits behind refactor_suggestion
+        "refactor_changes": result.get("refactor_changes", []),
+
+        "content": result.get("content", ""),
+        "original_code": result.get("content", ""),
+
+        "documentation_coverage": result.get("documentation_coverage", 0),
+        "time_complexity": result.get("complexity", "O(1)"),
+
+        "is_test": result.get("is_test", False),
+        "file_type": result.get("file_type", "production"),   # coarse
+        "file_role": result.get("file_role", "utility"),      # fine (surfaced for UI)
+    }
+
+
+def _is_real_issue(issue) -> bool:
+    """A structural issue, as opposed to the analyzer's "nothing found" note.
+
+    The placeholder is matched on its text because it arrives as an ordinary
+    issue; both counters below have to exclude it or every clean file counts
+    as a file with issues.
+
+    The two inlined filters this replaces disagreed on one detail: the
+    issue-file count coerced the message with `str()`, the all_issues loop did
+    not. Coercing is the safer of the two and changes nothing for the string
+    messages every producer actually emits.
+    """
+    msg = issue.get("message", "") if isinstance(issue, dict) else issue
+    return "no obvious structural issues" not in str(msg).lower()
+
+
+class _Aggregates(NamedTuple):
+    """One pass over the analysed files, in the shape the report needs."""
+    all_issues: List[Dict]
+    prod_results: List[Dict]
+    test_results: List[Dict]
+    issue_files: int
+    security_issues: int
+
+
+def _aggregate_results(results: List[Dict], file_reports: List[Dict]) -> _Aggregates:
+    """Build the code-file report rows and the counters over them.
+
+    Appends into the caller's `file_reports`, which already holds the non-code
+    rows, so the table keeps the order it has always had: non-code first, then
+    code in analysis order.
+    """
+    all_issues: List[Dict] = []
+    prod_results: List[Dict] = []
+    test_results: List[Dict] = []
+    issue_files = 0
+    security_issues = 0
+
+    for result in results:
+
+        # Normalize path
+        fpath = result["file_path"].replace("\\", "/")
+        result["file_path"] = fpath
+
+        print(f"Processed file: {fpath}")
+
+        file_reports.append(_file_report_from_result(result, fpath))
+
+        # Classify into production vs non-production for scoring
+        is_production = result.get("file_type") == "production"
+        if is_production:
+            prod_results.append(result)
+        else:
+            test_results.append(result)
+
+        issues = result.get("issues", [])
+
+        # Count files with real issues (all code files). A security finding is
+        # reported separately and does not make this a "file with issues".
+        if [i for i in issues
+                if i.get("type") != "security" and _is_real_issue(i)]:
+            issue_files += 1
+
+        # Security issues: count only from production files
+        if is_production:
+            security_issues += len(result.get("security_risks", []))
+
+        all_issues.extend(i for i in issues if _is_real_issue(i))
+
+    return _Aggregates(all_issues, prod_results, test_results,
+                       issue_files, security_issues)
+
+
+# ----------------------------------------------------------
+# B1: scoring
+# ----------------------------------------------------------
+
+#: Source-stratified quality weighting. Prevents example and docs files from
+#: fully diluting the score, and keeps test files out of it entirely. A weight
+#: of 0 excludes a file from both the numerator and the denominator, so tests
+#: neither help nor hurt.
+FILE_TYPE_WEIGHTS = {
+    "production": 1.0,
+    "example":    0.1,
+    "docs":       0.05,
+    "test":       0.0,
+}
+
+
+def _file_type_weight(result: Dict) -> float:
+    return FILE_TYPE_WEIGHTS.get(result.get("file_type", "production"), 1.0)
+
+
+class _Averages(NamedTuple):
+    """Averages over PRODUCTION files, except `score` which is weighted.
+
+    Test and non-code files must not distort the metrics; documentation and
+    complexity are therefore straight means over production files only, while
+    the quality score uses FILE_TYPE_WEIGHTS so an examples directory counts
+    for a little rather than nothing or everything.
+    """
+    score: float
+    documentation: float
+    cyclomatic: float
+
+
+def _compute_averages(results: List[Dict], prod_results: List[Dict]) -> _Averages:
+    prod_count = len(prod_results)
+    if prod_count == 0:
+        return _Averages(0, 0, 0)
+
+    weighted = [(r, _file_type_weight(r)) for r in results]
+    weighted_sum = sum(r["score"] * w for r, w in weighted if w > 0)
+    weight_total = sum(w for _, w in weighted if w > 0)
+
+    return _Averages(
+        score=round(weighted_sum / weight_total, 2) if weight_total > 0 else 0,
+        documentation=round(
+            sum(r.get("documentation_coverage", 0) for r in prod_results) / prod_count, 1),
+        cyclomatic=round(
+            sum(r.get("cyclomatic_complexity", 0) for r in prod_results) / prod_count, 1),
+    )
+
+
+class _HealthScore(NamedTuple):
+    """The four dimensions of the composite, and the composite itself.
+
+    The weights are surfaced in the UI (F14), so they are named here rather
+    than left as bare literals in an arithmetic expression.
+    """
+    quality: float
+    security: int
+    documentation: float
+    simplicity: int
+    composite: int
+
+
+def _compute_health_score(averages: _Averages, security_issues: int) -> _HealthScore:
+    """Compute health on the BACKEND, from production files only.
+
+    Note what happens with nothing to measure: quality and documentation are
+    0, but security and simplicity have nothing to subtract from and come out
+    at 100, so an unanalysable repository scores 45. That is why B6 rejects
+    such a repository upstream rather than showing this number to anyone.
+    """
+    security = (100 if security_issues == 0
+                else max(0, round(100 - (security_issues ** 0.7) * 10)))
+    simplicity = max(0, round(100 - min(averages.cyclomatic * 3, 80)))
+
+    composite = round(
+        0.35 * averages.score +
+        0.25 * security +
+        0.20 * averages.documentation +
+        0.20 * simplicity
+    )
+    return _HealthScore(averages.score, security, averages.documentation,
+                        simplicity, composite)
+
+
+# ----------------------------------------------------------
+# B1: the repo-level report sections
+# ----------------------------------------------------------
+
+def _group_issues(all_issues: List[Dict]) -> List[Dict]:
+    """Collapse repeated issues by message, counting the files they hit.
+
+    The first occurrence supplies every other field, so a grouped issue keeps
+    the line and snippet of whichever file reported it first.
+    """
+    issue_groups: Dict[str, Dict] = {}
+
+    for issue in all_issues:
+        msg = issue.get("message", "") if isinstance(issue, dict) else str(issue)
+        # Normalize message for grouping (remove numbers, file-specific parts)
+        key = msg.lower().strip()
+
+        if key in issue_groups:
+            issue_groups[key]["count"] += 1
+            file = issue.get("file", "")
+            if file and file not in issue_groups[key]["affected_files"]:
+                issue_groups[key]["affected_files"].append(file)
+        else:
+            issue_groups[key] = {
+                **issue,
+                "count": 1,
+                "affected_files": [issue.get("file", "")]
+            }
+
+    return list(issue_groups.values())
+
+
+def _graph_centrality(dependency_graph: Dict, repo_data) -> Tuple[str, str]:
+    """(most central file, most reused first-party module).
+
+    Central means most outgoing imports — the file that depends on the most
+    other things, which is where a change is most likely to break something.
+    Both default to the string "None", which is what the UI renders.
+    """
+    if not (dependency_graph
+            and "nodes" in dependency_graph
+            and "links" in dependency_graph):
+        return "None", "None"
+
+    out_degrees: Dict[str, int] = {}
+    for link in dependency_graph["links"]:
+        src = link["source"]
+        out_degrees[src] = out_degrees.get(src, 0) + 1
+
+    # B4: the raw max() here always returned a stdlib module.
+    most_reused_module = most_reused_first_party(
+        dependency_graph,
+        [f.get("file_path", "") for f in repo_data],
+    )
+    most_central_file = (max(out_degrees.items(), key=lambda x: x[1])[0]
+                         if out_degrees else "None")
+    return most_central_file, most_reused_module
+
+
+def _maintainability_warnings(prod_results: List[Dict]) -> List[Dict]:
+    """Long files and complex functions, production code only."""
+    warnings: List[Dict] = []
+
+    for r in prod_results:
+        lines = r.get("lines", 0)
+        fpath = r.get("file_path", "")
+        max_cc = r.get("max_cyclomatic_complexity", 0)
+
+        # PHASE 2: cohesion-gated, reading the SAME should_flag_size decision
+        # the file-level issue used. Previously this applied its own flat
+        # `lines > 300`, so the repo warning and the file issue could disagree.
+        r_cohesion = r.get("cohesion") or NO_SIZE_FLAG
+        if r_cohesion.get("should_flag_size"):
+            warnings.append({
+                "file": fpath,
+                "type": "long_file",
+                "message": r_cohesion.get("flag_reason")
+                           or f"File is {lines} lines long with low cohesion — consider splitting",
+                "severity": "medium"
+            })
+
+        if max_cc > 10:
+            warnings.append({
+                "file": fpath,
+                "type": "complex_function",
+                "message": f"Contains function(s) with cyclomatic complexity {max_cc} — consider refactoring",
+                "severity": "medium" if max_cc <= 20 else "high"
+            })
+
+    return warnings
+
+
+def _build_insights(grouped_issues: List[Dict], prod_results: List[Dict],
+                    most_central_file: str, most_reused_module: str) -> Dict:
+    """The five-item summaries the dashboard leads with."""
+
+    # Top 5 Critical Issues
+    critical_issues = sorted(
+        [i for i in grouped_issues
+         if i.get("type") == "security" or i.get("severity") in ("critical", "high")],
+        key=lambda x: (x.get("confidence", 0), x.get("count", 0)),
+        reverse=True
+    )[:5]
+
+    # Most Complex Files
+    complex_files = sorted(
+        [f for f in prod_results if f.get("cyclomatic_complexity", 0) > 3],
+        key=lambda x: x.get("cyclomatic_complexity", 0),
+        reverse=True
+    )[:5]
+
+    return {
+        "top_critical_issues": critical_issues,
+        "most_complex_files": [{
+            "file_path": f["file_path"],
+            "cyclomatic_complexity": f.get("cyclomatic_complexity", 0),
+            "score": f["score"]
+        } for f in complex_files],
+        "most_central_file": most_central_file,
+        "most_reused_module": most_reused_module
+    }
+
+
+def _attach_duplicates(file_reports: List[Dict], duplicates: List[Dict]) -> None:
+    """Write each file's duplicate partners onto its report row.
+
+    Matched on path first and file name second: the detector reports whichever
+    it has, and a bare name still has to find its row.
+    """
+    duplicate_map: Dict[str, List[Dict]] = {}
+    for dup in duplicates:
+        f1 = dup.get("file1", "")
+        f2 = dup.get("file2", "")
+        sim = dup.get("similarity", 100)
+
+        duplicate_map.setdefault(f1, []).append({"file": f2, "similarity": sim})
+        duplicate_map.setdefault(f2, []).append({"file": f1, "similarity": sim})
+
+    for report in file_reports:
+        fname = report.get("file_name", "")
+        fpath = report.get("file_path", "")
+        report["duplicates"] = (duplicate_map.get(fpath, [])
+                                or duplicate_map.get(fname, []))
+
+
+def _architecture_summary(results: List[Dict]) -> Tuple[Dict, Dict]:
+    """PHASE 4: framework fingerprint + architecture smells.
+
+    Repo-level, from real import-based evidence, replacing the filename
+    substring framework guess.
+
+    Both analyses are fail-soft on purpose: a repository that breaks one of
+    them still gets a report, minus that section. They are informational, and
+    no score depends on them.
+    """
+    code_sources = {r["file_path"]: r.get("content", "")
+                    for r in results if r.get("content")}
+    try:
+        frameworks = summarize_frameworks(code_sources)
+    except Exception:
+        frameworks = {}
+    try:
+        architecture = analyze_architecture(code_sources)
+    except Exception:
+        architecture = {"god_objects": [], "layer_violations": []}
+
+    return frameworks, architecture
+
+
 class RepositoryReviewEngine:
 
     def __init__(self):
@@ -605,11 +1021,7 @@ class RepositoryReviewEngine:
         duplicates = detect_duplicates(repo_data)
 
         file_reports: List[Dict] = []
-        results = []
-
-        total_score = 0
-        issue_files = 0
-        security_issues = 0
+        results: List[Dict] = []
 
         # --------------------------------------------------
         # Run file analysis (only on code files)
@@ -619,30 +1031,7 @@ class RepositoryReviewEngine:
 
             # Non-code files: add minimal report without AI analysis
             if not file_data.get("is_code", True):
-                file_reports.append({
-                    "file_path": file_data["file_path"],
-                    "file_name": file_data["file_name"],
-                    "score": 100,
-                    "language": file_data.get("language", "unknown"),
-                    "lines": file_data.get("lines", 0),
-                    "lines_of_code": file_data.get("lines", 0),
-                    "complexity": "N/A",
-                    "cyclomatic_complexity": 0,
-                    "max_cyclomatic_complexity": 0,
-                    "issues": [],
-                    "security_risks": [],
-                    "suggestions": [],
-                    "explanation": "",
-                    "explanation_source": "deterministic",
-                    "improved_code": "",
-                    "refactor_summary": "",
-                    "content": file_data.get("content", ""),
-                    "original_code": file_data.get("content", ""),
-                    "documentation_coverage": 0,
-                    "is_test": False,
-                    "file_type": "non_code",
-                    "file_role": "non_code",
-                })
+                file_reports.append(_non_code_file_report(file_data))
                 continue
 
             result = analyze_single_file(file_data, self.refactor_engine,
@@ -657,259 +1046,39 @@ class RepositoryReviewEngine:
         # Aggregate results
         # --------------------------------------------------
 
-        all_issues = []
-
-        # Separate production and test results for scoring
-        prod_results = []
-        test_results = []
-
-        for result in results:
-
-            # Normalize path
-            fpath = result["file_path"].replace("\\", "/")
-            result["file_path"] = fpath
-
-            print(f"Processed file: {fpath}")
-
-            file_report = {
-                "file_path": fpath,
-                "file_name": result.get("file_name", ""),
-
-                "score": result.get("score", 0),
-                "language": result.get("language", "unknown"),
-
-                "lines": result.get("lines", 0),
-                "lines_of_code": result.get("lines", 0),
-
-                "complexity": result.get("complexity", "O(1)"),
-                "cyclomatic_complexity": result.get("cyclomatic_complexity", 0),
-                "max_cyclomatic_complexity": result.get("max_cyclomatic_complexity", 0),
-
-                "issues": result.get("issues", []),
-
-                "security_risks": result.get("security_risks", []),
-
-                "suggestions": result.get("suggestions", []),
-                "explanation": result.get("explanation", ""),
-                # PHASE 5: "llm" | "deterministic" — carried onto the file report.
-                "explanation_source": result.get("explanation_source", "deterministic"),
-
-                "improved_code": result.get("refactor_suggestion"),
-                "refactor_summary": result.get("refactor_summary"),
-                "patch": result.get("patch"),
-                # J3 (F4/F5): the structured edits behind refactor_suggestion
-                "refactor_changes": result.get("refactor_changes", []),
-
-                "content": result.get("content", ""),
-                "original_code": result.get("content", ""),
-
-                "documentation_coverage": result.get("documentation_coverage", 0),
-                "time_complexity": result.get("complexity", "O(1)"),
-
-                "is_test": result.get("is_test", False),
-                "file_type": result.get("file_type", "production"),   # coarse
-                "file_role": result.get("file_role", "utility"),      # fine (surfaced for UI)
-            }
-
-            file_reports.append(file_report)
-
-            # Classify into production vs non-production for scoring
-            if result.get("file_type") == "production":
-                prod_results.append(result)
-            else:
-                test_results.append(result)
-
-            # Count files with real issues (all code files)
-            real_issues = [
-                i for i in result.get("issues", [])
-                if i.get("type") != "security"
-                and "no obvious structural issues" not in str(i.get("message", "")).lower()
-            ]
-
-            if real_issues:
-                issue_files += 1
-
-            # Security issues: count only from production files
-            if result.get("file_type") == "production":
-                security_issues += len(result.get("security_risks", []))
-
-            for issue in result.get("issues", []):
-                msg = issue.get("message", "") if isinstance(issue, dict) else str(issue)
-                if "no obvious structural issues" not in msg.lower():
-                    all_issues.append(issue)
+        agg = _aggregate_results(results, file_reports)
+        all_issues = agg.all_issues
+        prod_results = agg.prod_results
+        test_results = agg.test_results
+        issue_files = agg.issue_files
+        security_issues = agg.security_issues
 
         # --------------------------------------------------
-        # Compute averages from PRODUCTION files only
-        # Test files and non-code files must not distort metrics
+        # Scoring — production files only, computed on the backend
         # --------------------------------------------------
 
         prod_count = len(prod_results)
         total_file_count = len(file_reports)
         code_file_count = len(results)
 
-        if prod_count > 0:
-            # --------------------------------------------------
-            # Source-stratified quality score
-            # production=1.0, example=0.1, docs=0.05, test=0.0
-            # Prevents example/docs files from fully diluting score
-            # --------------------------------------------------
-            FILE_TYPE_WEIGHTS = {
-                "production": 1.0,
-                "example":    0.1,
-                "docs":       0.05,
-                "test":       0.0,
-            }
-            weighted_sum = sum(
-                r["score"] * FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0)
-                for r in results
-                if FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0) > 0
-            )
-            weight_total = sum(
-                FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0)
-                for r in results
-                if FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0) > 0
-            )
-            avg_score = round(weighted_sum / weight_total, 2) if weight_total > 0 else 0
-            avg_doc = round(
-                sum(r.get("documentation_coverage", 0) for r in prod_results) / prod_count, 1
-            )
-            avg_cyclomatic = round(
-                sum(r.get("cyclomatic_complexity", 0) for r in prod_results) / prod_count, 1
-            )
-        else:
-            avg_score = 0
-            avg_doc = 0
-            avg_cyclomatic = 0
+        averages = _compute_averages(results, prod_results)
+        avg_score = averages.score
+        avg_doc = averages.documentation
+        avg_cyclomatic = averages.cyclomatic
+
+        health_score = _compute_health_score(averages, security_issues).composite
 
         # --------------------------------------------------
-        # Compute health_score on the BACKEND
-        # using production files only
+        # Repo-level sections
         # --------------------------------------------------
 
-        quality_score = avg_score
-        sec_score = 100 if security_issues == 0 else max(0, round(100 - (security_issues ** 0.7) * 10))
-        doc_score = avg_doc
-        simplicity_score = max(0, round(100 - min(avg_cyclomatic * 3, 80)))
-
-        health_score = round(
-            0.35 * quality_score +
-            0.25 * sec_score +
-            0.20 * doc_score +
-            0.20 * simplicity_score
-        )
-
-        # --------------------------------------------------
-        # Group repeated issues by message pattern
-        # --------------------------------------------------
-
-        grouped_issues = []
-        issue_groups: Dict[str, Dict] = {}
-
-        for issue in all_issues:
-            msg = issue.get("message", "") if isinstance(issue, dict) else str(issue)
-            # Normalize message for grouping (remove numbers, file-specific parts)
-            key = msg.lower().strip()
-
-            if key in issue_groups:
-                issue_groups[key]["count"] += 1
-                file = issue.get("file", "")
-                if file and file not in issue_groups[key]["affected_files"]:
-                    issue_groups[key]["affected_files"].append(file)
-            else:
-                issue_groups[key] = {
-                    **issue,
-                    "count": 1,
-                    "affected_files": [issue.get("file", "")]
-                }
-
-        grouped_issues = list(issue_groups.values())
-        
-        # --------------------------------------------------
-        # Dependency Graph Analysis (Centrality / Reuse)
-        # --------------------------------------------------
-        most_central_file = "None"
-        most_reused_module = "None"
-        
-        if dependency_graph and "nodes" in dependency_graph and "links" in dependency_graph:
-            in_degrees = {}
-            out_degrees = {}
-            for link in dependency_graph["links"]:
-                src = link["source"]
-                tgt = link["target"]
-                out_degrees[src] = out_degrees.get(src, 0) + 1
-                in_degrees[tgt] = in_degrees.get(tgt, 0) + 1
-                
-            # B4: the raw max() here always returned a stdlib module.
-            most_reused_module = most_reused_first_party(
-                dependency_graph,
-                [f.get("file_path", "") for f in repo_data],
-            )
-            if out_degrees:
-                most_central_file = max(out_degrees.items(), key=lambda x: x[1])[0]
-
-        # --------------------------------------------------
-        # Maintainability warnings
-        # Detect long files and complex functions in prod code
-        # --------------------------------------------------
-
-        maintainability_warnings = []
-
-        for r in prod_results:
-            lines = r.get("lines", 0)
-            fpath = r.get("file_path", "")
-            cc = r.get("cyclomatic_complexity", 0)
-            max_cc = r.get("max_cyclomatic_complexity", 0)
-
-            # PHASE 2: cohesion-gated, reading the SAME should_flag_size
-            # decision the file-level issue used. Previously this applied its
-            # own flat `lines > 300`, so the repo warning and the file issue
-            # could disagree.
-            r_cohesion = r.get("cohesion") or NO_SIZE_FLAG
-            if r_cohesion.get("should_flag_size"):
-                maintainability_warnings.append({
-                    "file": fpath,
-                    "type": "long_file",
-                    "message": r_cohesion.get("flag_reason")
-                               or f"File is {lines} lines long with low cohesion — consider splitting",
-                    "severity": "medium"
-                })
-
-            if max_cc > 10:
-                maintainability_warnings.append({
-                    "file": fpath,
-                    "type": "complex_function",
-                    "message": f"Contains function(s) with cyclomatic complexity {max_cc} — consider refactoring",
-                    "severity": "medium" if max_cc <= 20 else "high"
-                })
-
-        # --------------------------------------------------
-        # Insights Generation (Top Issues, Risks, Strengths)
-        # --------------------------------------------------
-        
-        # Top 5 Critical Issues
-        critical_issues = sorted(
-            [i for i in grouped_issues if i.get("type") == "security" or i.get("severity") in ("critical", "high")],
-            key=lambda x: (x.get("confidence", 0), x.get("count", 0)),
-            reverse=True
-        )[:5]
-        
-        # Most Complex Files
-        complex_files = sorted(
-            [f for f in prod_results if f.get("cyclomatic_complexity", 0) > 3],
-            key=lambda x: x.get("cyclomatic_complexity", 0),
-            reverse=True
-        )[:5]
-
-        insights = {
-            "top_critical_issues": critical_issues,
-            "most_complex_files": [{
-                "file_path": f["file_path"],
-                "cyclomatic_complexity": f.get("cyclomatic_complexity", 0),
-                "score": f["score"]
-            } for f in complex_files],
-            "most_central_file": most_central_file,
-            "most_reused_module": most_reused_module
-        }
+        grouped_issues = _group_issues(all_issues)
+        most_central_file, most_reused_module = _graph_centrality(
+            dependency_graph, repo_data)
+        insights = _build_insights(grouped_issues, prod_results,
+                                   most_central_file, most_reused_module)
+        _attach_duplicates(file_reports, duplicates)
+        frameworks, architecture = _architecture_summary(results)
 
         summary = {
             "files_analyzed": total_file_count,
@@ -923,7 +1092,10 @@ class RepositoryReviewEngine:
             "avg_documentation_coverage": avg_doc,
             "avg_cyclomatic_complexity": avg_cyclomatic,
             "health_score": health_score,
-            "maintainability_warnings": maintainability_warnings,
+            "maintainability_warnings": _maintainability_warnings(prod_results),
+            "frameworks": frameworks,
+            "god_object_count": len(architecture.get("god_objects", [])),
+            "layer_violation_count": len(architecture.get("layer_violations", [])),
         }
 
         visualizations = {
@@ -931,49 +1103,6 @@ class RepositoryReviewEngine:
             "complexity": [r.get("cyclomatic_complexity", 0) for r in results],
             "lines": [r["lines"] for r in results]
         }
-
-        # --------------------------------------------------
-        # Map duplicates to file-level
-        # --------------------------------------------------
-
-        duplicate_map = {}
-        for dup in duplicates:
-            f1 = dup.get("file1", "")
-            f2 = dup.get("file2", "")
-            sim = dup.get("similarity", 100)
-
-            if f1 not in duplicate_map:
-                duplicate_map[f1] = []
-            duplicate_map[f1].append({"file": f2, "similarity": sim})
-
-            if f2 not in duplicate_map:
-                duplicate_map[f2] = []
-            duplicate_map[f2].append({"file": f1, "similarity": sim})
-
-        for report in file_reports:
-            fname = report.get("file_name", "")
-            fpath = report.get("file_path", "")
-            report["duplicates"] = duplicate_map.get(fpath, []) or duplicate_map.get(fname, [])
-
-        # --------------------------------------------------
-        # PHASE 4: framework fingerprint + architecture smells
-        # (repo-level; real import-based evidence, replacing the
-        #  filename-substring framework guess)
-        # --------------------------------------------------
-        code_sources = {r["file_path"]: r.get("content", "")
-                        for r in results if r.get("content")}
-        try:
-            frameworks = summarize_frameworks(code_sources)
-        except Exception:
-            frameworks = {}
-        try:
-            architecture = analyze_architecture(code_sources)
-        except Exception:
-            architecture = {"god_objects": [], "layer_violations": []}
-
-        summary["frameworks"] = frameworks
-        summary["god_object_count"] = len(architecture.get("god_objects", []))
-        summary["layer_violation_count"] = len(architecture.get("layer_violations", []))
 
         # --------------------------------------------------
         # Final repository report

@@ -868,3 +868,38 @@ green suite, which is exactly the failure mode this project has hit before.
 Started-and-abandoned is worse than not started: it leaves the codebase
 mid-restructure with no checkpoint to return to. Left whole, with the
 complexity numbers now accurate enough (D31) to judge the result against.
+
+## D33 — B1 was gated on byte-identical output, not on the test suite
+
+**Date:** 2026-09-05 · **Decided by:** Claude Opus 5 (session `81d7c85b`)
+
+D32 left B1 unstarted because a subtle regression in either function would be
+invisible to a green suite. That is still true — 517 passing tests do not
+prove a report is unchanged. So the decomposition was gated on something
+else: a harness that runs both functions over a frozen `git archive` export of
+`ff69de2` (247 files), with the two network calls stubbed, and compares
+5,429,674 bytes of canonical JSON. Each of the five extraction commits had to
+leave `cmp` clean.
+
+That gate is what made the restructure safe enough to do at all, and it earned
+its keep immediately: it is what proved the `vulns` control-flow move in
+`f4e26a6` was faithful, and what proved the removed `in_degrees` accumulation
+in `d9c6e76` was genuinely dead rather than merely unread by the tests.
+
+**The gate was wrong on its first design and that is the transferable part.**
+It scanned the live working tree, so adding one test file to this branch moved
+`file_reports` from 247 to 248 and the comparison failed for a reason with
+nothing to do with the refactor. A regression gate whose target moves while
+the code moves proves nothing in either direction — it can fail on innocent
+changes and, worse, a compensating change could make it pass on a real
+regression. Freeze the input.
+
+Two limits, recorded so nobody over-reads the guarantee:
+
+* The harness serialises with `sort_keys`, so it cannot see a key **order**
+  change. Insertion order for `repository_summary` and the top-level report
+  was checked separately.
+* Byte-identical over one 247-file Python repository is not byte-identical
+  over every repository. The manifest parsers in particular are exercised by
+  whatever manifests this repo happens to have; `test_b1_contract.py` covers
+  all six parsers precisely because the gate cannot.

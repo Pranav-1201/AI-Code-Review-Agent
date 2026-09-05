@@ -385,25 +385,31 @@ def _npm_locked_versions(repo_path: str) -> dict:
 # Main Analyzer
 # ----------------------------------------------------------
 
-def analyze_dependencies(repo_path):
+# ----------------------------------------------------------
+# B1: one manifest parser per function
+# ----------------------------------------------------------
+# `analyze_dependencies` was 385 lines and CC 68 — six inlined manifest
+# parsers, a nested recorder, and an enrichment pass, all in one body. The
+# parsers never enrich and the enrichers never parse, so they split cleanly.
+#
+# Every parser is fail-soft by contract: a malformed manifest costs you that
+# manifest's dependencies, never the scan. That is why each keeps its own
+# bare `except Exception`, rather than one try wrapping the whole table.
+# ----------------------------------------------------------
 
-    dependencies = []
-    seen = set()  # Deduplicate by (name, type)
+class _DependencyCollector:
+    """Accumulates dependencies, deduplicating by (lowercased name, type).
 
-    # Raw package.json specs, keyed by lowercase name. `_add_dep` stores a
-    # display version with the range operator stripped, which makes "^1.2.3"
-    # indistinguishable from the exact pin "1.2.3" — a distinction the OSV
-    # lookup depends on. Keep the unmangled spec here for that decision.
-    node_specs: dict = {}
+    First write wins, which is why the order parsers run in is part of the
+    contract: whichever manifest is read first owns the version for a package
+    declared in two of them.
+    """
 
-    requirements = os.path.join(repo_path, "requirements.txt")
-    package_json = os.path.join(repo_path, "package.json")
-    pyproject = os.path.join(repo_path, "pyproject.toml")
-    pipfile = os.path.join(repo_path, "Pipfile")
-    setup_py = os.path.join(repo_path, "setup.py")
-    setup_cfg = os.path.join(repo_path, "setup.cfg")
+    def __init__(self):
+        self.dependencies = []
+        self.seen = set()
 
-    def _add_dep(name, version="unknown", dep_type="python", constraint=""):
+    def add(self, name, version="unknown", dep_type="python", constraint=""):
         """Record a dependency.
 
         PHASE H / S7: `version` holds a concrete version or "unknown", never a
@@ -413,10 +419,10 @@ def analyze_dependencies(repo_path):
         arrived at, so a reader can tell a pin from a guess.
         """
         key = (name.strip().lower(), dep_type)
-        if key in seen or not name.strip():
+        if key in self.seen or not name.strip():
             return
 
-        seen.add(key)
+        self.seen.add(key)
 
         constraint = (constraint or "").strip()
         version = (version or "unknown").strip() or "unknown"
@@ -428,7 +434,7 @@ def analyze_dependencies(repo_path):
         else:
             source = "unspecified"
 
-        dependencies.append({
+        self.dependencies.append({
             "name": name.strip(),
             "version": version,
             "constraint": constraint,
@@ -444,329 +450,376 @@ def analyze_dependencies(repo_path):
             "type": dep_type
         })
 
-    # -------------------------------------
-    # Python dependencies (requirements.txt)
-    # -------------------------------------
 
-    if os.path.exists(requirements):
+def _parse_requirements_txt(path, add):
+    """requirements.txt — one specifier per line, flags and comments skipped."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
 
-        try:
-            with open(requirements, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
 
-                for line in f:
+                line = line.strip()
 
-                    line = line.strip()
+                # Skip empty lines, comments, flags
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
 
-                    # Skip empty lines, comments, flags
-                    if not line or line.startswith("#") or line.startswith("-"):
+                # Handle various version specifiers
+                # name==version, name>=version, name~=version, name[extra]==version
+                # PHASE H / S7: capture the WHOLE specifier, not just its
+                # first clause, and resolve it rather than stripping the
+                # operator off and keeping the digits. `flask>=2.0` used to
+                # be recorded as version "2.0".
+                match = re.match(
+                    r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]+\])?)\s*([^;#]*)', line)
+                if match:
+                    name = re.sub(r'\[.*\]', '', match.group(1))  # Remove extras
+                    constraint = (match.group(2) or "").strip()
+                    add(name,
+                        _exact_python_version(constraint) or "unknown",
+                        "python",
+                        constraint)
+    except Exception:
+        pass
+
+
+def _parse_package_json(path, add, node_specs):
+    """package.json — both dependency blocks, typed apart for the report.
+
+    `node_specs` keeps the UNMANGLED spec: `add` stores a display version with
+    the range operator stripped, which makes "^1.2.3" indistinguishable from
+    the exact pin "1.2.3" — a distinction the OSV lookup depends on.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            data = json.load(f)
+
+            # Regular dependencies
+            deps = data.get("dependencies", {})
+            for name, version in deps.items():
+                clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
+                add(name, clean_version, "node")
+                node_specs.setdefault(name.strip().lower(), str(version))
+
+            # Dev dependencies
+            dev_deps = data.get("devDependencies", {})
+            for name, version in dev_deps.items():
+                clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
+                add(name, clean_version, "node-dev")
+                node_specs.setdefault(name.strip().lower(), str(version))
+
+    except Exception:
+        pass
+
+
+def _parse_pyproject_toml(path, add):
+    """pyproject.toml — the [project] dependencies list, then a whole-file
+    fallback for quoted requirements anywhere else (build-system, and the
+    many tools that keep their own lists)."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            content = f.read()
+
+            # Try to find [project] dependencies section
+            # Matches: "package>=1.0", "package==1.0", "package~=1.0", "package"
+            in_deps = False
+            for line in content.splitlines():
+                stripped = line.strip()
+
+                if stripped.startswith("dependencies") and "=" in stripped:
+                    in_deps = True
+                    continue
+
+                if in_deps:
+                    if stripped == "]":
+                        in_deps = False
                         continue
 
-                    # Handle various version specifiers
-                    # name==version, name>=version, name~=version, name[extra]==version
-                    # PHASE H / S7: capture the WHOLE specifier, not just its
-                    # first clause, and resolve it rather than stripping the
-                    # operator off and keeping the digits. `flask>=2.0` used to
-                    # be recorded as version "2.0".
-                    match = re.match(
-                        r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]+\])?)\s*([^;#]*)', line)
+                    # PHASE H / S7: take the whole specifier out of the
+                    # quoted string and resolve it, rather than capturing
+                    # one operator and one run of digits.
+                    dep_match = re.match(
+                        r'''["']([a-zA-Z0-9_\-\.]+)(?:\[[^\]]*\])?\s*([^"';]*)''',
+                        stripped)
+                    if dep_match:
+                        name = dep_match.group(1)
+                        constraint = (dep_match.group(2) or "").strip()
+                        add(name,
+                            _exact_python_version(constraint) or "unknown",
+                            "python",
+                            constraint)
+
+            # Fallback: any quoted "name<specifier>" anywhere in the file.
+            #
+            # This is where `"flit_core==3.11,<4"` became version
+            # "3.11,<4" — the old pattern captured everything up to the
+            # closing quote and stored it verbatim in a version field.
+            for name, constraint in re.findall(
+                    r'"([a-zA-Z0-9_\-\.]+)\s*((?:[><=!~]=?|===)[^"]*)"', content):
+                constraint = constraint.strip()
+                add(name,
+                    _exact_python_version(constraint) or "unknown",
+                    "python",
+                    constraint)
+
+    except Exception:
+        pass
+
+
+def _parse_pipfile(path, add):
+    """Pipfile — [packages] and [dev-packages]; any other section closes both.
+
+    Both land as type "python": the Pipfile dev/prod split is not carried into
+    the report the way package.json's is.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+
+            content = f.read()
+            in_packages = False
+            in_dev = False
+
+            for line in content.splitlines():
+                stripped = line.strip()
+
+                if stripped == "[packages]":
+                    in_packages = True
+                    in_dev = False
+                    continue
+                elif stripped == "[dev-packages]":
+                    in_packages = False
+                    in_dev = True
+                    continue
+                elif stripped.startswith("["):
+                    in_packages = False
+                    in_dev = False
+                    continue
+
+                if in_packages or in_dev:
+                    # Format: package_name = "==1.0.0" or package_name = "*"
+                    match = re.match(r'^([a-zA-Z0-9_\-\.]+)\s*=\s*["\']([^"\']*)["\']', stripped)
                     if match:
-                        name = re.sub(r'\[.*\]', '', match.group(1))  # Remove extras
+                        # PHASE H / S7: the operator carried meaning and
+                        # was being deleted — `">=2.0"` became "2.0".
+                        name = match.group(1)
                         constraint = (match.group(2) or "").strip()
-                        _add_dep(name,
-                                 _exact_python_version(constraint) or "unknown",
-                                 "python",
-                                 constraint)
-        except Exception:
-            pass
+                        add(name,
+                            _exact_python_version(constraint) or "unknown",
+                            "python",
+                            constraint)
 
-    # -------------------------------------
-    # Node dependencies (package.json)
-    # -------------------------------------
+    except Exception:
+        pass
 
-    if os.path.exists(package_json):
 
-        try:
-            with open(package_json, "r", encoding="utf-8", errors="ignore") as f:
+def _parse_setup_py(path, add):
+    """setup.py — names only.
 
-                data = json.load(f)
+    setup.py is executable Python; this reads it as text rather than running
+    it, so a version attached to a name is not reliably recoverable and every
+    dependency here is recorded as unspecified.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
 
-                # Regular dependencies
-                deps = data.get("dependencies", {})
-                for name, version in deps.items():
-                    clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
-                    _add_dep(name, clean_version, "node")
-                    node_specs.setdefault(name.strip().lower(), str(version))
+            content = f.read()
 
-                # Dev dependencies
-                dev_deps = data.get("devDependencies", {})
-                for name, version in dev_deps.items():
-                    clean_version = re.sub(r'^[\^~>=<]+', '', str(version))
-                    _add_dep(name, clean_version, "node-dev")
-                    node_specs.setdefault(name.strip().lower(), str(version))
+            # Match install_requires list items
+            matches = re.findall(r'["\']([a-zA-Z0-9_\-\.]+)(?:[><=!~]+[\d\.]+)?["\']', content)
+            for name in matches:
+                # Skip common non-package strings
+                if name not in ("python", "setup", "find_packages", "setuptools"):
+                    add(name, "unknown", "python")
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # -------------------------------------
-    # Python dependencies (pyproject.toml)
-    # -------------------------------------
 
-    if os.path.exists(pyproject):
+def _parse_setup_cfg(path, add):
+    """setup.cfg — the indented install_requires block."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
 
-        try:
-            with open(pyproject, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+            in_install = False
 
-                content = f.read()
+            for line in content.splitlines():
+                stripped = line.strip()
 
-                # Try to find [project] dependencies section
-                # Matches: "package>=1.0", "package==1.0", "package~=1.0", "package"
-                in_deps = False
-                for line in content.splitlines():
-                    stripped = line.strip()
+                if "install_requires" in stripped:
+                    in_install = True
+                    continue
 
-                    if stripped.startswith("dependencies") and "=" in stripped:
-                        in_deps = True
+                if in_install:
+                    if not stripped:
                         continue
 
-                    if in_deps:
-                        if stripped == "]":
-                            in_deps = False
-                            continue
-
-                        # PHASE H / S7: take the whole specifier out of the
-                        # quoted string and resolve it, rather than capturing
-                        # one operator and one run of digits.
-                        dep_match = re.match(
-                            r'''["']([a-zA-Z0-9_\-\.]+)(?:\[[^\]]*\])?\s*([^"';]*)''',
-                            stripped)
-                        if dep_match:
-                            name = dep_match.group(1)
-                            constraint = (dep_match.group(2) or "").strip()
-                            _add_dep(name,
-                                     _exact_python_version(constraint) or "unknown",
-                                     "python",
-                                     constraint)
-
-                # Fallback: any quoted "name<specifier>" anywhere in the file.
-                #
-                # This is where `"flit_core==3.11,<4"` became version
-                # "3.11,<4" — the old pattern captured everything up to the
-                # closing quote and stored it verbatim in a version field.
-                for name, constraint in re.findall(
-                        r'"([a-zA-Z0-9_\-\.]+)\s*((?:[><=!~]=?|===)[^"]*)"', content):
-                    constraint = constraint.strip()
-                    _add_dep(name,
-                             _exact_python_version(constraint) or "unknown",
-                             "python",
-                             constraint)
-
-        except Exception:
-            pass
-
-    # -------------------------------------
-    # Python dependencies (Pipfile)
-    # -------------------------------------
-
-    if os.path.exists(pipfile):
-
-        try:
-            with open(pipfile, "r", encoding="utf-8", errors="ignore") as f:
-
-                content = f.read()
-                in_packages = False
-                in_dev = False
-
-                for line in content.splitlines():
-                    stripped = line.strip()
-
-                    if stripped == "[packages]":
-                        in_packages = True
-                        in_dev = False
-                        continue
-                    elif stripped == "[dev-packages]":
-                        in_packages = False
-                        in_dev = True
-                        continue
-                    elif stripped.startswith("["):
-                        in_packages = False
-                        in_dev = False
+                    # PHASE H / S7: the continuation test has to look at
+                    # the ORIGINAL line's indentation. `stripped` has
+                    # already had it removed, so `stripped[0].isspace()`
+                    # was always False — and since every versioned
+                    # requirement contains "=", `flask>=2.0` closed the
+                    # section on its own first line and no setup.cfg
+                    # dependency with a version was ever recorded.
+                    if stripped.startswith("[") or not line[:1].isspace():
+                        in_install = False
                         continue
 
-                    if in_packages or in_dev:
-                        # Format: package_name = "==1.0.0" or package_name = "*"
-                        match = re.match(r'^([a-zA-Z0-9_\-\.]+)\s*=\s*["\']([^"\']*)["\']', stripped)
-                        if match:
-                            # PHASE H / S7: the operator carried meaning and
-                            # was being deleted — `">=2.0"` became "2.0".
-                            name = match.group(1)
-                            constraint = (match.group(2) or "").strip()
-                            _add_dep(name,
-                                     _exact_python_version(constraint) or "unknown",
-                                     "python",
-                                     constraint)
+                    match = re.match(
+                        r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]*\])?)\s*([^;#]*)', stripped)
+                    if match and match.group(1):
+                        name = re.sub(r'\[.*\]', '', match.group(1))
+                        constraint = (match.group(2) or "").strip()
+                        add(name,
+                            _exact_python_version(constraint) or "unknown",
+                            "python",
+                            constraint)
 
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # -------------------------------------
-    # Python dependencies (setup.py)
-    # -------------------------------------
 
-    if os.path.exists(setup_py):
+# ----------------------------------------------------------
+# B1: version + vulnerability enrichment
+# ----------------------------------------------------------
+# Python: fetch the latest version from PyPI to flag outdated pins, then ask
+# OSV about the pinned version.
+#
+# Node: OSV only (no registry "latest" lookup yet). The version asked about is
+# the one actually installed — see _npm_locked_versions/_exact_npm_version for
+# why a bare range is skipped instead of guessed.
+#
+# Packages with version "unknown" / "latest" / "*" have nothing meaningful to
+# compare. Network failures are silent: the dependency is still reported, just
+# without enrichment.
+#
+# Each enricher writes its own vulnerabilities/risk_level rather than handing
+# them back to a shared tail. The inlined version reached that tail via
+# `continue`, so a returned value would have to reproduce the skip exactly;
+# owning the write is simpler and provably equivalent.
+# ----------------------------------------------------------
 
-        try:
-            with open(setup_py, "r", encoding="utf-8", errors="ignore") as f:
+def _record_vulnerabilities(dep, vulns):
+    """Apply an OSV result to a dependency. No result, no change."""
+    if vulns:
+        dep["vulnerabilities"] = vulns
+        dep["risk_level"] = _risk_from_vulns(vulns, current=dep["risk_level"])
 
-                content = f.read()
 
-                # Match install_requires list items
-                matches = re.findall(r'["\']([a-zA-Z0-9_\-\.]+)(?:[><=!~]+[\d\.]+)?["\']', content)
-                for name in matches:
-                    # Skip common non-package strings
-                    if name not in ("python", "setup", "find_packages", "setuptools"):
-                        _add_dep(name, "unknown", "python")
+def _resolve_python_versions_from_lockfile(dependencies, repo_path):
+    """PHASE H / S6: fill unresolved Python versions from a lockfile.
 
-        except Exception:
-            pass
+    Runs before any enrichment, so the PyPI and OSV lookups ask about the
+    version that is actually installed rather than skipping the dependency
+    entirely.
 
-    # -------------------------------------
-    # Python dependencies (setup.cfg)
-    # -------------------------------------
-
-    if os.path.exists(setup_cfg):
-
-        try:
-            with open(setup_cfg, "r", encoding="utf-8", errors="ignore") as f:
-
-                content = f.read()
-                in_install = False
-
-                for line in content.splitlines():
-                    stripped = line.strip()
-
-                    if "install_requires" in stripped:
-                        in_install = True
-                        continue
-
-                    if in_install:
-                        if not stripped:
-                            continue
-
-                        # PHASE H / S7: the continuation test has to look at
-                        # the ORIGINAL line's indentation. `stripped` has
-                        # already had it removed, so `stripped[0].isspace()`
-                        # was always False — and since every versioned
-                        # requirement contains "=", `flask>=2.0` closed the
-                        # section on its own first line and no setup.cfg
-                        # dependency with a version was ever recorded.
-                        if stripped.startswith("[") or not line[:1].isspace():
-                            in_install = False
-                            continue
-
-                        match = re.match(
-                            r'^([a-zA-Z0-9_\-\.]+(?:\[[^\]]*\])?)\s*([^;#]*)', stripped)
-                        if match and match.group(1):
-                            name = re.sub(r'\[.*\]', '', match.group(1))
-                            constraint = (match.group(2) or "").strip()
-                            _add_dep(name,
-                                     _exact_python_version(constraint) or "unknown",
-                                     "python",
-                                     constraint)
-
-        except Exception:
-            pass
-
-    # --------------------------------------------------
-    # Version + vulnerability enrichment
-    # --------------------------------------------------
-    # Python: fetch the latest version from PyPI to flag outdated pins, then
-    # ask OSV about the pinned version.
-    #
-    # Node: OSV only (no registry "latest" lookup yet). The version asked about
-    # is the one actually installed — see _npm_locked_versions/_exact_npm_version
-    # for why a bare range is skipped instead of guessed.
-    #
-    # Packages with version "unknown" / "latest" / "*" have nothing meaningful
-    # to compare. Network failures are silent: the dependency is still reported,
-    # just without enrichment.
-    # --------------------------------------------------
-
-    npm_locked = _npm_locked_versions(repo_path)
-
-    # PHASE H / S6: fill unresolved Python versions from a lockfile before any
-    # enrichment runs, so the PyPI and OSV lookups below ask about the version
-    # that is actually installed rather than skipping the dependency entirely.
-    #
-    # Unknowns only. A lockfile disagreeing with an exact pin is a conflict
-    # between two manifests, and resolving that silently would hide it.
+    Unknowns only. A lockfile disagreeing with an exact pin is a conflict
+    between two manifests, and resolving that silently would hide it.
+    """
     py_locked = _python_locked_versions(repo_path)
-
-    if py_locked:
-        for dep in dependencies:
-            if dep["type"] != "python" or dep["version"] != "unknown":
-                continue
-            resolved = py_locked.get(_normalise_project_name(dep["name"]))
-            if resolved:
-                dep["version"] = resolved
-                dep["version_source"] = "lockfile"
+    if not py_locked:
+        return
 
     for dep in dependencies:
-
-        if dep["type"] == "python":
-
-            # PHASE H: "what is the newest release of this package" is
-            # answerable whether or not the installed version is known, so the
-            # PyPI lookup runs unconditionally. It used to sit behind the
-            # unknown-version guard below, which meant an honestly-unpinned
-            # dependency lost its latest_version too — flask pins nothing and
-            # ships no lockfile, so all 8 of its dependencies showed no upgrade
-            # target at all.
-            latest = _fetch_latest_pypi_version(dep["name"])
-            if latest:
-                dep["latest_version"] = latest
-
-            # Everything past here needs a concrete version to compare or query.
-            # PHASE H / S5: "skipped" is already the default and is the honest
-            # answer — nothing was asked, so nothing about this package's
-            # safety may be implied.
-            known_version = dep["version"] not in ("unknown", "latest", "*", "")
-            if not known_version:
-                continue
-
-            if latest:
-                dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
-
-                # Upgrade risk level for outdated packages so the
-                # frontend can surface them with appropriate prominence
-                if dep["is_outdated"]:
-                    dep["risk_level"] = "Medium"
-
-            # OSV.dev CVE lookup — known vulnerabilities for the PINNED version
-            # take precedence over the outdated-only heuristic above.
-            vulns, dep["vuln_lookup"] = _query_osv(
-                dep["name"], dep["version"], ecosystem="PyPI")
-
-        elif dep["type"] in ("node", "node-dev"):
-
-            installed = (npm_locked.get(dep["name"])
-                         or _exact_npm_version(node_specs.get(dep["name"].lower())))
-            if not installed:
-                continue
-
-            # Report the version the lookup was actually performed against, so
-            # a CVE the reader is shown can be checked against the version the
-            # reader is shown. Otherwise `^4.17.20` displays as 4.17.20 beside
-            # a CVE looked up for the installed 4.17.21.
-            dep["version"] = installed
-
-            vulns, dep["vuln_lookup"] = _query_osv(
-                dep["name"], installed, ecosystem="npm")
-
-        else:
+        if dep["type"] != "python" or dep["version"] != "unknown":
             continue
+        resolved = py_locked.get(_normalise_project_name(dep["name"]))
+        if resolved:
+            dep["version"] = resolved
+            dep["version_source"] = "lockfile"
 
-        if vulns:
-            dep["vulnerabilities"] = vulns
-            dep["risk_level"] = _risk_from_vulns(vulns, current=dep["risk_level"])
+
+def _enrich_python_dependency(dep):
+    """Latest release, outdated flag, and the OSV lookup for one package."""
+
+    # PHASE H: "what is the newest release of this package" is answerable
+    # whether or not the installed version is known, so the PyPI lookup runs
+    # unconditionally. It used to sit behind the unknown-version guard below,
+    # which meant an honestly-unpinned dependency lost its latest_version too —
+    # flask pins nothing and ships no lockfile, so all 8 of its dependencies
+    # showed no upgrade target at all.
+    latest = _fetch_latest_pypi_version(dep["name"])
+    if latest:
+        dep["latest_version"] = latest
+
+    # Everything past here needs a concrete version to compare or query.
+    # PHASE H / S5: "skipped" is already the default and is the honest answer —
+    # nothing was asked, so nothing about this package's safety may be implied.
+    known_version = dep["version"] not in ("unknown", "latest", "*", "")
+    if not known_version:
+        return
+
+    if latest:
+        dep["is_outdated"] = _is_version_outdated(dep["version"], latest)
+
+        # Upgrade risk level for outdated packages so the frontend can surface
+        # them with appropriate prominence
+        if dep["is_outdated"]:
+            dep["risk_level"] = "Medium"
+
+    # OSV.dev CVE lookup — known vulnerabilities for the PINNED version take
+    # precedence over the outdated-only heuristic above.
+    vulns, dep["vuln_lookup"] = _query_osv(
+        dep["name"], dep["version"], ecosystem="PyPI")
+    _record_vulnerabilities(dep, vulns)
+
+
+def _enrich_node_dependency(dep, npm_locked, node_specs):
+    """OSV lookup for one npm package, against the version really installed."""
+
+    installed = (npm_locked.get(dep["name"])
+                 or _exact_npm_version(node_specs.get(dep["name"].lower())))
+    if not installed:
+        return
+
+    # Report the version the lookup was actually performed against, so a CVE
+    # the reader is shown can be checked against the version the reader is
+    # shown. Otherwise `^4.17.20` displays as 4.17.20 beside a CVE looked up
+    # for the installed 4.17.21.
+    dep["version"] = installed
+
+    vulns, dep["vuln_lookup"] = _query_osv(
+        dep["name"], installed, ecosystem="npm")
+    _record_vulnerabilities(dep, vulns)
+
+
+def _read_if_present(repo_path, filename, parse, *args):
+    """Run `parse` over `filename` if the repository has one."""
+    path = os.path.join(repo_path, filename)
+    if os.path.exists(path):
+        parse(path, *args)
+
+
+def analyze_dependencies(repo_path):
+    """Every declared dependency of `repo_path`, enriched and deduplicated."""
+
+    collector = _DependencyCollector()
+    add = collector.add
+
+    # Raw package.json specs, keyed by lowercase name — see _parse_package_json.
+    node_specs: dict = {}
+
+    # ORDER IS PART OF THE CONTRACT. `add` dedupes on first write, so this
+    # decides which manifest owns a package declared in two of them. This is
+    # the order the inlined blocks ran in; do not sort or regroup it.
+    _read_if_present(repo_path, "requirements.txt", _parse_requirements_txt, add)
+    _read_if_present(repo_path, "package.json", _parse_package_json, add, node_specs)
+    _read_if_present(repo_path, "pyproject.toml", _parse_pyproject_toml, add)
+    _read_if_present(repo_path, "Pipfile", _parse_pipfile, add)
+    _read_if_present(repo_path, "setup.py", _parse_setup_py, add)
+    _read_if_present(repo_path, "setup.cfg", _parse_setup_cfg, add)
+
+    dependencies = collector.dependencies
+
+    npm_locked = _npm_locked_versions(repo_path)
+    _resolve_python_versions_from_lockfile(dependencies, repo_path)
+
+    for dep in dependencies:
+        if dep["type"] == "python":
+            _enrich_python_dependency(dep)
+        elif dep["type"] in ("node", "node-dev"):
+            _enrich_node_dependency(dep, npm_locked, node_specs)
 
     return dependencies
