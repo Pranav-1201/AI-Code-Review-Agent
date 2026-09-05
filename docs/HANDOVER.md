@@ -4,11 +4,11 @@
 short as *"finish my project"*, this file is the whole brief. Read it, then
 `docs/CONSTRAINTS.md`, then start at the next unfinished phase below.
 
-**Last updated:** 2026-09-04 · **Updated by:** Claude Opus 5 session
-`3d35d767` · **Branch at handover:** `main` — head `260ead9`, **pushed**,
-**CI GREEN** (run `33836451073`, all 3 jobs).
-**Phases L and K are complete, F1 is complete, and five of the seven
-unassigned backlog items are closed.** See sections 1a and 1b.
+**Last updated:** 2026-09-05 · **Updated by:** Claude Opus 5 session
+`81d7c85b` · **Branch at handover:** `main` — **pushed**, **CI GREEN** on the
+merge commit `fb29705` (run `33968513343`, all 3 jobs).
+**B1 is complete** — section 1c. Phases L and K are complete, F1 is complete,
+and the unassigned backlog is now closed except S10. See sections 1a–1c.
 
 > **J1 is COMPLETE, reviewed and MERGED into `main` at `37f0060`.** Branch
 > deleted. `main` = `origin/main` = `e857e0e`, and **CI is green on it** (run
@@ -168,9 +168,11 @@ section for current state.
 
 | | |
 |---|---|
-| Current branch | `main` — head `260ead9`, pushed 2026-09-04 |
-| Pushed? | **YES** — 21 commits pushed 2026-09-04 (`ac8e2db..260ead9`), level with `origin/main`. |
-| CI | **GREEN on `260ead9`**, run `33836451073`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). |
+| Current branch | `main` — B1 merged at `fb29705` (`--no-ff`), pushed 2026-09-05 |
+| Pushed? | **YES** — level with `origin/main`. |
+| CI | **GREEN on the B1 merge commit `fb29705`**, run `33968513343`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). |
+| `phase-b/b1-decompose-report-functions` | merged at `fb29705` (`--no-ff`), CI green on the branch head too (run `33954546383`), branch deleted local and remote |
+| CI | **GREEN on `260ead9`**, run `33836451073`, all 3 jobs. |
 | CI | **GREEN on `6ca9ae9`**, run `32900870668`, all 3 jobs: backend + detector gate, frontend typecheck/build, and deploy-stack (builds both images and boots the compose stack). Playwright 26 passed. `6ca9ae9` is **the last commit on this branch carrying code** — anything after it is documentation only. |
 | `fix/broken-clone-cache` | merged at `33429f8` (`--no-ff`), branch deleted |
 | Careful | the CI run for the merge commit `33429f8` shows **cancelled**, not failed — the docs push superseded it via the concurrency group. `6ca9ae9` is the run that matters and it contains all the code. |
