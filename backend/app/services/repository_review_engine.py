@@ -749,6 +749,92 @@ def _aggregate_results(results: List[Dict], file_reports: List[Dict]) -> _Aggreg
                        issue_files, security_issues)
 
 
+# ----------------------------------------------------------
+# B1: scoring
+# ----------------------------------------------------------
+
+#: Source-stratified quality weighting. Prevents example and docs files from
+#: fully diluting the score, and keeps test files out of it entirely. A weight
+#: of 0 excludes a file from both the numerator and the denominator, so tests
+#: neither help nor hurt.
+FILE_TYPE_WEIGHTS = {
+    "production": 1.0,
+    "example":    0.1,
+    "docs":       0.05,
+    "test":       0.0,
+}
+
+
+def _file_type_weight(result: Dict) -> float:
+    return FILE_TYPE_WEIGHTS.get(result.get("file_type", "production"), 1.0)
+
+
+class _Averages(NamedTuple):
+    """Averages over PRODUCTION files, except `score` which is weighted.
+
+    Test and non-code files must not distort the metrics; documentation and
+    complexity are therefore straight means over production files only, while
+    the quality score uses FILE_TYPE_WEIGHTS so an examples directory counts
+    for a little rather than nothing or everything.
+    """
+    score: float
+    documentation: float
+    cyclomatic: float
+
+
+def _compute_averages(results: List[Dict], prod_results: List[Dict]) -> _Averages:
+    prod_count = len(prod_results)
+    if prod_count == 0:
+        return _Averages(0, 0, 0)
+
+    weighted = [(r, _file_type_weight(r)) for r in results]
+    weighted_sum = sum(r["score"] * w for r, w in weighted if w > 0)
+    weight_total = sum(w for _, w in weighted if w > 0)
+
+    return _Averages(
+        score=round(weighted_sum / weight_total, 2) if weight_total > 0 else 0,
+        documentation=round(
+            sum(r.get("documentation_coverage", 0) for r in prod_results) / prod_count, 1),
+        cyclomatic=round(
+            sum(r.get("cyclomatic_complexity", 0) for r in prod_results) / prod_count, 1),
+    )
+
+
+class _HealthScore(NamedTuple):
+    """The four dimensions of the composite, and the composite itself.
+
+    The weights are surfaced in the UI (F14), so they are named here rather
+    than left as bare literals in an arithmetic expression.
+    """
+    quality: float
+    security: int
+    documentation: float
+    simplicity: int
+    composite: int
+
+
+def _compute_health_score(averages: _Averages, security_issues: int) -> _HealthScore:
+    """Compute health on the BACKEND, from production files only.
+
+    Note what happens with nothing to measure: quality and documentation are
+    0, but security and simplicity have nothing to subtract from and come out
+    at 100, so an unanalysable repository scores 45. That is why B6 rejects
+    such a repository upstream rather than showing this number to anyone.
+    """
+    security = (100 if security_issues == 0
+                else max(0, round(100 - (security_issues ** 0.7) * 10)))
+    simplicity = max(0, round(100 - min(averages.cyclomatic * 3, 80)))
+
+    composite = round(
+        0.35 * averages.score +
+        0.25 * security +
+        0.20 * averages.documentation +
+        0.20 * simplicity
+    )
+    return _HealthScore(averages.score, security, averages.documentation,
+                        simplicity, composite)
+
+
 class RepositoryReviewEngine:
 
     def __init__(self):
@@ -799,64 +885,19 @@ class RepositoryReviewEngine:
         security_issues = agg.security_issues
 
         # --------------------------------------------------
-        # Compute averages from PRODUCTION files only
-        # Test files and non-code files must not distort metrics
+        # Scoring — production files only, computed on the backend
         # --------------------------------------------------
 
         prod_count = len(prod_results)
         total_file_count = len(file_reports)
         code_file_count = len(results)
 
-        if prod_count > 0:
-            # --------------------------------------------------
-            # Source-stratified quality score
-            # production=1.0, example=0.1, docs=0.05, test=0.0
-            # Prevents example/docs files from fully diluting score
-            # --------------------------------------------------
-            FILE_TYPE_WEIGHTS = {
-                "production": 1.0,
-                "example":    0.1,
-                "docs":       0.05,
-                "test":       0.0,
-            }
-            weighted_sum = sum(
-                r["score"] * FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0)
-                for r in results
-                if FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0) > 0
-            )
-            weight_total = sum(
-                FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0)
-                for r in results
-                if FILE_TYPE_WEIGHTS.get(r.get("file_type", "production"), 1.0) > 0
-            )
-            avg_score = round(weighted_sum / weight_total, 2) if weight_total > 0 else 0
-            avg_doc = round(
-                sum(r.get("documentation_coverage", 0) for r in prod_results) / prod_count, 1
-            )
-            avg_cyclomatic = round(
-                sum(r.get("cyclomatic_complexity", 0) for r in prod_results) / prod_count, 1
-            )
-        else:
-            avg_score = 0
-            avg_doc = 0
-            avg_cyclomatic = 0
+        averages = _compute_averages(results, prod_results)
+        avg_score = averages.score
+        avg_doc = averages.documentation
+        avg_cyclomatic = averages.cyclomatic
 
-        # --------------------------------------------------
-        # Compute health_score on the BACKEND
-        # using production files only
-        # --------------------------------------------------
-
-        quality_score = avg_score
-        sec_score = 100 if security_issues == 0 else max(0, round(100 - (security_issues ** 0.7) * 10))
-        doc_score = avg_doc
-        simplicity_score = max(0, round(100 - min(avg_cyclomatic * 3, 80)))
-
-        health_score = round(
-            0.35 * quality_score +
-            0.25 * sec_score +
-            0.20 * doc_score +
-            0.20 * simplicity_score
-        )
+        health_score = _compute_health_score(averages, security_issues).composite
 
         # --------------------------------------------------
         # Group repeated issues by message pattern
