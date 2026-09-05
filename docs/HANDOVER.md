@@ -305,6 +305,16 @@ moves proves nothing. It now scans a fixed export.
 Two runs of the harness against unchanged code were confirmed byte-identical
 before any of this was trusted.
 
+**That gate alone was not enough, and the gap was found by asking what it
+actually covered.** This repository has a `requirements.txt` and a
+`package.json` and none of the other four manifests — so `pyproject.toml`,
+`Pipfile`, `setup.py` and `setup.cfg` were extracted without any byte-level
+check at all, covered only by shape assertions. Closed with a second gate that
+imports ff69de2's `dependency_analyzer` from git alongside the current one and
+runs both over a synthetic repository carrying all six manifests plus both
+lockfiles: **27 packages, identical including order.** A count is only a
+measurement of the thing you scoped it to.
+
 The byte gate serialises with `sort_keys`, so it cannot see a key **order**
 change. Insertion order for `repository_summary` (15 keys) and the top-level
 report (10 keys) was therefore checked directly and is unchanged.
